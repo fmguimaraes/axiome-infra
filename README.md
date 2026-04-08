@@ -54,6 +54,8 @@ make apply ENV=dev
 
 ## Documentation
 
+- [Bootstrapping](docs/bootstrapping.md) — full setup guide for local, Scaleway, and AWS
+- [GitOps Lifecycle](docs/gitops-lifecycle.md) — GitHub Flow, CI/CD, promotion, audit trail
 - [Architecture](docs/architecture.md) — topology, services, storage layout
 - [Environments](docs/environments.md) — configuration, promotion flow
 - [Deployment](docs/deployment.md) — CI/CD pipelines, rollback
