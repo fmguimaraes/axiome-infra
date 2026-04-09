@@ -13,7 +13,7 @@ Step-by-step instructions to bootstrap the Axiome platform from scratch on each 
 | Docker | >= 24.0 | Container runtime |
 | Docker Compose | >= 2.20 | Local development stack |
 | Node.js | 20 LTS | Backend and frontend |
-| Python | 3.12 | Biocompute service |
+| Python | 3.11 | Biocompute service |
 | Make | any | Operational shortcuts |
 
 ### Install tools
@@ -29,15 +29,13 @@ curl -fsSL https://get.docker.com | sh
 # Node.js 20
 curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - && sudo apt-get install -y nodejs
 
-# Python 3.12
-sudo apt-get install -y python3.12 python3.12-venv
+# Python 3.11
+sudo apt-get install -y python3.11 python3.11-venv
 ```
 
 ---
 
 ## 1. Local Development Bootstrap
-
-Time estimate: ~15 minutes from clone to running stack.
 
 ### 1.1. Clone repositories
 
@@ -49,7 +47,7 @@ mkdir -p ~/dev/axiome && cd ~/dev/axiome
 git clone git@github.com:<org>/axiome-infra.git
 git clone git@github.com:<org>/axiome-back.git
 git clone git@github.com:<org>/axiome-front.git
-git clone git@github.com:<org>/axiome-biocompute.git
+git clone git@github.com:<org>/axiome-bio-compute.git
 ```
 
 Expected directory layout:
@@ -59,7 +57,7 @@ Expected directory layout:
 ├── axiome-infra/          # Infrastructure (you are here)
 ├── axiome-back/           # Backend (NestJS)
 ├── axiome-front/          # Frontend (React/Vite)
-└── axiome-biocompute/     # Biocompute (Python/FastAPI)
+└── axiome-bio-compute/    # Biocompute (Python/FastAPI)
 ```
 
 ### 1.2. Configure local environment
@@ -108,7 +106,7 @@ curl http://localhost:9000/minio/health/live
 
 ```bash
 cd ../axiome-back
-npm run migration:run
+npx prisma db push --schema apps/organization-service/src/prisma/schema.prisma
 ```
 
 ### 1.6. Daily operations
@@ -134,292 +132,67 @@ make local-up
 
 ---
 
-## 2. Scaleway Cloud Bootstrap
+## 2. Cloud Bootstrap (Scaleway or AWS)
 
-Scaleway is the primary cloud provider. All shared environments (dev, staging, production) follow this procedure.
+The infrastructure and CI/CD pipeline are provider-agnostic. The same Terraform modules, bash scripts, and GitHub Actions workflows work on both Scaleway and AWS. Provider-specific logic is isolated behind a `REGISTRY_PROVIDER` secret and `case` branching in the reusable workflow and deploy scripts.
 
-### 2.1. Account setup
+### 2.1. Provider-specific account setup
+
+<details>
+<summary><strong>Scaleway</strong></summary>
 
 1. Create a Scaleway account at https://console.scaleway.com
 2. Create a Project named `axiome`
-3. Generate an API key:
-   - Console → IAM → API Keys → Generate API Key
-   - Save the **Access Key** and **Secret Key**
-4. Select region: **fr-par** (Paris, EU)
-
-### 2.2. Install Scaleway CLI
+3. Generate an API key: Console → IAM → API Keys → Generate API Key
+4. Save the **Access Key** and **Secret Key**
+5. Region: **fr-par** (Paris, EU)
 
 ```bash
+# Install CLI
 curl -s https://raw.githubusercontent.com/scaleway/scaleway-cli/master/scripts/get.sh | sh
 scw init
 ```
 
-Enter your Access Key, Secret Key, default organization, and default project when prompted.
-
-### 2.3. Create Terraform state bucket
-
-Terraform needs a remote state bucket before the first `init`. Create it manually (one-time per environment):
-
 ```bash
-# For dev
+# Create Terraform state buckets (one-time per environment)
 scw object bucket create name=axiome-dev-terraform-state region=fr-par
-
-# For staging
 scw object bucket create name=axiome-staging-terraform-state region=fr-par
-
-# For production
 scw object bucket create name=axiome-production-terraform-state region=fr-par
 ```
 
-### 2.4. Configure provider credentials
-
-Export Scaleway credentials for Terraform:
+Export credentials:
 
 ```bash
 export SCW_ACCESS_KEY="<your-access-key>"
 export SCW_SECRET_KEY="<your-secret-key>"
-
-# Terraform S3 backend also needs these as AWS-compatible vars
 export AWS_ACCESS_KEY_ID="$SCW_ACCESS_KEY"
 export AWS_SECRET_ACCESS_KEY="$SCW_SECRET_KEY"
 ```
 
-Add these to your shell profile (`~/.bashrc` or `~/.zshrc`) or use a secrets manager.
+</details>
 
-### 2.5. Initialize Terraform
-
-```bash
-cd axiome-infra
-
-# Initialize for the target environment
-make init ENV=dev        # or staging, production
-```
-
-### 2.6. Review and apply infrastructure
-
-```bash
-# Preview what will be created
-make plan ENV=dev
-
-# Apply (creates all resources)
-make apply ENV=dev
-```
-
-Terraform will provision:
-- Private network
-- Container registry
-- Postgres managed database
-- MongoDB managed instance
-- Object storage buckets (artifacts, uploads, system, frontend)
-- Serverless container namespaces (backend, biocompute)
-- Scaleway Secret Manager entries
-
-### 2.7. Note output values
-
-After `apply`, Terraform outputs important values:
-
-```bash
-terraform output
-```
-
-Record these values — they are needed for GitHub Actions secrets:
-- `backend_endpoint` — Backend public URL
-- `biocompute_private_endpoint` — Biocompute internal URL
-- `frontend_url` — Frontend static hosting URL
-- `registry_endpoint` — Container registry URL
-- `postgres_host` — Database host (sensitive)
-
-### 2.8. Configure GitHub Actions secrets
-
-Go to the axiome-infra GitHub repository → Settings → Secrets and variables → Actions.
-
-Create an environment (dev, staging, or production) and add these secrets:
-
-| Secret | Value | Source |
-|--------|-------|--------|
-| `SCW_ACCESS_KEY` | Scaleway API access key | Step 2.1 |
-| `SCW_SECRET_KEY` | Scaleway API secret key | Step 2.1 |
-| `SCW_REGISTRY_ENDPOINT` | `terraform output registry_endpoint` | Step 2.7 |
-| `SCW_BACKEND_CONTAINER_ID` | `terraform output backend_container_id` | Step 2.7 |
-| `SCW_BIOCOMPUTE_CONTAINER_ID` | `terraform output biocompute_container_id` | Step 2.7 |
-| `BACKEND_URL` | `terraform output backend_endpoint` | Step 2.7 |
-| `BIOCOMPUTE_URL` | `terraform output biocompute_private_endpoint` | Step 2.7 |
-| `DATABASE_URL` | Postgres connection string | Scaleway console |
-| `GH_PAT` | GitHub personal access token | GitHub settings |
-
-### 2.9. Build and push initial images
-
-For the first deployment, manually build and push images:
-
-```bash
-# Login to Scaleway registry
-echo "$SCW_SECRET_KEY" | docker login "$(terraform output -raw registry_endpoint)" -u nologin --password-stdin
-
-REGISTRY=$(terraform output -raw registry_endpoint)
-
-# Build and push backend
-cd ../axiome-back
-docker build -t "$REGISTRY/backend:initial" .
-docker push "$REGISTRY/backend:initial"
-
-# Build and push biocompute
-cd ../axiome-biocompute
-docker build -t "$REGISTRY/biocompute:initial" .
-docker push "$REGISTRY/biocompute:initial"
-
-# Build and deploy frontend
-cd ../axiome-front
-npm ci && npm run build
-pip install awscli
-aws s3 sync dist/ s3://axiome-dev-frontend/ \
-  --endpoint-url https://s3.fr-par.scw.cloud --delete
-```
-
-### 2.10. Deploy initial containers
-
-```bash
-cd ../axiome-infra
-REGISTRY=$(terraform output -raw registry_endpoint)
-
-scw container container update \
-  $(terraform output -raw backend_container_id) \
-  registry-image="$REGISTRY/backend:initial" \
-  redeploy=true
-
-scw container container update \
-  $(terraform output -raw biocompute_container_id) \
-  registry-image="$REGISTRY/biocompute:initial" \
-  redeploy=true
-```
-
-### 2.11. Run database migrations
-
-```bash
-cd ../axiome-back
-DATABASE_URL="<postgres-connection-string-from-scaleway>" npm run migration:run
-```
-
-### 2.12. Verify deployment
-
-```bash
-curl https://<backend-endpoint>/health
-# Expected: 200 OK
-```
-
-### 2.13. Repeat for other environments
-
-Repeat steps 2.5 through 2.12 for staging and production, using the appropriate `ENV` value and separate GitHub Actions environments.
-
----
-
-## 3. AWS Cloud Bootstrap
-
-AWS is the secondary provider for portability. The module interface is the same, but the underlying resources differ.
-
-### 3.1. Account setup
+<details>
+<summary><strong>AWS</strong></summary>
 
 1. Create an AWS account or use an existing one
-2. Create an IAM user with programmatic access:
-   - Permissions: `AdministratorAccess` (scope down later)
-   - Save the **Access Key ID** and **Secret Access Key**
-3. Select region: **eu-west-3** (Paris, EU)
-
-### 3.2. Install AWS CLI
+2. Create an IAM user with programmatic access (scope down from AdministratorAccess later)
+3. Save the **Access Key ID** and **Secret Access Key**
+4. Region: **eu-west-3** (Paris, EU)
 
 ```bash
+# Install CLI
 curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
 unzip awscliv2.zip && sudo ./aws/install
-
-aws configure
-# Enter: Access Key ID, Secret Access Key, region: eu-west-3, output: json
+aws configure  # Enter key, secret, region: eu-west-3, output: json
 ```
 
-### 3.3. Create Terraform state bucket
-
 ```bash
+# Create Terraform state bucket + DynamoDB lock table
 aws s3 mb s3://axiome-dev-terraform-state --region eu-west-3
 aws s3api put-bucket-versioning \
   --bucket axiome-dev-terraform-state \
   --versioning-configuration Status=Enabled
-```
 
-### 3.4. Create AWS provider modules
-
-AWS modules must implement the same interface as the Scaleway modules. Create them in `providers/aws/`:
-
-```
-providers/aws/
-├── network/       # AWS VPC + subnets + security groups
-├── compute/       # ECS Fargate tasks + services
-├── database/      # RDS PostgreSQL + DocumentDB
-├── storage/       # S3 buckets
-├── registry/      # ECR repositories
-└── secrets/       # AWS Secrets Manager
-```
-
-Each module must expose the same variables and outputs as its Scaleway counterpart. See [providers.md](providers.md) for the service mapping table.
-
-### 3.5. Update Terraform configuration
-
-```bash
-# 1. Update versions.tf — add AWS provider
-cat > versions.tf <<'EOF'
-terraform {
-  required_version = ">= 1.5.0"
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.0"
-    }
-  }
-}
-EOF
-
-# 2. Update main.tf — change module sources
-# Replace: source = "./modules/<module>"
-# With:    source = "./providers/aws/<module>"
-
-# 3. Create AWS-specific tfvars
-cp environments/dev/terraform.tfvars environments/dev/terraform.tfvars.aws
-```
-
-### 3.6. Update environment variables for AWS
-
-Edit `environments/dev/terraform.tfvars.aws`:
-
-```hcl
-environment   = "dev"
-provider_name = "aws"
-region        = "eu-west-3"
-zone          = "eu-west-3a"
-project_name  = "axiome"
-
-# AWS-specific node types
-postgres_node_type = "db.t3.micro"
-mongodb_node_type  = "db.t3.medium"
-
-# Compute (ECS Fargate)
-backend_cpu_limit      = 256    # vCPU units (256 = 0.25 vCPU)
-backend_memory_limit   = 512    # MB
-biocompute_cpu_limit   = 1024   # vCPU units (1024 = 1 vCPU)
-biocompute_memory_limit = 2048  # MB
-```
-
-### 3.7. Update backend configuration
-
-Create `environments/dev/backend.hcl.aws`:
-
-```hcl
-bucket         = "axiome-dev-terraform-state"
-key            = "infrastructure/terraform.tfstate"
-region         = "eu-west-3"
-encrypt        = true
-dynamodb_table = "axiome-dev-terraform-lock"
-```
-
-Create a DynamoDB table for state locking:
-
-```bash
 aws dynamodb create-table \
   --table-name axiome-dev-terraform-lock \
   --attribute-definitions AttributeName=LockID,AttributeType=S \
@@ -428,43 +201,180 @@ aws dynamodb create-table \
   --region eu-west-3
 ```
 
-### 3.8. Initialize and apply
+Export credentials:
 
 ```bash
 export AWS_ACCESS_KEY_ID="<your-key>"
 export AWS_SECRET_ACCESS_KEY="<your-secret>"
-
-terraform init -backend-config=environments/dev/backend.hcl.aws
-terraform plan -var-file=environments/dev/terraform.tfvars.aws
-terraform apply -var-file=environments/dev/terraform.tfvars.aws
 ```
 
-### 3.9. Known differences from Scaleway
+</details>
 
-| Concern | Scaleway | AWS |
-|---------|----------|-----|
-| Container deployment | Serverless Containers (simple, built-in) | ECS Fargate (requires task definitions, services, ALB) |
-| MongoDB | Managed MongoDB (native) | DocumentDB (partial compatibility) or self-hosted on ECS |
-| Networking | Private Network (flat, simple) | VPC + subnets + route tables + NAT gateway |
-| Object storage | Object Storage (S3-compatible, same API) | S3 (native) |
-| Registry | Container Registry | ECR |
-| Secrets | Secret Manager | Secrets Manager |
-| Cold start | ~1-3s for serverless containers | ~5-30s for Fargate tasks |
-| Region | fr-par | eu-west-3 |
+### 2.2. Initialize and apply Terraform
 
-### 3.10. CI/CD for AWS
+```bash
+cd axiome-infra
 
-Update GitHub Actions workflows:
-- Replace `scw` CLI commands with `aws` CLI equivalents
-- Use `aws ecs update-service --force-new-deployment` instead of `scw container container update`
-- Push images to ECR instead of Scaleway Registry
-- Update S3 sync endpoint (no `--endpoint-url` needed for native AWS S3)
+# Initialize for the target environment
+terraform init -backend-config=environments/dev/backend.hcl -reconfigure
+
+# Preview
+terraform plan -var-file=environments/dev/terraform.tfvars
+
+# Apply
+terraform apply -var-file=environments/dev/terraform.tfvars
+```
+
+Or use the deploy script:
+
+```bash
+bash scripts/deploy.sh dev --plan-only   # Preview
+bash scripts/deploy.sh dev               # Apply
+```
+
+Terraform provisions: private network, container registry, Postgres, MongoDB, object storage, serverless containers, and secrets management.
+
+### 2.3. Note output values
+
+```bash
+terraform output
+```
+
+Record: `registry_endpoint`, `backend_endpoint`, `biocompute_private_endpoint`, `frontend_url`, `postgres_host`.
+
+### 2.4. Configure GitHub secrets
+
+Secrets must be configured at **two levels**:
+
+#### Repository-level secrets (on each service repo AND axiome-infra)
+
+| Secret | Scaleway | AWS |
+|--------|----------|-----|
+| `REGISTRY_PROVIDER` | `scaleway` | `aws` |
+| `GH_PAT` | GitHub PAT with `repo` scope | same |
+| `SCW_REGISTRY_ENDPOINT` | Registry URL from terraform output | — |
+| `SCW_SECRET_KEY` | Scaleway secret key | — |
+| `SCW_ACCESS_KEY` | Scaleway access key | — |
+| `AWS_ACCOUNT_ID` | — | AWS account ID |
+| `AWS_REGION` | — | e.g. `eu-west-3` |
+| `AWS_ACCESS_KEY_ID` | — | IAM access key |
+| `AWS_SECRET_ACCESS_KEY` | — | IAM secret key |
+
+#### Per-environment secrets (on axiome-infra, per GitHub environment: dev/staging/production)
+
+| Secret | Description |
+|--------|-------------|
+| `DATABASE_URL` | Postgres connection string |
+| `BACKEND_URL` | Backend base URL (for health checks) |
+| `BIOCOMPUTE_URL` | Biocompute base URL (for health checks) |
+| `FRONTEND_URL` | Frontend URL (for health checks) |
+
+### 2.5. Enable reusable workflow access
+
+For the service repos to call the reusable build workflow in axiome-infra:
+
+**axiome-infra → Settings → Actions → General → Access → "Accessible from repositories owned by the user"**
+
+### 2.6. Build and push initial images
+
+For the first deployment, manually build and push images before CI takes over:
+
+```bash
+REGISTRY=$(terraform output -raw registry_endpoint)
+
+# Login (Scaleway example — for AWS use: aws ecr get-login-password | docker login ...)
+echo "$SCW_SECRET_KEY" | docker login "$REGISTRY" -u nologin --password-stdin
+
+# Build and push each service
+cd ../axiome-back
+docker build -t "$REGISTRY/backend:initial" .
+docker push "$REGISTRY/backend:initial"
+
+cd ../axiome-bio-compute
+docker build -t "$REGISTRY/biocompute:initial" .
+docker push "$REGISTRY/biocompute:initial"
+
+cd ../axiome-front
+docker build -t "$REGISTRY/frontend:initial" .
+docker push "$REGISTRY/frontend:initial"
+```
+
+### 2.7. Set initial image tags and deploy
+
+```bash
+cd ../axiome-infra
+
+# Update all services to the initial tag
+bash scripts/update-manifest.sh backend dev initial
+bash scripts/update-manifest.sh biocompute dev initial
+bash scripts/update-manifest.sh frontend dev initial
+
+# Deploy
+bash scripts/deploy.sh dev
+```
+
+### 2.8. Run database migrations
+
+```bash
+cd ../axiome-back
+DATABASE_URL="<postgres-connection-string>" npx prisma db push --schema apps/organization-service/src/prisma/schema.prisma
+```
+
+### 2.9. Verify deployment
+
+```bash
+curl https://<backend-endpoint>/health    # Expected: 200
+curl https://<biocompute-endpoint>/health # Expected: 200
+curl https://<frontend-url>              # Expected: 200
+```
+
+### 2.10. Bootstrap staging and production
+
+Repeat steps 2.2 through 2.9 for each environment, substituting `dev` with `staging` or `production` in all commands.
 
 ---
 
-## 4. Post-Bootstrap Checklist
+## 3. CI/CD Pipeline — Post-Bootstrap
 
-After bootstrapping any environment, verify:
+After the initial bootstrap, all subsequent deployments flow through the CI/CD pipeline:
+
+```
+Service push to main → CI: test → build → push → notify infra
+                                                      ↓
+                                          Update dev/images.tfvars (automatic)
+                                                      ↓
+                                          Manual: promote.yml per service per env
+                                             ↓            ↓             ↓
+                                            dev  →   staging   →   production
+```
+
+Each service (backend, biocompute, frontend) is independent:
+- **Own CI**: test job defined locally, build/push/notify via shared reusable workflow
+- **Own image tag**: tracked independently in `environments/<env>/images.tfvars`
+- **Own promotion path**: promote one service without touching others
+
+The reusable build workflow and deploy workflow handle both Scaleway and AWS via the `REGISTRY_PROVIDER` secret — no code changes needed to switch providers.
+
+See [ci-cd.md](ci-cd.md) for the complete pipeline architecture, provider polymorphism details, and deployment walkthrough.
+
+---
+
+## 4. Known Provider Differences
+
+| Concern | Scaleway | AWS |
+|---------|----------|-----|
+| Container deployment | Serverless Containers | ECS Fargate (task defs, services, ALB) |
+| MongoDB | Managed MongoDB (native) | DocumentDB (partial compatibility) |
+| Networking | Private Network (flat) | VPC + subnets + route tables + NAT |
+| Object storage | Object Storage (S3-compatible) | S3 (native) |
+| Registry | Container Registry | ECR |
+| Secrets | Secret Manager | Secrets Manager |
+| Cold start | ~1-3s | ~5-30s |
+| Region | fr-par | eu-west-3 |
+
+---
+
+## 5. Post-Bootstrap Checklist
 
 - [ ] All services are running and healthy
 - [ ] Backend `/health` returns 200
@@ -474,16 +384,20 @@ After bootstrapping any environment, verify:
 - [ ] Object storage buckets exist with correct naming
 - [ ] Secrets are injected (not hardcoded)
 - [ ] No plaintext secrets in the repository
-- [ ] GitHub Actions secrets are configured (cloud only)
-- [ ] Terraform state is stored remotely (cloud only)
-- [ ] Environment is isolated from other environments (cloud only)
+- [ ] GitHub Actions secrets are configured
+- [ ] `REGISTRY_PROVIDER` secret is set on all service repos and infra
+- [ ] Reusable workflow access is enabled on axiome-infra
+- [ ] Terraform state is stored remotely
+- [ ] Environment is isolated from other environments
+- [ ] CI triggers on push to main and successfully runs test + build + push
+- [ ] `repository_dispatch` arrives at infra and updates `dev/images.tfvars`
 
-## 5. Teardown
+## 6. Teardown
 
 ### Local
 
 ```bash
-make local-down       # Stop services, keep data
+make local-down         # Stop services, keep data
 docker compose down -v  # Stop services and delete all data
 ```
 
