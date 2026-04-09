@@ -29,9 +29,6 @@ on:
         type: boolean
         default: false
 
-env:
-  REGISTRY_ENDPOINT: ${{ secrets.SCW_REGISTRY_ENDPOINT }}
-
 jobs:
   # ──────────────────────────────────────────────
   # 1. Validate image exists in registry
@@ -40,11 +37,24 @@ jobs:
     name: Validate ${{ inputs.service }} Image
     runs-on: ubuntu-latest
     steps:
-      - name: Login to registry
-        run: echo "${{ secrets.SCW_SECRET_KEY }}" | docker login "$REGISTRY_ENDPOINT" -u nologin --password-stdin
-
-      - name: Verify image exists
-        run: docker manifest inspect "$REGISTRY_ENDPOINT/${{ inputs.service }}:${{ inputs.image_tag }}"
+      - name: Login and verify image
+        run: |
+          case "${{ secrets.REGISTRY_PROVIDER }}" in
+            aws)
+              REGISTRY="${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com"
+              aws ecr get-login-password --region "${{ secrets.AWS_REGION }}" | \
+                docker login --username AWS --password-stdin "$REGISTRY"
+              ;;
+            scaleway|*)
+              REGISTRY="${{ secrets.SCW_REGISTRY_ENDPOINT }}"
+              echo "${{ secrets.SCW_SECRET_KEY }}" | \
+                docker login "$REGISTRY" -u nologin --password-stdin
+              ;;
+          esac
+          docker manifest inspect "${REGISTRY}/${{ inputs.service }}:${{ inputs.image_tag }}"
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
   # ──────────────────────────────────────────────
   # 2. Check promotion gate (per-service sequential)
@@ -109,11 +119,6 @@ jobs:
     needs: [update-manifest, migrate]
     if: always() && needs.update-manifest.result == 'success' && (needs.migrate.result == 'success' || needs.migrate.result == 'skipped')
     environment: ${{ inputs.environment }}
-    env:
-      SCW_ACCESS_KEY: ${{ secrets.SCW_ACCESS_KEY }}
-      SCW_SECRET_KEY: ${{ secrets.SCW_SECRET_KEY }}
-      AWS_ACCESS_KEY_ID: ${{ secrets.SCW_ACCESS_KEY }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.SCW_SECRET_KEY }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -126,6 +131,21 @@ jobs:
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.7"
+
+      - name: Export provider credentials
+        run: |
+          case "${{ secrets.REGISTRY_PROVIDER }}" in
+            aws)
+              echo "AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}" >> "$GITHUB_ENV"
+              echo "AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}" >> "$GITHUB_ENV"
+              ;;
+            scaleway|*)
+              echo "SCW_ACCESS_KEY=${{ secrets.SCW_ACCESS_KEY }}" >> "$GITHUB_ENV"
+              echo "SCW_SECRET_KEY=${{ secrets.SCW_SECRET_KEY }}" >> "$GITHUB_ENV"
+              echo "AWS_ACCESS_KEY_ID=${{ secrets.SCW_ACCESS_KEY }}" >> "$GITHUB_ENV"
+              echo "AWS_SECRET_ACCESS_KEY=${{ secrets.SCW_SECRET_KEY }}" >> "$GITHUB_ENV"
+              ;;
+          esac
 
       - name: Deploy via Terraform
         run: bash scripts/deploy.sh "${{ inputs.environment }}"
