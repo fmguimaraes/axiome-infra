@@ -1,21 +1,30 @@
-name: Promote — Deploy Approved Version
+name: Deploy — Promote Service to Environment
 
 on:
   workflow_dispatch:
     inputs:
-      image_tag:
-        description: "Image tag (git SHA) to promote"
+      service:
+        description: "Service to deploy"
         required: true
-        type: string
-      target_environment:
+        type: choice
+        options:
+          - backend
+          - biocompute
+          - frontend
+      environment:
         description: "Target environment"
         required: true
         type: choice
         options:
+          - dev
           - staging
           - production
+      image_tag:
+        description: "Image tag (git short SHA) to deploy"
+        required: true
+        type: string
       run_migrations:
-        description: "Run database migrations before deployment"
+        description: "Run database migrations (backend only)"
         required: false
         type: boolean
         default: false
@@ -24,26 +33,56 @@ env:
   REGISTRY_ENDPOINT: ${{ secrets.SCW_REGISTRY_ENDPOINT }}
 
 jobs:
-  validate:
-    name: Validate Image Exists
+  # ──────────────────────────────────────────────
+  # 1. Validate image exists in registry
+  # ──────────────────────────────────────────────
+  validate-image:
+    name: Validate ${{ inputs.service }} Image
     runs-on: ubuntu-latest
     steps:
       - name: Login to registry
-        run: |
-          echo "${{ secrets.SCW_SECRET_KEY }}" | docker login "$REGISTRY_ENDPOINT" -u nologin --password-stdin
+        run: echo "${{ secrets.SCW_SECRET_KEY }}" | docker login "$REGISTRY_ENDPOINT" -u nologin --password-stdin
 
-      - name: Verify backend image
-        run: docker manifest inspect "$REGISTRY_ENDPOINT/backend:${{ inputs.image_tag }}"
+      - name: Verify image exists
+        run: docker manifest inspect "$REGISTRY_ENDPOINT/${{ inputs.service }}:${{ inputs.image_tag }}"
 
-      - name: Verify biocompute image
-        run: docker manifest inspect "$REGISTRY_ENDPOINT/biocompute:${{ inputs.image_tag }}"
-
-  migrate:
-    name: Run Database Migrations
+  # ──────────────────────────────────────────────
+  # 2. Check promotion gate (per-service sequential)
+  # ──────────────────────────────────────────────
+  promotion-gate:
+    name: Check Gate — ${{ inputs.service }}
     runs-on: ubuntu-latest
-    needs: [validate]
-    if: inputs.run_migrations
-    environment: ${{ inputs.target_environment }}
+    needs: [validate-image]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify sequential deployment for ${{ inputs.service }}
+        run: bash scripts/check-promotion-gate.sh "${{ inputs.service }}" "${{ inputs.environment }}" "${{ inputs.image_tag }}"
+
+  # ──────────────────────────────────────────────
+  # 3. Update images.tfvars for this service only
+  # ──────────────────────────────────────────────
+  update-manifest:
+    name: Update ${{ inputs.service }} in ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    needs: [promotion-gate]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT }}
+          fetch-depth: 0
+
+      - name: Update manifest and push
+        run: bash scripts/update-manifest.sh "${{ inputs.service }}" "${{ inputs.environment }}" "${{ inputs.image_tag }}"
+
+  # ──────────────────────────────────────────────
+  # 4. Run database migrations (backend only, optional)
+  # ──────────────────────────────────────────────
+  migrate:
+    name: Run Migrations
+    runs-on: ubuntu-latest
+    needs: [update-manifest]
+    if: inputs.run_migrations && inputs.service == 'backend'
+    environment: ${{ inputs.environment }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -59,75 +98,74 @@ jobs:
       - name: Run migrations
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: npm run migration:run
+        run: npx prisma db push --schema apps/organization-service/src/prisma/schema.prisma
 
+  # ──────────────────────────────────────────────
+  # 5. Terraform apply (deploys the changed service)
+  # ──────────────────────────────────────────────
   deploy:
-    name: Deploy to ${{ inputs.target_environment }}
+    name: Deploy ${{ inputs.service }} to ${{ inputs.environment }}
     runs-on: ubuntu-latest
-    needs: [validate, migrate]
-    if: always() && needs.validate.result == 'success' && (needs.migrate.result == 'success' || needs.migrate.result == 'skipped')
-    environment: ${{ inputs.target_environment }}
+    needs: [update-manifest, migrate]
+    if: always() && needs.update-manifest.result == 'success' && (needs.migrate.result == 'success' || needs.migrate.result == 'skipped')
+    environment: ${{ inputs.environment }}
+    env:
+      SCW_ACCESS_KEY: ${{ secrets.SCW_ACCESS_KEY }}
+      SCW_SECRET_KEY: ${{ secrets.SCW_SECRET_KEY }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.SCW_ACCESS_KEY }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.SCW_SECRET_KEY }}
     steps:
-      - name: Install Scaleway CLI
-        run: |
-          curl -s https://raw.githubusercontent.com/scaleway/scaleway-cli/master/scripts/get.sh | sh
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT }}
+          ref: main
 
-      - name: Deploy backend
-        run: |
-          scw container container update \
-            ${{ secrets.SCW_BACKEND_CONTAINER_ID }} \
-            registry-image="$REGISTRY_ENDPOINT/backend:${{ inputs.image_tag }}" \
-            redeploy=true
+      - name: Pull latest (includes manifest update)
+        run: git pull origin main
 
-      - name: Deploy biocompute
-        run: |
-          scw container container update \
-            ${{ secrets.SCW_BIOCOMPUTE_CONTAINER_ID }} \
-            registry-image="$REGISTRY_ENDPOINT/biocompute:${{ inputs.image_tag }}" \
-            redeploy=true
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.7"
 
-      - name: Deploy frontend
-        run: |
-          git clone https://x-access-token:${{ secrets.GH_PAT }}@github.com/${{ github.repository_owner }}/axiome-front.git /tmp/axiome-front
-          cd /tmp/axiome-front
-          git checkout ${{ inputs.image_tag }} || true
-          npm ci && npm run build
-          pip install awscli
-          aws s3 sync dist/ s3://axiome-${{ inputs.target_environment }}-frontend/ \
-            --endpoint-url https://s3.fr-par.scw.cloud \
-            --delete
+      - name: Deploy via Terraform
+        run: bash scripts/deploy.sh "${{ inputs.environment }}"
 
-      - name: Health check — Backend
+  # ──────────────────────────────────────────────
+  # 6. Post-deployment health check for this service
+  # ──────────────────────────────────────────────
+  health-check:
+    name: Health Check — ${{ inputs.service }}
+    runs-on: ubuntu-latest
+    needs: [deploy]
+    environment: ${{ inputs.environment }}
+    steps:
+      - name: Resolve health check URL
+        id: url
+        run: |
+          case "${{ inputs.service }}" in
+            backend)    echo "url=${{ secrets.BACKEND_URL }}/health" >> "$GITHUB_OUTPUT" ;;
+            biocompute) echo "url=${{ secrets.BIOCOMPUTE_URL }}/health" >> "$GITHUB_OUTPUT" ;;
+            frontend)   echo "url=${{ secrets.FRONTEND_URL }}" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Wait for healthy response
         run: |
           for i in $(seq 1 30); do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${{ secrets.BACKEND_URL }}/health" || true)
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${{ steps.url.outputs.url }}" || true)
             if [ "$STATUS" = "200" ]; then
-              echo "Backend health check passed"
+              echo "${{ inputs.service }} healthy"
               exit 0
             fi
-            echo "Waiting... (attempt $i/30)"
+            echo "Waiting for ${{ inputs.service }}... (attempt $i/30)"
             sleep 10
           done
-          echo "Backend health check failed"
+          echo "${{ inputs.service }} health check failed"
           exit 1
 
-      - name: Health check — Biocompute
+      - name: Record deployment
         run: |
-          for i in $(seq 1 30); do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${{ secrets.BIOCOMPUTE_URL }}/health" || true)
-            if [ "$STATUS" = "200" ]; then
-              echo "Biocompute health check passed"
-              exit 0
-            fi
-            echo "Waiting... (attempt $i/30)"
-            sleep 10
-          done
-          echo "Biocompute health check failed"
-          exit 1
-
-      - name: Record deployment metadata
-        run: |
-          echo "Deployed version: ${{ inputs.image_tag }}"
-          echo "Target environment: ${{ inputs.target_environment }}"
+          echo "Service: ${{ inputs.service }}"
+          echo "Tag: ${{ inputs.image_tag }}"
+          echo "Environment: ${{ inputs.environment }}"
           echo "Timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          echo "Triggered by: ${{ github.actor }}"
+          echo "Actor: ${{ github.actor }}"

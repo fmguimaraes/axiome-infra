@@ -8,7 +8,7 @@ resource "scaleway_container" "backend" {
   name            = "${var.naming_prefix}-backend"
   namespace_id    = scaleway_container_namespace.main.id
   region          = var.region
-  registry_image  = "${var.registry_endpoint}/backend:latest"
+  registry_image  = "${var.registry_endpoint}/backend:${var.backend_image_tag}"
   port            = 3000
   cpu_limit       = var.backend_cpu_limit
   memory_limit    = var.backend_memory_limit
@@ -29,7 +29,7 @@ resource "scaleway_container" "biocompute" {
   name            = "${var.naming_prefix}-biocompute"
   namespace_id    = scaleway_container_namespace.main.id
   region          = var.region
-  registry_image  = "${var.registry_endpoint}/biocompute:latest"
+  registry_image  = "${var.registry_endpoint}/biocompute:${var.biocompute_image_tag}"
   port            = 8000
   cpu_limit       = var.biocompute_cpu_limit
   memory_limit    = var.biocompute_memory_limit
@@ -51,7 +51,7 @@ resource "scaleway_container" "frontend" {
   name            = "${var.naming_prefix}-frontend"
   namespace_id    = scaleway_container_namespace.main.id
   region          = var.region
-  registry_image  = "${var.registry_endpoint}/frontend:latest"
+  registry_image  = "${var.registry_endpoint}/frontend:${var.frontend_image_tag}"
   port            = 80
   cpu_limit       = 500
   memory_limit    = 256

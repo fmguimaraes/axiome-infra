@@ -67,6 +67,9 @@ module "compute" {
   region                 = var.region
   registry_endpoint      = module.registry.registry_endpoint
   private_network_id     = module.network.private_network_id
+  backend_image_tag      = var.backend_image_tag
+  biocompute_image_tag   = var.biocompute_image_tag
+  frontend_image_tag     = var.frontend_image_tag
   backend_min_scale      = var.backend_min_scale
   backend_max_scale      = var.backend_max_scale
   backend_cpu_limit      = var.backend_cpu_limit

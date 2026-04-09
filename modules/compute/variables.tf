@@ -13,6 +13,24 @@ variable "registry_endpoint" {
   type        = string
 }
 
+variable "backend_image_tag" {
+  description = "Docker image tag for backend"
+  type        = string
+  default     = "latest"
+}
+
+variable "biocompute_image_tag" {
+  description = "Docker image tag for biocompute"
+  type        = string
+  default     = "latest"
+}
+
+variable "frontend_image_tag" {
+  description = "Docker image tag for frontend"
+  type        = string
+  default     = "latest"
+}
+
 variable "private_network_id" {
   description = "Private network ID"
   type        = string

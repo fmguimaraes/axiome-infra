@@ -122,6 +122,25 @@ variable "enable_frontend_container" {
   default     = false
 }
 
+# Image tags (set by CI/CD pipeline)
+variable "backend_image_tag" {
+  description = "Docker image tag for the backend service"
+  type        = string
+  default     = "latest"
+}
+
+variable "biocompute_image_tag" {
+  description = "Docker image tag for the biocompute service"
+  type        = string
+  default     = "latest"
+}
+
+variable "frontend_image_tag" {
+  description = "Docker image tag for the frontend service"
+  type        = string
+  default     = "latest"
+}
+
 # Tags
 variable "tags" {
   description = "Additional tags to apply to all resources"
