@@ -1,0 +1,153 @@
+#!/bin/bash
+# Cloud-init for Axiome Lightsail VM.
+# Runs once at first boot. Idempotent re-run is safe (apt-get install is no-op,
+# docker compose up replaces running containers, SSM fetch overwrites .env).
+set -euo pipefail
+
+LOG=/var/log/axiome-init.log
+exec > >(tee -a "$LOG") 2>&1
+echo "=== axiome cloud-init started at $(date) ==="
+
+export DEBIAN_FRONTEND=noninteractive
+
+# 1. Base OS packages
+apt-get update
+apt-get install -y \
+    ca-certificates curl gnupg lsb-release \
+    unzip jq cron logrotate
+
+# 2. Docker + docker compose
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+    | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+chmod a+r /etc/apt/keyrings/docker.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+    https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
+    > /etc/apt/sources.list.d/docker.list
+apt-get update
+apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+systemctl enable docker
+systemctl start docker
+
+# 3. AWS CLI v2
+if ! command -v aws >/dev/null 2>&1; then
+    cd /tmp
+    ARCH=$(uname -m)
+    if [ "$ARCH" = "aarch64" ]; then AWS_ARCH=aarch64; else AWS_ARCH=x86_64; fi
+    curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-$${AWS_ARCH}.zip" -o awscli.zip
+    unzip -q awscli.zip
+    ./aws/install
+    rm -rf awscli awscli.zip
+fi
+
+# 4. AWS credentials for SSM + ECR access (scoped IAM user, injected by Terraform)
+mkdir -p /root/.aws
+cat > /root/.aws/credentials <<EOF
+[default]
+aws_access_key_id = ${aws_access_key_id}
+aws_secret_access_key = ${aws_secret_access_key}
+EOF
+cat > /root/.aws/config <<EOF
+[default]
+region = ${aws_region}
+output = json
+EOF
+chmod 600 /root/.aws/credentials /root/.aws/config
+
+# 5. Pull runtime config from SSM Parameter Store -> /opt/axiome/.env
+mkdir -p /opt/axiome
+aws ssm get-parameters-by-path \
+    --path "${ssm_parameter_prefix}" \
+    --recursive \
+    --with-decryption \
+    --query "Parameters[].[Name,Value]" \
+    --output text \
+    | awk -F'\t' '{
+        n=split($1, parts, "/");
+        key=parts[n];
+        printf "%s=%s\n", key, $2
+    }' > /opt/axiome/.env
+
+# Augment env with image tags + identification
+cat >> /opt/axiome/.env <<EOF
+ENVIRONMENT=${environment}
+PROJECT_NAME=${project_name}
+ECR_REGISTRY=${ecr_registry}
+BACKEND_IMAGE_TAG=${backend_image_tag}
+BIOCOMPUTE_IMAGE_TAG=${biocompute_image_tag}
+FRONTEND_IMAGE_TAG=${frontend_image_tag}
+FQDN=${fqdn}
+EOF
+
+chmod 600 /opt/axiome/.env
+
+# 6. ECR docker login
+aws ecr get-login-password --region ${aws_region} \
+    | docker login --username AWS --password-stdin ${ecr_registry}
+
+# 7. Write docker-compose.yml + Caddyfile to /opt/axiome
+cat > /opt/axiome/docker-compose.yml <<'COMPOSE_EOF'
+${docker_compose_yml}
+COMPOSE_EOF
+
+cat > /opt/axiome/Caddyfile <<'CADDY_EOF'
+${caddyfile}
+CADDY_EOF
+
+# 8. Pull and start the stack
+cd /opt/axiome
+docker compose pull
+docker compose up -d
+
+# 9. Install systemd unit so docker-compose comes back on reboot
+cat > /etc/systemd/system/axiome.service <<'SVC_EOF'
+[Unit]
+Description=Axiome docker-compose stack
+Requires=docker.service
+After=docker.service network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/axiome
+ExecStart=/usr/bin/docker compose up -d
+ExecStop=/usr/bin/docker compose down
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target
+SVC_EOF
+
+systemctl daemon-reload
+systemctl enable axiome.service
+
+# 10. Cron: weekly docker prune to prevent disk fill
+cat > /etc/cron.weekly/docker-prune <<'CRON_EOF'
+#!/bin/sh
+docker system prune -af --filter "until=168h" >/var/log/docker-prune.log 2>&1
+docker image prune -af >>/var/log/docker-prune.log 2>&1
+CRON_EOF
+chmod +x /etc/cron.weekly/docker-prune
+
+# 11. Cron: nightly ECR re-auth (tokens expire in 12h)
+cat > /etc/cron.hourly/ecr-relogin <<'CRON_EOF'
+#!/bin/sh
+aws ecr get-login-password --region ${aws_region} \
+    | docker login --username AWS --password-stdin ${ecr_registry} 2>&1
+CRON_EOF
+chmod +x /etc/cron.hourly/ecr-relogin
+
+# 12. Logrotate for docker stdout
+cat > /etc/logrotate.d/docker-containers <<'ROT_EOF'
+/var/lib/docker/containers/*/*.log {
+    rotate 7
+    daily
+    compress
+    missingok
+    delaycompress
+    copytruncate
+}
+ROT_EOF
+
+echo "=== axiome cloud-init finished at $(date) ==="

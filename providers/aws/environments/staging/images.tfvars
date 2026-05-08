@@ -1,0 +1,4 @@
+# Managed by CI/CD pipeline — do not edit manually
+backend_image_tag    = "latest"
+biocompute_image_tag = "latest"
+frontend_image_tag   = "latest"

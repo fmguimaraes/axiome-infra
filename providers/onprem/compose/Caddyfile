@@ -1,0 +1,36 @@
+# Caddyfile for on-prem deployment.
+# FQDN sourced from $FQDN environment variable; Caddy reads it from compose env.
+# For air-gapped mode without internet ACME: replace `tls` block with a custom
+# certificate (mount /etc/caddy/cert.pem and /etc/caddy/key.pem).
+
+{$FQDN} {
+    encode gzip zstd
+
+    @api path /api/* /health /ready
+    handle @api {
+        reverse_proxy backend:3000 {
+            header_up X-Real-IP {remote_host}
+            header_up X-Forwarded-Proto {scheme}
+        }
+    }
+
+    handle {
+        reverse_proxy frontend:80
+    }
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        -Server
+    }
+
+    log {
+        output stdout
+        format json
+    }
+
+    # Air-gapped TLS override:
+    # tls /etc/caddy/cert.pem /etc/caddy/key.pem
+}

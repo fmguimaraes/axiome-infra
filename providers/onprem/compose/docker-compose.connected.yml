@@ -1,0 +1,64 @@
+# On-prem deployment, connected mode.
+# Uses external managed services (Neon, Atlas, S3 or S3-compatible).
+# This is the same shape as the AWS Lightsail deployment — only the host changes.
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    container_name: axiome-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - axiome
+    mem_limit: 128m
+
+  backend:
+    image: ${REGISTRY_URL}/axiome/backend:${BACKEND_IMAGE_TAG}
+    container_name: axiome-backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    networks:
+      - axiome
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    mem_limit: 1g
+
+  biocompute:
+    image: ${REGISTRY_URL}/axiome/biocompute:${BIOCOMPUTE_IMAGE_TAG}
+    container_name: axiome-biocompute
+    restart: unless-stopped
+    env_file:
+      - .env
+    networks:
+      - axiome
+    mem_limit: 1500m
+
+  frontend:
+    image: ${REGISTRY_URL}/axiome/frontend:${FRONTEND_IMAGE_TAG}
+    container_name: axiome-frontend
+    restart: unless-stopped
+    networks:
+      - axiome
+    mem_limit: 128m
+
+volumes:
+  caddy_data:
+  caddy_config:
+
+networks:
+  axiome:
+    driver: bridge
+    name: axiome-onprem

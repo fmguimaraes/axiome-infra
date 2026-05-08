@@ -1,0 +1,165 @@
+# On-prem deployment, air-gapped mode.
+# All state services run locally — no external dependencies.
+# Backups are the customer's responsibility (see scripts/backup.sh).
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    container_name: axiome-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - axiome
+    mem_limit: 128m
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: axiome-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - axiome
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    mem_limit: 1g
+
+  mongodb:
+    image: mongo:7
+    container_name: axiome-mongodb
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGODB_USER}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGODB_PASSWORD}
+      MONGO_INITDB_DATABASE: ${MONGODB_DB}
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - axiome
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    mem_limit: 1g
+
+  minio:
+    image: minio/minio:latest
+    container_name: axiome-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY}
+    volumes:
+      - minio_data:/data
+    networks:
+      - axiome
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    mem_limit: 512m
+
+  minio-init:
+    image: minio/mc:latest
+    container_name: axiome-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 $${MINIO_ROOT_USER} $${MINIO_ROOT_PASSWORD};
+      mc mb local/${S3_BUCKET_ARTIFACTS} --ignore-existing;
+      mc mb local/${S3_BUCKET_UPLOADS}   --ignore-existing;
+      mc mb local/${S3_BUCKET_SYSTEM}    --ignore-existing;
+      mc version enable local/${S3_BUCKET_ARTIFACTS};
+      "
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY}
+    networks:
+      - axiome
+
+  backend:
+    image: ${REGISTRY_URL}/axiome/backend:${BACKEND_IMAGE_TAG}
+    container_name: axiome-backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      MONGODB_URL: mongodb://${MONGODB_USER}:${MONGODB_PASSWORD}@mongodb:27017/${MONGODB_DB}?authSource=admin
+      S3_ENDPOINT: http://minio:9000
+      S3_FORCE_PATH_STYLE: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    networks:
+      - axiome
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    mem_limit: 1g
+
+  biocompute:
+    image: ${REGISTRY_URL}/axiome/biocompute:${BIOCOMPUTE_IMAGE_TAG}
+    container_name: axiome-biocompute
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      S3_ENDPOINT: http://minio:9000
+      S3_FORCE_PATH_STYLE: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    networks:
+      - axiome
+    mem_limit: 1500m
+
+  frontend:
+    image: ${REGISTRY_URL}/axiome/frontend:${FRONTEND_IMAGE_TAG}
+    container_name: axiome-frontend
+    restart: unless-stopped
+    networks:
+      - axiome
+    mem_limit: 128m
+
+volumes:
+  caddy_data:
+  caddy_config:
+  postgres_data:
+  mongodb_data:
+  minio_data:
+
+networks:
+  axiome:
+    driver: bridge
+    name: axiome-onprem-airgapped

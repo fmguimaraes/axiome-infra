@@ -1,0 +1,9 @@
+# Example Ansible inventory for on-prem deployment.
+# Copy to inventory.ini and customize.
+
+[axiome]
+customer-prod ansible_host=10.0.1.10 ansible_user=ubuntu
+
+[axiome:vars]
+ansible_python_interpreter=/usr/bin/python3
+ansible_ssh_private_key_file=~/.ssh/customer-prod.key

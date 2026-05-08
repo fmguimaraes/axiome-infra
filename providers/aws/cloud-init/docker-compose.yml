@@ -1,0 +1,88 @@
+services:
+  caddy:
+    image: caddy:2-alpine
+    container_name: axiome-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - axiome
+    mem_limit: 128m
+    cpus: 0.25
+
+  backend:
+    image: $${ECR_REGISTRY}/axiome/backend:$${BACKEND_IMAGE_TAG}
+    container_name: axiome-backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      DATABASE_URL: $${DATABASE_URL}
+      MONGODB_URL: $${MONGODB_URL}
+      S3_REGION: $${S3_REGION}
+      S3_BUCKET_ARTIFACTS: $${S3_BUCKET_ARTIFACTS}
+      S3_BUCKET_UPLOADS: $${S3_BUCKET_UPLOADS}
+      S3_BUCKET_SYSTEM: $${S3_BUCKET_SYSTEM}
+      JWT_SECRET: $${JWT_SECRET}
+      BIOCOMPUTE_URL: http://biocompute:8000
+    networks:
+      - axiome
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    mem_limit: 1g
+    cpus: 1.0
+
+  biocompute:
+    image: $${ECR_REGISTRY}/axiome/biocompute:$${BIOCOMPUTE_IMAGE_TAG}
+    container_name: axiome-biocompute
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      PYTHON_ENV: production
+      PORT: "8000"
+      DATABASE_URL: $${DATABASE_URL}
+      S3_REGION: $${S3_REGION}
+      S3_BUCKET_ARTIFACTS: $${S3_BUCKET_ARTIFACTS}
+    networks:
+      - axiome
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    mem_limit: 1500m
+    cpus: 1.5
+
+  frontend:
+    image: $${ECR_REGISTRY}/axiome/frontend:$${FRONTEND_IMAGE_TAG}
+    container_name: axiome-frontend
+    restart: unless-stopped
+    networks:
+      - axiome
+    mem_limit: 128m
+    cpus: 0.25
+
+volumes:
+  caddy_data:
+  caddy_config:
+
+networks:
+  axiome:
+    driver: bridge
+    name: axiome-deploy
