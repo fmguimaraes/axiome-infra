@@ -1,0 +1,77 @@
+# Terraform CI — fmt + validate + plan on PRs.
+#
+# This is the *gate* for infra changes before they land on `main`.
+# Once merged, terraform-cd.yml runs the actual apply.
+
+name: terraform-ci
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '**.tf'
+      - '**.tfvars'
+      - 'modules/**'
+      - 'environments/**'
+      - 'scripts/**'
+      - '.github/workflows/terraform-ci.yml'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  TF_VERSION: '1.7'
+  TF_IN_AUTOMATION: 'true'
+
+jobs:
+  fmt-validate:
+    name: fmt + validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: terraform fmt -check
+        run: terraform fmt -recursive -check -diff
+
+      - name: terraform validate
+        run: |
+          terraform init -backend=false -input=false
+          terraform validate
+
+  plan:
+    name: plan ${{ matrix.env }}
+    needs: [fmt-validate]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        env: [dev, staging, production]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Export provider credentials
+        run: |
+          case "${{ secrets.REGISTRY_PROVIDER }}" in
+            aws)
+              echo "AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}" >> "$GITHUB_ENV"
+              echo "AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}" >> "$GITHUB_ENV"
+              ;;
+            scaleway|*)
+              echo "SCW_ACCESS_KEY=${{ secrets.SCW_ACCESS_KEY }}" >> "$GITHUB_ENV"
+              echo "SCW_SECRET_KEY=${{ secrets.SCW_SECRET_KEY }}" >> "$GITHUB_ENV"
+              echo "AWS_ACCESS_KEY_ID=${{ secrets.SCW_ACCESS_KEY }}" >> "$GITHUB_ENV"
+              echo "AWS_SECRET_ACCESS_KEY=${{ secrets.SCW_SECRET_KEY }}" >> "$GITHUB_ENV"
+              ;;
+          esac
+
+      - name: terraform plan (${{ matrix.env }})
+        run: bash scripts/deploy.sh "${{ matrix.env }}" --plan-only

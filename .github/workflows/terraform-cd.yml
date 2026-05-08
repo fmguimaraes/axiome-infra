@@ -1,0 +1,202 @@
+# Terraform CD — terraform apply triggered by *commits* to this repo.
+#
+# This is what the user calls the "ACTUAL CD": every commit that lands on main
+# (whether from a service-repo promotion, a dev-auto-promote, or a manual edit)
+# triggers a targeted terraform apply for the environments whose files changed.
+#
+# Path-based mapping:
+#   environments/dev/**         -> terraform apply dev          (auto)
+#   environments/staging/**     -> terraform apply staging      (auto; gate is upstream
+#                                                                in the service workflow_dispatch)
+#   environments/production/**  -> terraform apply production   (auto; gate is upstream)
+#   shared infra (*.tf, modules/**, providers/**)
+#                               -> plan all envs, auto-apply dev only.
+#                                  Re-run via workflow_dispatch to apply
+#                                  staging/production when you're ready.
+#
+# Manual fallback: workflow_dispatch with `environment` input applies any env on demand.
+
+name: terraform-cd
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '**.tf'
+      - '**.tfvars'
+      - 'modules/**'
+      - 'environments/**'
+      - 'scripts/**'
+      - '.github/workflows/terraform-cd.yml'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy'
+        required: true
+        type: choice
+        options: [dev, staging, production]
+      plan_only:
+        description: 'Plan only (do not apply)'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write   # for tagging prod releases
+
+env:
+  TF_VERSION: '1.7'
+  TF_IN_AUTOMATION: 'true'
+
+jobs:
+  detect:
+    name: Detect changed envs
+    runs-on: ubuntu-latest
+    outputs:
+      dev: ${{ steps.filter.outputs.dev }}
+      staging: ${{ steps.filter.outputs.staging }}
+      production: ${{ steps.filter.outputs.production }}
+      shared: ${{ steps.filter.outputs.shared }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            dev:
+              - 'environments/dev/**'
+            staging:
+              - 'environments/staging/**'
+            production:
+              - 'environments/production/**'
+            shared:
+              - '*.tf'
+              - 'modules/**'
+              - 'providers/**'
+              - 'scripts/**'
+
+  deploy-dev:
+    name: Deploy dev
+    needs: [detect]
+    if: |
+      (github.event_name == 'push' &&
+        (needs.detect.outputs.dev == 'true' || needs.detect.outputs.shared == 'true'))
+      || (github.event_name == 'workflow_dispatch' && inputs.environment == 'dev')
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Export provider credentials
+        run: |
+          case "${{ secrets.REGISTRY_PROVIDER }}" in
+            aws)
+              echo "AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}" >> "$GITHUB_ENV"
+              echo "AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}" >> "$GITHUB_ENV"
+              ;;
+            scaleway|*)
+              echo "SCW_ACCESS_KEY=${{ secrets.SCW_ACCESS_KEY }}" >> "$GITHUB_ENV"
+              echo "SCW_SECRET_KEY=${{ secrets.SCW_SECRET_KEY }}" >> "$GITHUB_ENV"
+              echo "AWS_ACCESS_KEY_ID=${{ secrets.SCW_ACCESS_KEY }}" >> "$GITHUB_ENV"
+              echo "AWS_SECRET_ACCESS_KEY=${{ secrets.SCW_SECRET_KEY }}" >> "$GITHUB_ENV"
+              ;;
+          esac
+
+      - name: Deploy dev
+        run: |
+          if [[ "${{ inputs.plan_only }}" == "true" ]]; then
+            bash scripts/deploy.sh dev --plan-only
+          else
+            bash scripts/deploy.sh dev
+          fi
+
+  deploy-staging:
+    name: Deploy staging
+    needs: [detect]
+    if: |
+      (github.event_name == 'push' && needs.detect.outputs.staging == 'true')
+      || (github.event_name == 'workflow_dispatch' && inputs.environment == 'staging')
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Export provider credentials
+        run: |
+          case "${{ secrets.REGISTRY_PROVIDER }}" in
+            aws)
+              echo "AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}" >> "$GITHUB_ENV"
+              echo "AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}" >> "$GITHUB_ENV"
+              ;;
+            scaleway|*)
+              echo "SCW_ACCESS_KEY=${{ secrets.SCW_ACCESS_KEY }}" >> "$GITHUB_ENV"
+              echo "SCW_SECRET_KEY=${{ secrets.SCW_SECRET_KEY }}" >> "$GITHUB_ENV"
+              echo "AWS_ACCESS_KEY_ID=${{ secrets.SCW_ACCESS_KEY }}" >> "$GITHUB_ENV"
+              echo "AWS_SECRET_ACCESS_KEY=${{ secrets.SCW_SECRET_KEY }}" >> "$GITHUB_ENV"
+              ;;
+          esac
+
+      - name: Deploy staging
+        run: |
+          if [[ "${{ inputs.plan_only }}" == "true" ]]; then
+            bash scripts/deploy.sh staging --plan-only
+          else
+            bash scripts/deploy.sh staging
+          fi
+
+  deploy-production:
+    name: Deploy production
+    needs: [detect]
+    if: |
+      (github.event_name == 'push' && needs.detect.outputs.production == 'true')
+      || (github.event_name == 'workflow_dispatch' && inputs.environment == 'production')
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT }}
+          fetch-depth: 0
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Export provider credentials
+        run: |
+          case "${{ secrets.REGISTRY_PROVIDER }}" in
+            aws)
+              echo "AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}" >> "$GITHUB_ENV"
+              echo "AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}" >> "$GITHUB_ENV"
+              ;;
+            scaleway|*)
+              echo "SCW_ACCESS_KEY=${{ secrets.SCW_ACCESS_KEY }}" >> "$GITHUB_ENV"
+              echo "SCW_SECRET_KEY=${{ secrets.SCW_SECRET_KEY }}" >> "$GITHUB_ENV"
+              echo "AWS_ACCESS_KEY_ID=${{ secrets.SCW_ACCESS_KEY }}" >> "$GITHUB_ENV"
+              echo "AWS_SECRET_ACCESS_KEY=${{ secrets.SCW_SECRET_KEY }}" >> "$GITHUB_ENV"
+              ;;
+          esac
+
+      - name: Deploy production
+        run: |
+          if [[ "${{ inputs.plan_only }}" == "true" ]]; then
+            bash scripts/deploy.sh production --plan-only
+          else
+            bash scripts/deploy.sh production
+          fi
+
+      - name: Tag release
+        if: ${{ inputs.plan_only != true }}
+        run: |
+          TAG="prod-$(date -u +%Y%m%d-%H%M%S)-$(git rev-parse --short HEAD)"
+          git tag -a "$TAG" -m "Prod deploy $(date -u '+%Y-%m-%d %H:%M UTC') — run ${{ github.run_id }}"
+          git push origin "$TAG"
