@@ -37,6 +37,40 @@ services:
       timeout: 5s
       retries: 5
 
+  redis:
+    image: redis:7-alpine
+    container_name: axiome-redis
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - axiome-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: axiome-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-axiome}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-axiome_local_dev}
+    ports:
+      - "${RABBITMQ_PORT:-5672}:5672"
+      - "${RABBITMQ_MGMT_PORT:-15672}:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - axiome-network
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
   minio:
     image: minio/minio:latest
     container_name: axiome-minio
@@ -82,12 +116,16 @@ services:
     image: node:20-alpine
     container_name: axiome-backend
     working_dir: /app
-    command: sh -c "npm install && npm run start:dev"
+    command: sh -c "apk add --no-cache openssl && npm install && npm run dev"
     environment:
       NODE_ENV: development
       PORT: "3000"
       DATABASE_URL: postgresql://${POSTGRES_USER:-axiome}:${POSTGRES_PASSWORD:-axiome_local_dev}@postgres:5432/${POSTGRES_DB:-axiome}
+      USER_DATABASE_URL: postgresql://${POSTGRES_USER:-axiome}:${POSTGRES_PASSWORD:-axiome_local_dev}@postgres:5432/${POSTGRES_DB:-axiome}?schema=user_svc
+      ORGANIZATION_DATABASE_URL: postgresql://${POSTGRES_USER:-axiome}:${POSTGRES_PASSWORD:-axiome_local_dev}@postgres:5432/${POSTGRES_DB:-axiome}?schema=organization_svc
       MONGODB_URL: mongodb://${MONGODB_USER:-axiome}:${MONGODB_PASSWORD:-axiome_local_dev}@mongodb:27017/${MONGODB_DB:-axiome}?authSource=admin
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-axiome}:${RABBITMQ_PASSWORD:-axiome_local_dev}@rabbitmq:5672
+      REDIS_URL: redis://redis:6379
       S3_ENDPOINT: http://minio:9000
       S3_ACCESS_KEY: ${S3_ACCESS_KEY:-minioadmin}
       S3_SECRET_KEY: ${S3_SECRET_KEY:-minioadmin}
@@ -97,6 +135,10 @@ services:
       S3_FORCE_PATH_STYLE: "true"
       BIOCOMPUTE_URL: http://biocompute:8000
       JWT_SECRET: ${JWT_SECRET:-local-dev-jwt-secret-change-in-production}
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-admin@axiome.local}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-admin}
+      BOOTSTRAP_ADMIN_FIRST_NAME: ${BOOTSTRAP_ADMIN_FIRST_NAME:-Local}
+      BOOTSTRAP_ADMIN_LAST_NAME: ${BOOTSTRAP_ADMIN_LAST_NAME:-Admin}
     ports:
       - "${BACKEND_PORT:-3000}:3000"
     volumes:
@@ -106,6 +148,10 @@ services:
       postgres:
         condition: service_healthy
       mongodb:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
         condition: service_healthy
       minio-init:
         condition: service_completed_successfully
@@ -155,7 +201,7 @@ services:
     working_dir: /app
     command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
     environment:
-      VITE_API_URL: http://localhost:${BACKEND_PORT:-3000}
+      VITE_API_URL: http://localhost:${BACKEND_PORT:-3000}/api/v1
     ports:
       - "${FRONTEND_PORT:-5173}:5173"
     volumes:
@@ -168,6 +214,8 @@ volumes:
   postgres_data:
   mongodb_data:
   minio_data:
+  rabbitmq_data:
+  redis_data:
   backend_node_modules:
   frontend_node_modules:
 
