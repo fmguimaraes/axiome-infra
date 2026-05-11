@@ -49,7 +49,8 @@ resource "mongodbatlas_advanced_cluster" "axiome" {
   project_id     = mongodbatlas_project.axiome.id
   name           = "${var.naming_prefix}-cluster"
   cluster_type   = "REPLICASET"
-  mongo_db_major_version = var.mongo_version
+  # M0 (tenant/Free) locks the MongoDB version — Atlas rejects any value, even matching the actual one.
+  mongo_db_major_version = var.cluster_tier == "M0" ? null : var.mongo_version
 
   replication_specs {
     region_configs {

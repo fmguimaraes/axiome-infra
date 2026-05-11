@@ -4,10 +4,11 @@
 ${fqdn} {
     encode gzip zstd
 
-    # API and biocompute routed to backend
-    @api path /api/* /health /ready
+    # API, docs, websocket, and health routed to gateway.
+    # NestJS applies a global /v1 version prefix; legacy /api/* kept as an alias.
+    @api path /v1/* /api/* /auth/* /docs* /events /events/* /health /ready
     handle @api {
-        reverse_proxy backend:3000 {
+        reverse_proxy gateway:3000 {
             header_up X-Real-IP {remote_host}
             header_up X-Forwarded-Proto {scheme}
         }

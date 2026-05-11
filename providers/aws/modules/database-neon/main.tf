@@ -16,23 +16,18 @@ resource "neon_project" "axiome" {
     suspend_timeout_seconds  = var.autosuspend_seconds
   }
 
-  history_retention_seconds = var.environment == "production" ? 604800 : 86400  # 7d prod / 1d non-prod
-}
-
-resource "neon_branch" "main" {
-  project_id = neon_project.axiome.id
-  name       = "main"
+  history_retention_seconds = var.history_retention_seconds
 }
 
 resource "neon_role" "app" {
   project_id = neon_project.axiome.id
-  branch_id  = neon_branch.main.id
+  branch_id  = neon_project.axiome.default_branch_id
   name       = "axiome_app"
 }
 
 resource "neon_database" "axiome" {
   project_id = neon_project.axiome.id
-  branch_id  = neon_branch.main.id
+  branch_id  = neon_project.axiome.default_branch_id
   name       = "axiome"
   owner_name = neon_role.app.name
 }

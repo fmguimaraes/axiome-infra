@@ -3,7 +3,7 @@ output "project_id" {
 }
 
 output "branch_id" {
-  value = neon_branch.main.id
+  value = neon_project.axiome.default_branch_id
 }
 
 output "database_name" {

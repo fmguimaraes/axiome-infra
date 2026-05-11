@@ -19,6 +19,13 @@ variable "aws_region" {
   default     = "eu-west-3"
 }
 
+variable "create_ecr_repositories" {
+  description = "Whether this env's apply manages the ECR repositories. ECR repos are account-level shared across envs, so exactly one env should own them. Default null = use the legacy rule (production owns)."
+  type        = bool
+  default     = null
+  nullable    = true
+}
+
 variable "domain" {
   description = "Base domain for the platform (e.g., axiome.example.com). Required for Route 53 records and Caddy TLS."
   type        = string
@@ -27,6 +34,12 @@ variable "domain" {
 variable "subdomain" {
   description = "Environment subdomain prefix. dev -> dev.<domain>, prod -> <domain>"
   type        = string
+}
+
+variable "use_route53" {
+  description = "If true, manage the env A record in a pre-existing Route 53 hosted zone for var.domain. If false (default), DNS is configured manually at the domain registrar (e.g., Hostinger) — Terraform only provisions the Lightsail static IP and exposes it via the lightsail_static_ip output."
+  type        = bool
+  default     = false
 }
 
 # ---------------- Lightsail compute ----------------
@@ -47,6 +60,13 @@ variable "lightsail_availability_zone" {
   description = "Lightsail AZ within the region (e.g., eu-west-3a)."
   type        = string
   default     = "eu-west-3a"
+}
+
+variable "lightsail_key_pair_name" {
+  description = "Lightsail keypair name to authorize on the VM. Must already exist in the same region. Set null to use Lightsail's built-in default key (fragile — drifts when rotated in console)."
+  type        = string
+  default     = null
+  nullable    = true
 }
 
 # ---------------- Neon (Postgres) ----------------
@@ -70,9 +90,16 @@ variable "neon_compute_max_cu" {
 }
 
 variable "neon_autosuspend_seconds" {
-  description = "Idle seconds before Neon autosuspends. 0 = never (paid tier only). Free tier minimum ~300."
+  description = "Idle seconds before Neon autosuspends. Set null on Free tier (the API rejects any value). 0 = never suspend (paid plans only)."
   type        = number
-  default     = 300
+  default     = null
+  nullable    = true
+}
+
+variable "neon_history_retention_seconds" {
+  description = "PITR / branch history retention. Free tier max is 21600 (6h). Launch up to 7d, Scale up to 30d."
+  type        = number
+  default     = 21600
 }
 
 # ---------------- Atlas (MongoDB) ----------------

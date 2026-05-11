@@ -2,6 +2,14 @@
 # Cloud-init for Axiome Lightsail VM.
 # Runs once at first boot. Idempotent re-run is safe (apt-get install is no-op,
 # docker compose up replaces running containers, SSM fetch overwrites .env).
+#
+# Lightsail prepends its own preamble to user_data (SSH CA setup), which
+# displaces the shebang from line 1 — execve then falls back to /bin/sh
+# (dash) and bash-isms below fail. The next two lines are POSIX-safe and
+# re-exec the script under bash before any bash-specific syntax is parsed.
+if [ -z "$${BASH_VERSION:-}" ]; then
+    exec /bin/bash "$0" "$@"
+fi
 set -euo pipefail
 
 LOG=/var/log/axiome-init.log

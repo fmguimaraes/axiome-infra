@@ -84,7 +84,7 @@ Each provider has its own bootstrap procedure. The architecture shape is the sam
 | Step | AWS | Scaleway | On-prem connected | On-prem air-gapped |
 |---|---|---|---|---|
 | 1. Cloud account / host | AWS account + IAM user | Scaleway org + IAM API key | Customer-provisioned Linux host | Customer-provisioned Linux host |
-| 2. DNS zone | Route 53 hosted zone | Scaleway DNS zone | Customer DNS | Customer internal DNS |
+| 2. DNS zone | Hostinger (manual A records — see [providers/aws/README.md §0.4](../providers/aws/README.md#04-dns--hostinger-current-setup)) | Scaleway DNS zone | Customer DNS | Customer internal DNS |
 | 3. Neon + Atlas (managed DBs) | One project per env | Same | Same | **Skipped — self-hosted** |
 | 4. State bucket / lock | S3 + DynamoDB | Scaleway Object Storage | N/A (no Terraform per host) | N/A |
 | 5. Apply Terraform / installer | `make apply` | `make apply` | `install.sh --mode connected` | `install.sh --mode airgapped` |

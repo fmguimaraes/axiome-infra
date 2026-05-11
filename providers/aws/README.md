@@ -1,6 +1,6 @@
 # AWS Provider — Bootstrap Guide
 
-Complete Day-0 bootstrap for the AWS provider variant: Lightsail compute + Neon Postgres + Atlas MongoDB + S3 + ECR + Route 53.
+Complete Day-0 bootstrap for the AWS provider variant: Lightsail compute + Neon Postgres + Atlas MongoDB + S3 + ECR. DNS is managed manually in Hostinger (see §0.4); Route 53 is **not** used in the default setup.
 
 This guide is run **once per AWS account, then once per environment**. Subsequent operations use the Makefile targets.
 
@@ -10,16 +10,16 @@ This guide is run **once per AWS account, then once per environment**. Subsequen
 
 | Layer | Service | Per-env cost (Phase 1) |
 |---|---|---|
-| Compute | AWS Lightsail (single VM, 4 GB ARM, $12) running docker-compose | ~$12/mo |
+| Compute | AWS Lightsail (single VM, x86; 2 GB `small_3_0` for dev/staging, 4 GB `medium_3_0` for prod — eu-west-3 has no ARM bundles) running docker-compose | ~$12–24/mo |
 | Postgres | Neon (free for dev, Launch+ for staging/prod) | $0–$19/mo |
 | MongoDB | Atlas (M0 free for dev, M10+ for prod) | $0–$60/mo |
 | Object storage | S3 (3 buckets per env: artifacts, uploads, system) | <$1/mo |
 | Container registry | ECR (account-shared across envs) | <$1/mo |
 | TLS / Reverse proxy | Caddy + Let's Encrypt (on the VM) | $0 |
-| DNS | Route 53 hosted zone (account-shared) | ~$0.50/mo |
+| DNS | Hostinger (manual A records pointing at Lightsail static IPs — see §0.4) | included with domain |
 | Secrets / config | SSM Parameter Store | $0 |
 
-**Three environments**: `dev`, `staging`, `production` — each is one Lightsail VM, one Neon project, one Atlas cluster, three S3 buckets. They share one ECR registry and one Route 53 hosted zone at the AWS-account level.
+**Three environments**: `dev`, `staging`, `production` — each is one Lightsail VM, one Neon project, one Atlas cluster, three S3 buckets, one A record at Hostinger. They share one ECR registry at the AWS-account level. DNS is managed manually in Hostinger (see §0.4); no shared Route 53 zone.
 
 ---
 
@@ -65,24 +65,61 @@ aws sts get-caller-identity
 
 For this project, AWS credentials may already exist at `/home/felipe/dev/quietstage/tarot/back/.env.dev`. Source them or copy into `~/.aws/credentials` — do not commit them.
 
-### 0.4. Register or transfer a domain
+### 0.4. DNS — Hostinger (current setup)
 
-The Terraform stack expects a Route 53 hosted zone for your base domain (e.g., `axiome.example.com`). Set this up once.
+The domain is registered and managed at **Hostinger**. DNS records are created **manually in the Hostinger control panel** pointing at the Lightsail static IPs that Terraform provisions. We do **not** use Route 53 in this setup.
+
+> **Terraform note:** the `providers/aws/modules/dns` module is gated on `var.use_route53` (default **false**). With the default, Terraform does **not** touch Route 53 and `make apply` will not look up a hosted zone — it only provisions the Lightsail static IP, which you then point to manually in Hostinger. To switch back to Route 53 management later, pre-create a hosted zone for `var.domain` and set `use_route53 = true` in the env's `terraform.tfvars`.
+
+#### 0.4.1. Required DNS records (recovery reference)
+
+After `make apply` completes for an environment, retrieve the static IP and add the corresponding A record(s) in Hostinger.
+
+| Environment | FQDN | Record type | Value | TTL |
+|---|---|---|---|---|
+| dev | `dev.axiomebio.com` | A | `<lightsail-static-ip-dev>` | 300 |
+| staging | `staging.axiomebio.com` | A | `<lightsail-static-ip-staging>` | 300 |
+| production | `platform.axiomebio.com` | A | `<lightsail-static-ip-prod>` | 300 |
+
+The apex `axiomebio.com` is the marketing landing page and is **not** managed by this Terraform stack — leave its existing A/CNAME records in Hostinger untouched.
+
+#### 0.4.2. How to retrieve the static IP from Terraform
 
 ```bash
-# Option A: Register through Route 53 (~$12/year for .com)
-#   Console → Route 53 → Registered domains → Register domain
-#
-# Option B: External registrar (Gandi/Namecheap) — create a Route 53 hosted zone
-#   and update the registrar's nameservers to Route 53's NS records.
-
-aws route53 create-hosted-zone \
-    --name axiome.example.com \
-    --caller-reference "$(date +%s)"
-
-# Note the four NS records returned and update them at the registrar.
-# Verification with `dig` may take 1–24h to propagate.
+cd providers/aws
+terraform output -raw lightsail_static_ip   # for the currently-init'd env
+# or, per-env without switching backends:
+make output ENV=dev   | grep static_ip
+make output ENV=staging | grep static_ip
+make output ENV=prod  | grep static_ip
 ```
+
+#### 0.4.3. How to configure in Hostinger
+
+1. Log in to Hostinger → **Domains** → select the base domain → **DNS / Nameservers**.
+2. Confirm Hostinger's default nameservers are active (NOT delegated to Route 53). If they were ever pointed elsewhere, restore them from Hostinger's panel.
+3. Add or update the A records from the table above. For the production apex, edit the existing `@` record; for subdomains, create a new A record with the env name as the host.
+4. Save. Propagation: typically ~5 min on Hostinger, but TLS issuance via Caddy may need up to ~10 min after DNS resolves.
+5. Verify:
+   ```bash
+   dig +short dev.axiomebio.com   # should return the Lightsail IP
+   curl -fsS https://dev.axiomebio.com/health
+   ```
+
+#### 0.4.4. Recovery procedure (if DNS records are lost or domain is migrated)
+
+If the Hostinger DNS configuration is wiped or the domain is moved between Hostinger accounts:
+
+1. Confirm the Lightsail VMs are still running and have their static IPs:
+   ```bash
+   aws lightsail get-static-ips --region eu-west-3 \
+     --query 'staticIps[].{Name:name,IP:ipAddress,AttachedTo:attachedTo}' --output table
+   ```
+2. For each env, recreate the A record per the table in §0.4.1 using the IPs from step 1.
+3. If the domain itself was moved, also re-verify ownership / re-enable email forwarding / etc. from Hostinger's domain page.
+4. Wait for propagation, then re-run the verification curls in [§1.9](#19-verify).
+
+**No data is at risk during DNS recovery** — Postgres lives in Neon, MongoDB in Atlas, blobs in S3. Only the public name → IP mapping is being restored.
 
 ### 0.5. Create Neon and Atlas accounts (one-time)
 
@@ -113,7 +150,7 @@ export TF_VAR_atlas_org_id="<organization-id>"
 
 ### 0.6. Scope down Terraform IAM (recommended after first apply)
 
-After the first successful `terraform apply`, replace the AdministratorAccess policy on `axiome-terraform` with the least-privilege set covering only the resources Terraform manages (Lightsail, S3, IAM, ECR, SSM, Route 53, DynamoDB). This is the standard production-hygiene step. A policy template is at [docs/iam-terraform-policy.json](../../docs/iam-terraform-policy.json) (create separately as the policy stabilizes).
+After the first successful `terraform apply`, replace the AdministratorAccess policy on `axiome-terraform` with the least-privilege set covering only the resources Terraform manages (Lightsail, S3, IAM, ECR, SSM, DynamoDB — plus Route 53 only if you flip `use_route53 = true`; the default Hostinger setup does not need it). This is the standard production-hygiene step. A policy template is at [docs/iam-terraform-policy.json](../../docs/iam-terraform-policy.json) (create separately as the policy stabilizes).
 
 ---
 
@@ -149,14 +186,17 @@ The bootstrap state is local (`bootstrap/terraform.tfstate`). Back it up to your
 Edit `providers/aws/environments/<env>/terraform.tfvars`:
 
 ```hcl
-domain    = "axiome.example.com"   # Your Route 53 hosted zone
-subdomain = "dev"                   # dev → dev.axiome.example.com
-                                    # staging → staging.axiome.example.com
+domain    = "axiomebio.com"   # Your base domain registered at Hostinger
+subdomain = "dev"                   # dev → dev.axiomebio.com
+                                    # staging → staging.axiomebio.com
                                     # production → "" (apex)
 atlas_org_id = "<your-atlas-org-id>"  # From 0.5
+# use_route53 = false               # default; leave unset for Hostinger DNS
 ```
 
 Sensitive values (`atlas_org_id` is benign; the API keys are sensitive) flow through environment variables — never commit them.
+
+After `make apply` completes, retrieve the Lightsail static IP and add the matching A record(s) in the Hostinger DNS panel — see [§0.4.1](#041-required-dns-records-recovery-reference) for the table and [§0.4.3](#043-how-to-configure-in-hostinger) for the click-path.
 
 ### 1.3. Initialize Terraform with the remote backend
 
@@ -185,7 +225,7 @@ Expected resources for dev (~30):
 - ~8 SSM parameters
 - 1 Neon project + branch + role + database
 - 1 Atlas project + cluster + DB user + IP allowlist
-- 1 Route 53 record
+- *(DNS: configured manually in Hostinger after apply — see §0.4)*
 
 ### 1.5. Apply
 
@@ -264,14 +304,14 @@ For Atlas, MongoDB collections are created lazily on first write; no migration s
 
 ```bash
 # DNS resolves
-dig +short dev.axiome.example.com
+dig +short dev.axiomebio.com
 
 # Health checks (allow ~60s for Caddy to issue cert)
-curl -fsS https://dev.axiome.example.com/health
-curl -fsS https://dev.axiome.example.com/ready
+curl -fsS https://dev.axiomebio.com/health
+curl -fsS https://dev.axiomebio.com/ready
 
 # Frontend loads
-curl -fsS https://dev.axiome.example.com/
+curl -fsS https://dev.axiomebio.com/
 ```
 
 If TLS issuance fails, check Caddy logs: `ssh ubuntu@<ip> 'sudo docker compose -f /opt/axiome/docker-compose.yml logs caddy'`.
@@ -368,7 +408,7 @@ State (Postgres data, Mongo data, S3 objects) is unaffected because it lives in 
 
 ### Change Lightsail bundle (vertical scale)
 
-Update `lightsail_bundle_id` in tfvars (e.g., `large_arm_3_0` for 8 GB / 2 vCPU at $24/mo) and run `make apply`. Lightsail rebuilds the instance — **expect ~2 min downtime** and re-run cloud-init from scratch.
+Update `lightsail_bundle_id` in tfvars (e.g., `medium_3_0` for 4 GB / 2 vCPU at $24/mo, or `large_3_0` for 8 GB / 2 vCPU at $44/mo in eu-west-3) and run `make apply`. Lightsail rebuilds the instance — **expect ~2 min downtime** and re-run cloud-init from scratch. Run `aws lightsail get-bundles --region <region>` to see what's available before changing.
 
 ### Tear down
 
@@ -390,7 +430,7 @@ make destroy ENV=dev
 | `docker pull` fails on VM | ECR token expired (12h) | `/etc/cron.hourly/ecr-relogin` runs hourly; re-run manually if needed |
 | Neon connection refused | Neon free tier autosuspend | First request takes ~1–2s to wake; subsequent requests fast |
 | Atlas connection timeout | IP allowlist | Atlas allows `0.0.0.0/0` in this stack; tighten for production via `mongodbatlas_project_ip_access_list` |
-| OOM kills | 4 GB Lightsail too small | Either upgrade bundle (`large_arm_3_0`) or tighten container `mem_limit` in docker-compose |
+| OOM kills | Lightsail bundle too small (2 GB on small_3_0 is tight for 4 services) | Upgrade bundle (`medium_3_0` → 4 GB, `large_3_0` → 8 GB) or tighten container `mem_limit` in docker-compose |
 | Apply fails on `aws_iam_access_key` | Race condition (rare) | Re-run `terraform apply` |
 
 ---

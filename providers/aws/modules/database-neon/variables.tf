@@ -21,6 +21,14 @@ variable "compute_max_cu" {
 }
 
 variable "autosuspend_seconds" {
-  type    = number
-  default = 300
+  description = "Idle seconds before Neon suspends compute. Set to null on Free tier (the API rejects modifying this attribute). Set to 0 to disable suspend (paid plans only)."
+  type        = number
+  default     = null
+  nullable    = true
+}
+
+variable "history_retention_seconds" {
+  description = "PITR / branch history retention. Free tier max is 21600 (6h). Launch supports up to 7 days; Scale up to 30 days."
+  type        = number
+  default     = 21600
 }

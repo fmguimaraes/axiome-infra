@@ -1,6 +1,11 @@
 output "fqdn" {
-  description = "Public FQDN of this environment"
-  value       = module.dns.fqdn
+  description = "Public FQDN of this environment (computed from subdomain + domain). DNS A record is created by Terraform only when use_route53 = true; otherwise configure it manually at the registrar."
+  value       = local.fqdn
+}
+
+output "dns_managed_by_terraform" {
+  description = "Whether the A record for fqdn is managed by Terraform (Route 53). When false, point fqdn at lightsail_static_ip manually at the registrar."
+  value       = var.use_route53
 }
 
 output "lightsail_static_ip" {

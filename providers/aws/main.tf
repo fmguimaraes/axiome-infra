@@ -41,7 +41,7 @@ module "storage" {
 module "registry" {
   source = "./modules/registry"
 
-  create_repositories = var.environment == "production"
+  create_repositories = coalesce(var.create_ecr_repositories, var.environment == "production")
   project_name        = var.project_name
   tags                = local.base_tags
 }
@@ -62,6 +62,7 @@ module "secrets" {
   s3_region           = var.aws_region
   ecr_registry        = module.registry.registry_url
   domain              = local.fqdn
+  fqdn                = local.fqdn
   tags                = local.base_tags
 }
 
@@ -70,12 +71,13 @@ module "secrets" {
 module "database_neon" {
   source = "./modules/database-neon"
 
-  naming_prefix      = local.naming_prefix
-  environment        = var.environment
-  region_id          = var.neon_project_region_id
-  compute_min_cu     = var.neon_compute_min_cu
-  compute_max_cu     = var.neon_compute_max_cu
-  autosuspend_seconds = var.neon_autosuspend_seconds
+  naming_prefix             = local.naming_prefix
+  environment               = var.environment
+  region_id                 = var.neon_project_region_id
+  compute_min_cu            = var.neon_compute_min_cu
+  compute_max_cu            = var.neon_compute_max_cu
+  autosuspend_seconds       = var.neon_autosuspend_seconds
+  history_retention_seconds = var.neon_history_retention_seconds
 }
 
 # ---------------- Database — Atlas (MongoDB) ----------------
@@ -103,6 +105,7 @@ module "compute" {
   availability_zone      = var.lightsail_availability_zone
   blueprint_id           = var.lightsail_blueprint_id
   bundle_id              = var.lightsail_bundle_id
+  key_pair_name          = var.lightsail_key_pair_name
   fqdn                   = local.fqdn
 
   ssm_parameter_prefix   = module.secrets.parameter_prefix
@@ -123,10 +126,13 @@ module "compute" {
   ]
 }
 
-# ---------------- DNS (Route 53) ----------------
+# ---------------- DNS (Route 53 — optional) ----------------
+# Only created when var.use_route53 = true. Default deployment manages DNS
+# manually at the registrar (Hostinger) — see providers/aws/README.md §0.4.
 
 module "dns" {
   source = "./modules/dns"
+  count  = var.use_route53 ? 1 : 0
 
   domain      = var.domain
   fqdn        = local.fqdn

@@ -58,3 +58,10 @@ variable "tags" {
   type    = map(string)
   default = {}
 }
+
+variable "key_pair_name" {
+  description = "Lightsail keypair to inject as authorized_keys. Must already exist in the same region (create via Lightsail console or aws_lightsail_key_pair). Default null = use Lightsail's built-in default key, which can drift if rotated in the console."
+  type        = string
+  default     = null
+  nullable    = true
+}

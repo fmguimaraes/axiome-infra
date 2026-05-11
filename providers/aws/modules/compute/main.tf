@@ -32,7 +32,12 @@ resource "aws_iam_user_policy" "lightsail_runtime" {
           "ssm:GetParameters",
           "ssm:GetParametersByPath",
         ]
-        Resource = "arn:aws:ssm:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:parameter${var.ssm_parameter_prefix}/*"
+        # GetParametersByPath authorizes against the path resource itself (no trailing /*),
+        # while GetParameter/GetParameters authorize against each child. Grant both.
+        Resource = [
+          "arn:aws:ssm:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:parameter${var.ssm_parameter_prefix}",
+          "arn:aws:ssm:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:parameter${var.ssm_parameter_prefix}/*",
+        ]
       },
       {
         Effect = "Allow"
@@ -99,6 +104,7 @@ resource "aws_lightsail_instance" "main" {
   availability_zone = var.availability_zone
   blueprint_id      = var.blueprint_id
   bundle_id         = var.bundle_id
+  key_pair_name     = var.key_pair_name
   user_data         = local.cloud_init
 
   tags = var.tags

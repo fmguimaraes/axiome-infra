@@ -11,30 +11,73 @@ services:
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
-      - backend
+      - gateway
       - frontend
     networks:
       - axiome
     mem_limit: 128m
     cpus: 0.25
 
-  backend:
-    image: $${ECR_REGISTRY}/axiome/backend:$${BACKEND_IMAGE_TAG}
-    container_name: axiome-backend
+  rabbitmq:
+    image: rabbitmq:3.13-alpine
+    container_name: axiome-rabbitmq
     restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-axiome}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - axiome
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    mem_limit: 384m
+    cpus: 0.5
+
+  redis:
+    image: redis:7-alpine
+    container_name: axiome-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    networks:
+      - axiome
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    mem_limit: 128m
+    cpus: 0.25
+
+  gateway:
+    image: ${ECR_REGISTRY}/axiome/backend:${BACKEND_IMAGE_TAG}
+    container_name: axiome-gateway
+    restart: unless-stopped
+    command: ["node", "dist/apps/gateway/main.js"]
     env_file:
       - .env
     environment:
       NODE_ENV: production
       PORT: "3000"
-      DATABASE_URL: $${DATABASE_URL}
-      MONGODB_URL: $${MONGODB_URL}
-      S3_REGION: $${S3_REGION}
-      S3_BUCKET_ARTIFACTS: $${S3_BUCKET_ARTIFACTS}
-      S3_BUCKET_UPLOADS: $${S3_BUCKET_UPLOADS}
-      S3_BUCKET_SYSTEM: $${S3_BUCKET_SYSTEM}
-      JWT_SECRET: $${JWT_SECRET}
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-axiome}:${RABBITMQ_PASSWORD}@rabbitmq:5672
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: ${JWT_SECRET}
+      CORS_ORIGINS: ${CORS_ORIGINS}
       BIOCOMPUTE_URL: http://biocompute:8000
+      USER_SERVICE_URL: http://user-service:3002
+      ORGANIZATION_SERVICE_URL: http://organization-service:3004
+      EVENT_SERVICE_URL: http://event-service:3003
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     networks:
       - axiome
     healthcheck:
@@ -43,21 +86,88 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
-    mem_limit: 1g
-    cpus: 1.0
+    mem_limit: 512m
+    cpus: 0.5
+
+  user-service:
+    image: ${ECR_REGISTRY}/axiome/backend:${BACKEND_IMAGE_TAG}
+    container_name: axiome-user-service
+    restart: unless-stopped
+    command: ["node", "dist/apps/user-service/main.js"]
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      PORT: "3002"
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-axiome}:${RABBITMQ_PASSWORD}@rabbitmq:5672
+      USER_DATABASE_URL: ${USER_DATABASE_URL}
+      JWT_SECRET: ${JWT_SECRET}
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - axiome
+    mem_limit: 512m
+    cpus: 0.5
+
+  organization-service:
+    image: ${ECR_REGISTRY}/axiome/backend:${BACKEND_IMAGE_TAG}
+    container_name: axiome-organization-service
+    restart: unless-stopped
+    command: ["node", "dist/apps/organization-service/main.js"]
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      PORT: "3004"
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-axiome}:${RABBITMQ_PASSWORD}@rabbitmq:5672
+      ORGANIZATION_DATABASE_URL: ${ORGANIZATION_DATABASE_URL}
+      S3_REGION: ${S3_REGION}
+      S3_BUCKET_ARTIFACTS: ${S3_BUCKET_ARTIFACTS}
+      S3_BUCKET_UPLOADS: ${S3_BUCKET_UPLOADS}
+      S3_BUCKET_SYSTEM: ${S3_BUCKET_SYSTEM}
+      JWT_SECRET: ${JWT_SECRET}
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - axiome
+    mem_limit: 512m
+    cpus: 0.5
+
+  event-service:
+    image: ${ECR_REGISTRY}/axiome/backend:${BACKEND_IMAGE_TAG}
+    container_name: axiome-event-service
+    restart: unless-stopped
+    command: ["node", "dist/apps/event-service/main.js"]
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      PORT: "3003"
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-axiome}:${RABBITMQ_PASSWORD}@rabbitmq:5672
+      MONGODB_URL: ${MONGODB_URL}
+      JWT_SECRET: ${JWT_SECRET}
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - axiome
+    mem_limit: 384m
+    cpus: 0.5
 
   biocompute:
-    image: $${ECR_REGISTRY}/axiome/biocompute:$${BIOCOMPUTE_IMAGE_TAG}
+    image: ${ECR_REGISTRY}/axiome/biocompute:${BIOCOMPUTE_IMAGE_TAG}
     container_name: axiome-biocompute
     restart: unless-stopped
     env_file:
       - .env
     environment:
       PYTHON_ENV: production
-      PORT: "8000"
-      DATABASE_URL: $${DATABASE_URL}
-      S3_REGION: $${S3_REGION}
-      S3_BUCKET_ARTIFACTS: $${S3_BUCKET_ARTIFACTS}
+      BIO_COMPUTE_PORT: "8000"
+      BIO_COMPUTE_DASHBOARD_DB_URL: ${DATABASE_URL}
+      BIO_COMPUTE_JWT_SECRET: ${JWT_SECRET}
+      BIO_COMPUTE_S3_BUCKET: ${S3_BUCKET_ARTIFACTS}
     networks:
       - axiome
     healthcheck:
@@ -70,7 +180,7 @@ services:
     cpus: 1.5
 
   frontend:
-    image: $${ECR_REGISTRY}/axiome/frontend:$${FRONTEND_IMAGE_TAG}
+    image: ${ECR_REGISTRY}/axiome/frontend:${FRONTEND_IMAGE_TAG}
     container_name: axiome-frontend
     restart: unless-stopped
     networks:
@@ -81,6 +191,8 @@ services:
 volumes:
   caddy_data:
   caddy_config:
+  rabbitmq_data:
+  redis_data:
 
 networks:
   axiome:

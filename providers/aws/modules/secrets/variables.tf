@@ -40,6 +40,11 @@ variable "domain" {
   type = string
 }
 
+variable "fqdn" {
+  description = "Full qualified domain for this env, used as the default CORS origin (e.g., dev.axiomebio.com)."
+  type        = string
+}
+
 variable "tags" {
   type    = map(string)
   default = {}

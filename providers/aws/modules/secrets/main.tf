@@ -11,6 +11,11 @@ resource "random_password" "jwt_secret" {
   special = false
 }
 
+resource "random_password" "rabbitmq" {
+  length  = 32
+  special = false
+}
+
 resource "aws_ssm_parameter" "database_url" {
   name  = "${local.prefix}/DATABASE_URL"
   type  = "SecureString"
@@ -71,6 +76,49 @@ resource "aws_ssm_parameter" "jwt_secret" {
   name  = "${local.prefix}/JWT_SECRET"
   type  = "SecureString"
   value = random_password.jwt_secret.result
+  tags  = var.tags
+}
+
+# Per-service Postgres URLs. Phase 1: shared Neon database, isolated via per-service
+# Postgres schemas so `prisma db push` from one service can't drop another's tables.
+# Each schema must be created (CREATE SCHEMA <name>) before Prisma migrates against it.
+# Phase 2: split into per-service Neon projects when traffic justifies it.
+locals {
+  separator = strcontains(var.postgres_url, "?") ? "&" : "?"
+}
+
+resource "aws_ssm_parameter" "user_database_url" {
+  name  = "${local.prefix}/USER_DATABASE_URL"
+  type  = "SecureString"
+  value = "${var.postgres_url}${local.separator}schema=user_svc"
+  tags  = var.tags
+}
+
+resource "aws_ssm_parameter" "organization_database_url" {
+  name  = "${local.prefix}/ORGANIZATION_DATABASE_URL"
+  type  = "SecureString"
+  value = "${var.postgres_url}${local.separator}schema=organization_svc"
+  tags  = var.tags
+}
+
+resource "aws_ssm_parameter" "rabbitmq_user" {
+  name  = "${local.prefix}/RABBITMQ_USER"
+  type  = "String"
+  value = "axiome"
+  tags  = var.tags
+}
+
+resource "aws_ssm_parameter" "rabbitmq_password" {
+  name  = "${local.prefix}/RABBITMQ_PASSWORD"
+  type  = "SecureString"
+  value = random_password.rabbitmq.result
+  tags  = var.tags
+}
+
+resource "aws_ssm_parameter" "cors_origins" {
+  name  = "${local.prefix}/CORS_ORIGINS"
+  type  = "String"
+  value = "https://${var.fqdn}"
   tags  = var.tags
 }
 

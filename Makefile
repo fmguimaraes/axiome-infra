@@ -16,17 +16,19 @@ destroy:
 	terraform destroy -var-file=environments/$(ENV)/terraform.tfvars
 
 # Local development
+DOCKER_COMPOSE := $(shell docker compose version >/dev/null 2>&1 && echo "docker compose" || echo "docker-compose")
+
 local-up:
-	docker compose -f docker-compose.yml up -d
+	$(DOCKER_COMPOSE) -f docker-compose.yml up -d
 
 local-down:
-	docker compose -f docker-compose.yml down
+	$(DOCKER_COMPOSE) -f docker-compose.yml down
 
 local-restart:
-	docker compose -f docker-compose.yml down && docker compose -f docker-compose.yml up -d
+	$(DOCKER_COMPOSE) -f docker-compose.yml down && $(DOCKER_COMPOSE) -f docker-compose.yml up -d
 
 local-logs:
-	docker compose -f docker-compose.yml logs -f
+	$(DOCKER_COMPOSE) -f docker-compose.yml logs -f
 
 # Utilities
 fmt:
