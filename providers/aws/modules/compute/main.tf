@@ -99,6 +99,10 @@ resource "aws_lightsail_static_ip" "main" {
   name = "${var.naming_prefix}-ip"
 }
 
+resource "terraform_data" "user_data_hash" {
+  input = sha256(local.cloud_init)
+}
+
 resource "aws_lightsail_instance" "main" {
   name              = "${var.naming_prefix}-vm"
   availability_zone = var.availability_zone
@@ -108,6 +112,13 @@ resource "aws_lightsail_instance" "main" {
   user_data         = local.cloud_init
 
   tags = var.tags
+
+  # The aws_lightsail_instance provider sometimes fails to detect user_data
+  # diffs, leaving instances on stale cloud-init. Hash the rendered
+  # cloud-init explicitly and use it as a replacement trigger.
+  lifecycle {
+    replace_triggered_by = [terraform_data.user_data_hash]
+  }
 }
 
 resource "aws_lightsail_static_ip_attachment" "main" {
