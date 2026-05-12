@@ -54,3 +54,25 @@ output "ssm_parameter_prefix" {
   description = "SSM Parameter Store prefix where runtime config is stored"
   value       = module.secrets.parameter_prefix
 }
+
+# ---------------- Edge outputs (only populated when use_cloudfront_edge = true) ----------------
+
+output "cloudfront_domain_name" {
+  description = "CloudFront distribution domain. After ACM validates, create a CNAME at the registrar: <fqdn> -> this value (replacing the prior A record pointing at lightsail_static_ip)."
+  value       = try(module.edge[0].cloudfront_domain_name, null)
+}
+
+output "cloudfront_distribution_id" {
+  description = "CloudFront distribution ID — useful for cache invalidations."
+  value       = try(module.edge[0].cloudfront_distribution_id, null)
+}
+
+output "acm_certificate_arn" {
+  description = "ARN of the edge ACM certificate (us-east-1)."
+  value       = try(module.edge[0].acm_certificate_arn, null)
+}
+
+output "acm_validation_records" {
+  description = "DNS records to add at the registrar for ACM validation (paste into Hostinger)."
+  value       = try(module.edge[0].acm_validation_records, [])
+}

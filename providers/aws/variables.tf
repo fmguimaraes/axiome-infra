@@ -153,6 +153,39 @@ variable "frontend_image_tag" {
   default     = "latest"
 }
 
+# ---------------- Edge (CloudFront + ACM) ----------------
+
+variable "use_cloudfront_edge" {
+  description = <<-EOT
+    When true, provision an ACM cert (us-east-1) and CloudFront distribution
+    in front of the Lightsail VM, and switch Caddy on the VM to plain HTTP on
+    port 80. Decouples TLS from the VM lifecycle so destroy/create of the
+    Lightsail instance no longer disturbs certs (avoids today's Let's Encrypt
+    rate-limit incident where ~5 recreates burned the 5/168h limit).
+
+    DNS isn't terraform-managed (Hostinger), so two manual records at the
+    registrar are required: an ACM validation CNAME and a final CNAME from
+    var.fqdn -> the cloudfront_domain_name output.
+
+    Default false so existing envs keep their current Caddy-LE flow.
+  EOT
+  type        = bool
+  default     = false
+}
+
+variable "import_acm_cert_arn" {
+  description = <<-EOT
+    Optional ARN of a pre-existing ACM cert (us-east-1) to adopt into state
+    instead of creating a new one. Set this when an operator already issued
+    a cert via `aws acm request-certificate` and you want terraform to take
+    ownership on the next apply. Leave null to let terraform create the cert
+    itself. Only honored when use_cloudfront_edge = true.
+  EOT
+  type        = string
+  default     = null
+  nullable    = true
+}
+
 # ---------------- Tags ----------------
 
 variable "common_tags" {

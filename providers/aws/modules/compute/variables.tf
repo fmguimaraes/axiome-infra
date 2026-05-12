@@ -65,3 +65,15 @@ variable "key_pair_name" {
   default     = null
   nullable    = true
 }
+
+variable "behind_proxy" {
+  description = <<-EOT
+    When true, Caddy on the VM serves plain HTTP on :80 with auto_https off,
+    expecting an upstream TLS terminator (CloudFront via the edge module).
+    When false (default), Caddy listens on :443 and manages its own LE certs
+    for var.fqdn. Switching to true also strips the proxy auth/proto header
+    injection — CloudFront handles those.
+  EOT
+  type        = bool
+  default     = false
+}

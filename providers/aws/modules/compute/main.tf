@@ -73,7 +73,8 @@ resource "aws_iam_access_key" "lightsail_runtime" {
 # Cloud-init user_data renders the deploy stack onto the VM at first boot.
 locals {
   caddyfile = templatefile("${path.module}/../../cloud-init/Caddyfile.tftpl", {
-    fqdn = var.fqdn
+    fqdn         = var.fqdn
+    behind_proxy = var.behind_proxy
   })
 
   docker_compose_yml = file("${path.module}/../../cloud-init/docker-compose.yml")

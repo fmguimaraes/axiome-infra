@@ -1,6 +1,57 @@
 # Auto-generated Caddyfile for ${fqdn}
-# Caddy fetches Let's Encrypt certs automatically.
+#
+# Two modes, selected by the `behind_proxy` template variable:
+#   - false (default): Caddy terminates TLS itself via Let's Encrypt.
+#       Listens on :443 with auto-managed certs.
+#   - true: TLS is terminated upstream (e.g. CloudFront). Caddy serves
+#       plain HTTP on :80. No ACME, no caddy_data dependency on cert lifecycle.
+#
+# Why the toggle exists: repeated Lightsail destroy/create on user_data
+# changes wipes the caddy_data volume, forcing fresh LE issuance and
+# eventually tripping the 5 certs / exact-identifier / 168h rate limit.
+# Moving TLS to CloudFront (var.use_cloudfront_edge in terraform) breaks
+# that coupling.
 
+%{ if behind_proxy ~}
+{
+    # CloudFront handles all public TLS. Caddy has no public-facing cert work.
+    auto_https off
+    servers {
+        trusted_proxies static private_ranges
+    }
+}
+
+# Bind to :80 explicitly. CloudFront -> Lightsail static IP -> here.
+:80 {
+    encode gzip zstd
+
+    # API, docs, websocket, and health routed to gateway.
+    @api path /v1/* /api/* /auth/* /docs* /events /events/* /health /ready
+    handle @api {
+        reverse_proxy gateway:3000
+    }
+
+    # Everything else -> frontend (static React)
+    handle {
+        reverse_proxy frontend:80
+    }
+
+    # HSTS is also set by CloudFront, but emit it here so changes are
+    # tracked alongside the rest of the security header set.
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        -Server
+    }
+
+    log {
+        output stdout
+        format json
+    }
+}
+%{ else ~}
 ${fqdn} {
     encode gzip zstd
 
@@ -33,3 +84,4 @@ ${fqdn} {
         format json
     }
 }
+%{ endif ~}
