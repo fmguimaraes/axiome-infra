@@ -93,19 +93,13 @@ jobs:
           terraform_version: ${{ env.TF_VERSION }}
 
       - name: Export provider credentials
-        run: |
-          case "${{ secrets.REGISTRY_PROVIDER }}" in
-            aws)
-              echo "AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}" >> "$GITHUB_ENV"
-              echo "AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}" >> "$GITHUB_ENV"
-              ;;
-            scaleway|*)
-              echo "SCW_ACCESS_KEY=${{ secrets.SCW_ACCESS_KEY }}" >> "$GITHUB_ENV"
-              echo "SCW_SECRET_KEY=${{ secrets.SCW_SECRET_KEY }}" >> "$GITHUB_ENV"
-              echo "AWS_ACCESS_KEY_ID=${{ secrets.SCW_ACCESS_KEY }}" >> "$GITHUB_ENV"
-              echo "AWS_SECRET_ACCESS_KEY=${{ secrets.SCW_SECRET_KEY }}" >> "$GITHUB_ENV"
-              ;;
-          esac
+        uses: ./.github/actions/export-deploy-credentials
+        with:
+          registry_provider: ${{ vars.REGISTRY_PROVIDER || secrets.REGISTRY_PROVIDER }}
+          aws_access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          scw_access_key: ${{ secrets.SCW_ACCESS_KEY }}
+          scw_secret_key: ${{ secrets.SCW_SECRET_KEY }}
 
       - name: Deploy dev
         run: |
@@ -131,19 +125,13 @@ jobs:
           terraform_version: ${{ env.TF_VERSION }}
 
       - name: Export provider credentials
-        run: |
-          case "${{ secrets.REGISTRY_PROVIDER }}" in
-            aws)
-              echo "AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}" >> "$GITHUB_ENV"
-              echo "AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}" >> "$GITHUB_ENV"
-              ;;
-            scaleway|*)
-              echo "SCW_ACCESS_KEY=${{ secrets.SCW_ACCESS_KEY }}" >> "$GITHUB_ENV"
-              echo "SCW_SECRET_KEY=${{ secrets.SCW_SECRET_KEY }}" >> "$GITHUB_ENV"
-              echo "AWS_ACCESS_KEY_ID=${{ secrets.SCW_ACCESS_KEY }}" >> "$GITHUB_ENV"
-              echo "AWS_SECRET_ACCESS_KEY=${{ secrets.SCW_SECRET_KEY }}" >> "$GITHUB_ENV"
-              ;;
-          esac
+        uses: ./.github/actions/export-deploy-credentials
+        with:
+          registry_provider: ${{ vars.REGISTRY_PROVIDER || secrets.REGISTRY_PROVIDER }}
+          aws_access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          scw_access_key: ${{ secrets.SCW_ACCESS_KEY }}
+          scw_secret_key: ${{ secrets.SCW_SECRET_KEY }}
 
       - name: Deploy staging
         run: |
@@ -172,19 +160,13 @@ jobs:
           terraform_version: ${{ env.TF_VERSION }}
 
       - name: Export provider credentials
-        run: |
-          case "${{ secrets.REGISTRY_PROVIDER }}" in
-            aws)
-              echo "AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}" >> "$GITHUB_ENV"
-              echo "AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}" >> "$GITHUB_ENV"
-              ;;
-            scaleway|*)
-              echo "SCW_ACCESS_KEY=${{ secrets.SCW_ACCESS_KEY }}" >> "$GITHUB_ENV"
-              echo "SCW_SECRET_KEY=${{ secrets.SCW_SECRET_KEY }}" >> "$GITHUB_ENV"
-              echo "AWS_ACCESS_KEY_ID=${{ secrets.SCW_ACCESS_KEY }}" >> "$GITHUB_ENV"
-              echo "AWS_SECRET_ACCESS_KEY=${{ secrets.SCW_SECRET_KEY }}" >> "$GITHUB_ENV"
-              ;;
-          esac
+        uses: ./.github/actions/export-deploy-credentials
+        with:
+          registry_provider: ${{ vars.REGISTRY_PROVIDER || secrets.REGISTRY_PROVIDER }}
+          aws_access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          scw_access_key: ${{ secrets.SCW_ACCESS_KEY }}
+          scw_secret_key: ${{ secrets.SCW_SECRET_KEY }}
 
       - name: Deploy production
         run: |
