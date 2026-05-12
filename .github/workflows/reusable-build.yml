@@ -22,6 +22,65 @@ jobs:
         id: meta
         run: echo "tag=$(echo '${{ github.sha }}' | cut -c1-8)" >> "$GITHUB_OUTPUT"
 
+      - name: Debug context
+        env:
+          REGISTRY_PROVIDER: ${{ secrets.REGISTRY_PROVIDER }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          SCW_REGISTRY_ENDPOINT: ${{ secrets.SCW_REGISTRY_ENDPOINT }}
+          SCW_SECRET_KEY: ${{ secrets.SCW_SECRET_KEY }}
+          VAR_REGISTRY_PROVIDER: ${{ vars.REGISTRY_PROVIDER }}
+          VAR_AWS_REGION: ${{ vars.AWS_REGION }}
+        run: |
+          set -u
+          probe() {
+            local name="$1" value="${2-}"
+            if [[ -z "${value}" ]]; then
+              printf '  %-26s EMPTY\n' "${name}"
+            else
+              printf '  %-26s set (len=%d)\n' "${name}" "${#value}"
+            fi
+          }
+          echo "::group::Workflow context"
+          echo "  service_name:        ${{ inputs.service_name }}"
+          echo "  event_name:          ${{ github.event_name }}"
+          echo "  ref:                 ${{ github.ref }}"
+          echo "  sha:                 ${{ github.sha }}"
+          echo "  repository:          ${{ github.repository }}"
+          echo "  workflow_sha:        ${{ github.workflow_sha }}"
+          echo "  reusable workflow:   axiome-infra ($(git -C "${GITHUB_WORKSPACE}" log -1 --format='%H' 2>/dev/null || echo n/a))"
+          echo "::endgroup::"
+
+          echo "::group::Secret presence (values masked by GH; we only print length)"
+          probe "secrets.REGISTRY_PROVIDER" "${REGISTRY_PROVIDER:-}"
+          probe "secrets.AWS_REGION"        "${AWS_REGION:-}"
+          probe "secrets.AWS_ACCOUNT_ID"    "${AWS_ACCOUNT_ID:-}"
+          probe "secrets.AWS_ACCESS_KEY_ID" "${AWS_ACCESS_KEY_ID:-}"
+          probe "secrets.AWS_SECRET_ACCESS_KEY" "${AWS_SECRET_ACCESS_KEY:-}"
+          probe "secrets.SCW_REGISTRY_ENDPOINT" "${SCW_REGISTRY_ENDPOINT:-}"
+          probe "secrets.SCW_SECRET_KEY"    "${SCW_SECRET_KEY:-}"
+          echo "::endgroup::"
+
+          echo "::group::Variable presence (vars.* context, separate from secrets.*)"
+          probe "vars.REGISTRY_PROVIDER" "${VAR_REGISTRY_PROVIDER:-}"
+          probe "vars.AWS_REGION"        "${VAR_AWS_REGION:-}"
+          echo "::endgroup::"
+
+          echo "::group::Non-sensitive values (only safe-to-print)"
+          echo "  secrets.REGISTRY_PROVIDER literal: '${REGISTRY_PROVIDER:-}'"
+          echo "  secrets.AWS_REGION literal:        '${AWS_REGION:-}'"
+          echo "  vars.REGISTRY_PROVIDER literal:    '${VAR_REGISTRY_PROVIDER:-}'"
+          echo "  vars.AWS_REGION literal:           '${VAR_AWS_REGION:-}'"
+          echo "::endgroup::"
+
+          echo "::group::Tooling"
+          echo "  docker:  $(docker --version 2>&1 || true)"
+          echo "  aws:     $(aws --version 2>&1 || true)"
+          echo "  bash:    ${BASH_VERSION}"
+          echo "::endgroup::"
+
       - name: Resolve registry URL
         id: registry
         env:
