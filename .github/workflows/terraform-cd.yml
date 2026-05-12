@@ -26,8 +26,10 @@ on:
       - '**.tfvars'
       - 'modules/**'
       - 'environments/**'
+      - 'providers/**'
       - 'scripts/**'
       - '.github/workflows/terraform-cd.yml'
+      - '.github/actions/export-deploy-credentials/**'
   workflow_dispatch:
     inputs:
       environment:
@@ -65,15 +67,19 @@ jobs:
         with:
           filters: |
             dev:
+              - 'providers/*/environments/dev/**'
               - 'environments/dev/**'
             staging:
+              - 'providers/*/environments/staging/**'
               - 'environments/staging/**'
             production:
+              - 'providers/*/environments/production/**'
               - 'environments/production/**'
             shared:
               - '*.tf'
               - 'modules/**'
-              - 'providers/**'
+              - 'providers/*/*.tf'
+              - 'providers/*/modules/**'
               - 'scripts/**'
 
   deploy-dev:
@@ -95,13 +101,12 @@ jobs:
       - name: Export provider credentials
         uses: ./.github/actions/export-deploy-credentials
         with:
-          registry_provider: ${{ vars.REGISTRY_PROVIDER || secrets.REGISTRY_PROVIDER }}
           aws_access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          scw_access_key: ${{ secrets.SCW_ACCESS_KEY }}
-          scw_secret_key: ${{ secrets.SCW_SECRET_KEY }}
 
       - name: Deploy dev
+        env:
+          PROVIDER: ${{ vars.PROVIDER || vars.REGISTRY_PROVIDER || 'aws' }}
         run: |
           if [[ "${{ inputs.plan_only }}" == "true" ]]; then
             bash scripts/deploy.sh dev --plan-only
@@ -127,13 +132,12 @@ jobs:
       - name: Export provider credentials
         uses: ./.github/actions/export-deploy-credentials
         with:
-          registry_provider: ${{ vars.REGISTRY_PROVIDER || secrets.REGISTRY_PROVIDER }}
           aws_access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          scw_access_key: ${{ secrets.SCW_ACCESS_KEY }}
-          scw_secret_key: ${{ secrets.SCW_SECRET_KEY }}
 
       - name: Deploy staging
+        env:
+          PROVIDER: ${{ vars.PROVIDER || vars.REGISTRY_PROVIDER || 'aws' }}
         run: |
           if [[ "${{ inputs.plan_only }}" == "true" ]]; then
             bash scripts/deploy.sh staging --plan-only
@@ -162,13 +166,12 @@ jobs:
       - name: Export provider credentials
         uses: ./.github/actions/export-deploy-credentials
         with:
-          registry_provider: ${{ vars.REGISTRY_PROVIDER || secrets.REGISTRY_PROVIDER }}
           aws_access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          scw_access_key: ${{ secrets.SCW_ACCESS_KEY }}
-          scw_secret_key: ${{ secrets.SCW_SECRET_KEY }}
 
       - name: Deploy production
+        env:
+          PROVIDER: ${{ vars.PROVIDER || vars.REGISTRY_PROVIDER || 'aws' }}
         run: |
           if [[ "${{ inputs.plan_only }}" == "true" ]]; then
             bash scripts/deploy.sh production --plan-only

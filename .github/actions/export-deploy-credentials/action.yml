@@ -1,38 +1,20 @@
 name: Export deploy credentials
 description: |
-  Validates REGISTRY_PROVIDER and exports the two credential pairs terraform-cd
-  needs into $GITHUB_ENV:
+  Validates and exports AWS credentials into $GITHUB_ENV. Used by terraform-cd
+  jobs so terraform can authenticate against both the S3 state backend and the
+  AWS resource provider (which use the same env-var conventions:
+  AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY).
 
-    - SCW_ACCESS_KEY / SCW_SECRET_KEY   → consumed by scripts/deploy.sh and
-                                          passed to `terraform init` via
-                                          -backend-config for the Scaleway-
-                                          hosted state backend.
-    - AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
-                                        → consumed by the AWS provider for
-                                          resource management. Aliased to SCW
-                                          creds only when REGISTRY_PROVIDER=
-                                          scaleway (no AWS provider in play).
-
-  Fails fast on unset or unknown REGISTRY_PROVIDER instead of silently picking
-  a wrong branch.
+  Fails fast with a clear ::error:: annotation if either credential is unset,
+  rather than letting terraform die mid-init with a generic "no valid
+  credential sources" message.
 
 inputs:
-  registry_provider:
-    description: "Resource cloud: 'aws' or 'scaleway'"
-    required: true
   aws_access_key_id:
-    description: "AWS access key (required when registry_provider=aws)"
-    required: false
-    default: ""
-  aws_secret_access_key:
-    description: "AWS secret key (required when registry_provider=aws)"
-    required: false
-    default: ""
-  scw_access_key:
-    description: "Scaleway access key (always required — state backend lives on SCW)"
+    description: "AWS access key (required)"
     required: true
-  scw_secret_key:
-    description: "Scaleway secret key (always required — state backend lives on SCW)"
+  aws_secret_access_key:
+    description: "AWS secret key (required)"
     required: true
 
 runs:
@@ -41,43 +23,14 @@ runs:
     - name: Export credentials
       shell: bash
       env:
-        REGISTRY_PROVIDER: ${{ inputs.registry_provider }}
         IN_AWS_ACCESS_KEY_ID: ${{ inputs.aws_access_key_id }}
         IN_AWS_SECRET_ACCESS_KEY: ${{ inputs.aws_secret_access_key }}
-        IN_SCW_ACCESS_KEY: ${{ inputs.scw_access_key }}
-        IN_SCW_SECRET_KEY: ${{ inputs.scw_secret_key }}
       run: |
         set -euo pipefail
-
-        : "${IN_SCW_ACCESS_KEY:?SCW_ACCESS_KEY is required for the terraform state backend on Scaleway}"
-        : "${IN_SCW_SECRET_KEY:?SCW_SECRET_KEY is required for the terraform state backend on Scaleway}"
-
-        case "${REGISTRY_PROVIDER:-}" in
-          aws)
-            : "${IN_AWS_ACCESS_KEY_ID:?AWS_ACCESS_KEY_ID is required when REGISTRY_PROVIDER=aws}"
-            : "${IN_AWS_SECRET_ACCESS_KEY:?AWS_SECRET_ACCESS_KEY is required when REGISTRY_PROVIDER=aws}"
-            OUT_AWS_ACCESS_KEY_ID="${IN_AWS_ACCESS_KEY_ID}"
-            OUT_AWS_SECRET_ACCESS_KEY="${IN_AWS_SECRET_ACCESS_KEY}"
-            ;;
-          scaleway)
-            OUT_AWS_ACCESS_KEY_ID="${IN_SCW_ACCESS_KEY}"
-            OUT_AWS_SECRET_ACCESS_KEY="${IN_SCW_SECRET_KEY}"
-            ;;
-          "")
-            echo "::error::REGISTRY_PROVIDER is not set. Configure 'aws' or 'scaleway' as a repo-level Variable or Secret on axiome-infra." >&2
-            exit 1
-            ;;
-          *)
-            echo "::error::Unknown REGISTRY_PROVIDER='${REGISTRY_PROVIDER}'. Expected 'aws' or 'scaleway'." >&2
-            exit 1
-            ;;
-        esac
-
+        : "${IN_AWS_ACCESS_KEY_ID:?AWS_ACCESS_KEY_ID is required — configure it as a repo-level Secret on axiome-infra}"
+        : "${IN_AWS_SECRET_ACCESS_KEY:?AWS_SECRET_ACCESS_KEY is required — configure it as a repo-level Secret on axiome-infra}"
         {
-          echo "AWS_ACCESS_KEY_ID=${OUT_AWS_ACCESS_KEY_ID}"
-          echo "AWS_SECRET_ACCESS_KEY=${OUT_AWS_SECRET_ACCESS_KEY}"
-          echo "SCW_ACCESS_KEY=${IN_SCW_ACCESS_KEY}"
-          echo "SCW_SECRET_KEY=${IN_SCW_SECRET_KEY}"
+          echo "AWS_ACCESS_KEY_ID=${IN_AWS_ACCESS_KEY_ID}"
+          echo "AWS_SECRET_ACCESS_KEY=${IN_AWS_SECRET_ACCESS_KEY}"
         } >> "$GITHUB_ENV"
-
-        echo "Credentials exported (REGISTRY_PROVIDER=${REGISTRY_PROVIDER})."
+        echo "AWS credentials exported."

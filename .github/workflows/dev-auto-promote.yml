@@ -3,8 +3,9 @@
 # Triggered by `repository_dispatch: image-published` emitted from
 # axiome-{back,front,bio-compute} via reusable-build.yml.
 #
-# This workflow only updates environments/dev/images.tfvars and pushes the commit.
-# That commit then triggers terraform-cd.yml -> terraform apply dev.
+# This workflow updates providers/${PROVIDER}/environments/dev/images.tfvars
+# and pushes the commit. That commit then triggers terraform-cd.yml ->
+# terraform apply dev.
 
 name: dev-auto-promote
 
@@ -27,6 +28,8 @@ jobs:
           fetch-depth: 0
 
       - name: Update ${{ github.event.client_payload.service }} in dev
+        env:
+          PROVIDER: ${{ vars.PROVIDER || vars.REGISTRY_PROVIDER || 'aws' }}
         run: |
           bash scripts/update-manifest.sh \
             "${{ github.event.client_payload.service }}" \

@@ -6,19 +6,23 @@ usage() {
 Usage: deploy.sh <environment> [--plan-only]
 
 Deploy to the target environment using Terraform.
-Image tags are read from environments/<environment>/images.tfvars.
+
+The infra root is selected by the PROVIDER env var: terraform runs against
+providers/\${PROVIDER}/, and env files come from
+providers/\${PROVIDER}/environments/<environment>/.
 
 Arguments:
   environment   Target: dev | staging | production
   --plan-only   Only run terraform plan, do not apply
 
 Environment variables:
-  SCW_ACCESS_KEY        Scaleway access key (required — used by the
-                        S3 backend on Scaleway Object Storage for state)
-  SCW_SECRET_KEY        Scaleway secret key (required — same as above)
-  AWS_ACCESS_KEY_ID     AWS access key (required when AWS provider is used
-                        for resources; do NOT alias to SCW creds)
-  AWS_SECRET_ACCESS_KEY AWS secret key (required when AWS provider is used)
+  PROVIDER              Required. Selects the infra codepath:
+                        aws | scaleway | onprem
+                        (corresponds to a providers/\${PROVIDER}/ subtree)
+  AWS_ACCESS_KEY_ID     AWS access key (required when PROVIDER=aws —
+                        used by both the S3 state backend and the AWS
+                        resource provider)
+  AWS_SECRET_ACCESS_KEY AWS secret key (required when PROVIDER=aws)
 EOF
   exit 1
 }
@@ -34,11 +38,28 @@ case "${ENVIRONMENT}" in
   *) echo "Error: environment must be dev, staging, or production"; exit 1 ;;
 esac
 
+: "${PROVIDER:?PROVIDER is required (aws | scaleway | onprem)}"
+case "${PROVIDER}" in
+  aws|scaleway|onprem) ;;
+  *) echo "Error: PROVIDER must be aws, scaleway, or onprem (got '${PROVIDER}')"; exit 1 ;;
+esac
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-INFRA_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-cd "${INFRA_ROOT}"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+PROVIDER_ROOT="${REPO_ROOT}/providers/${PROVIDER}"
+
+if [ ! -d "${PROVIDER_ROOT}" ]; then
+  echo "Error: ${PROVIDER_ROOT} does not exist."
+  exit 1
+fi
+
+cd "${PROVIDER_ROOT}"
 
 ENV_DIR="environments/${ENVIRONMENT}"
+if [ ! -d "${ENV_DIR}" ]; then
+  echo "Error: ${PROVIDER_ROOT}/${ENV_DIR} does not exist."
+  exit 1
+fi
 
 # Build -var-file flags
 VAR_FILES=("-var-file=${ENV_DIR}/terraform.tfvars")
@@ -50,19 +71,13 @@ else
   echo "Warning: ${ENV_DIR}/images.tfvars not found, using defaults."
 fi
 
-: "${SCW_ACCESS_KEY:?SCW_ACCESS_KEY is required for the Scaleway-hosted terraform state backend}"
-: "${SCW_SECRET_KEY:?SCW_SECRET_KEY is required for the Scaleway-hosted terraform state backend}"
+if [ "${PROVIDER}" = "aws" ]; then
+  : "${AWS_ACCESS_KEY_ID:?AWS_ACCESS_KEY_ID is required when PROVIDER=aws}"
+  : "${AWS_SECRET_ACCESS_KEY:?AWS_SECRET_ACCESS_KEY is required when PROVIDER=aws}"
+fi
 
-echo "==> Initializing terraform for ${ENVIRONMENT}..."
-# Pass SCW state-backend creds via -backend-config rather than env vars, so
-# that AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY stay free to carry real AWS
-# provider creds for resource management. The S3 backend would otherwise pick
-# up AWS_* env vars and authenticate the state bucket with the wrong account.
-terraform init \
-  -backend-config="${ENV_DIR}/backend.hcl" \
-  -backend-config="access_key=${SCW_ACCESS_KEY}" \
-  -backend-config="secret_key=${SCW_SECRET_KEY}" \
-  -reconfigure -input=false
+echo "==> Initializing terraform for ${ENVIRONMENT} (PROVIDER=${PROVIDER})..."
+terraform init -backend-config="${ENV_DIR}/backend.hcl" -reconfigure -input=false
 
 echo "==> Planning..."
 terraform plan "${VAR_FILES[@]}" -out=tfplan -input=false
