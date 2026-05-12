@@ -39,6 +39,15 @@ resource "aws_acm_certificate" "main" {
   }
 }
 
+locals {
+  # CloudFront rejects raw IP addresses for the origin `domain_name`. AWS
+  # exposes a stable reverse-DNS hostname for every public IPv4 in the
+  # ec2-A-B-C-D.<region>.compute.amazonaws.com pattern — that hostname
+  # resolves back to the Lightsail static IP, so traffic still lands on
+  # our VM. Constructing it here avoids a manual DNS record.
+  origin_hostname = "ec2-${replace(var.origin_ip, ".", "-")}.${var.aws_region}.compute.amazonaws.com"
+}
+
 resource "aws_cloudfront_distribution" "main" {
   enabled         = true
   is_ipv6_enabled = true
@@ -48,7 +57,7 @@ resource "aws_cloudfront_distribution" "main" {
   tags            = var.tags
 
   origin {
-    domain_name = var.origin_ip
+    domain_name = local.origin_hostname
     origin_id   = "lightsail-origin"
 
     custom_origin_config {
