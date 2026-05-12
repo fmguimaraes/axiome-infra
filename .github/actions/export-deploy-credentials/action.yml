@@ -1,13 +1,19 @@
 name: Export deploy credentials
 description: |
-  Validates and exports AWS credentials into $GITHUB_ENV. Used by terraform-cd
-  jobs so terraform can authenticate against both the S3 state backend and the
-  AWS resource provider (which use the same env-var conventions:
-  AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY).
+  Validates and exports the credentials terraform needs into $GITHUB_ENV:
 
-  Fails fast with a clear ::error:: annotation if either credential is unset,
-  rather than letting terraform die mid-init with a generic "no valid
-  credential sources" message.
+    - AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY (required)
+        → used by the S3 state backend AND the AWS resource provider.
+    - NEON_API_KEY (optional)
+        → kislerdm/neon provider. Required only when modules using the
+          neon provider are in the plan.
+    - MONGODB_ATLAS_PUBLIC_KEY / MONGODB_ATLAS_PRIVATE_KEY (optional)
+        → mongodb/mongodbatlas provider. Required only when Atlas
+          modules are in the plan.
+
+  AWS creds fail-fast with a clear ::error:: annotation if missing.
+  Third-party DB creds are exported only when non-empty — terraform's own
+  error message is precise enough if they're needed and missing.
 
 inputs:
   aws_access_key_id:
@@ -16,6 +22,18 @@ inputs:
   aws_secret_access_key:
     description: "AWS secret key (required)"
     required: true
+  neon_api_key:
+    description: "Neon API key (optional — required only if Neon resources are in the plan)"
+    required: false
+    default: ""
+  mongodb_atlas_public_key:
+    description: "MongoDB Atlas public API key (optional — required only if Atlas resources are in the plan)"
+    required: false
+    default: ""
+  mongodb_atlas_private_key:
+    description: "MongoDB Atlas private API key (optional — required only if Atlas resources are in the plan)"
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -25,12 +43,36 @@ runs:
       env:
         IN_AWS_ACCESS_KEY_ID: ${{ inputs.aws_access_key_id }}
         IN_AWS_SECRET_ACCESS_KEY: ${{ inputs.aws_secret_access_key }}
+        IN_NEON_API_KEY: ${{ inputs.neon_api_key }}
+        IN_MONGODB_ATLAS_PUBLIC_KEY: ${{ inputs.mongodb_atlas_public_key }}
+        IN_MONGODB_ATLAS_PRIVATE_KEY: ${{ inputs.mongodb_atlas_private_key }}
       run: |
         set -euo pipefail
         : "${IN_AWS_ACCESS_KEY_ID:?AWS_ACCESS_KEY_ID is required — configure it as a repo-level Secret on axiome-infra}"
         : "${IN_AWS_SECRET_ACCESS_KEY:?AWS_SECRET_ACCESS_KEY is required — configure it as a repo-level Secret on axiome-infra}"
+
         {
           echo "AWS_ACCESS_KEY_ID=${IN_AWS_ACCESS_KEY_ID}"
           echo "AWS_SECRET_ACCESS_KEY=${IN_AWS_SECRET_ACCESS_KEY}"
         } >> "$GITHUB_ENV"
         echo "AWS credentials exported."
+
+        if [[ -n "${IN_NEON_API_KEY}" ]]; then
+          echo "NEON_API_KEY=${IN_NEON_API_KEY}" >> "$GITHUB_ENV"
+          echo "Neon API key exported."
+        else
+          echo "::notice::NEON_API_KEY not set — Neon resources will fail if present in plan."
+        fi
+
+        if [[ -n "${IN_MONGODB_ATLAS_PUBLIC_KEY}" && -n "${IN_MONGODB_ATLAS_PRIVATE_KEY}" ]]; then
+          {
+            echo "MONGODB_ATLAS_PUBLIC_KEY=${IN_MONGODB_ATLAS_PUBLIC_KEY}"
+            echo "MONGODB_ATLAS_PRIVATE_KEY=${IN_MONGODB_ATLAS_PRIVATE_KEY}"
+          } >> "$GITHUB_ENV"
+          echo "MongoDB Atlas keys exported."
+        elif [[ -n "${IN_MONGODB_ATLAS_PUBLIC_KEY}" || -n "${IN_MONGODB_ATLAS_PRIVATE_KEY}" ]]; then
+          echo "::error::Only one of MONGODB_ATLAS_PUBLIC_KEY / MONGODB_ATLAS_PRIVATE_KEY is set. Both are required together." >&2
+          exit 1
+        else
+          echo "::notice::MongoDB Atlas keys not set — Atlas resources will fail if present in plan."
+        fi
