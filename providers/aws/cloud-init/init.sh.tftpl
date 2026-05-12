@@ -77,16 +77,23 @@ aws ssm get-parameters-by-path \
         printf "%s=%s\n", key, $2
     }' > /opt/axiome/.env
 
-# Augment env with image tags + identification
+# Augment env with identification + (legacy) image tags.
+#
+# When use_ssm_image_tags = false (legacy), the BACKEND/BIOCOMPUTE/FRONTEND
+# image tags are templated into user_data via $${legacy_image_tag_env}. Every
+# tag bump rewrites user_data, which destroys/recreates the VM via
+# replace_triggered_by = [user_data_hash]. ~10 min downtime per deploy.
+#
+# When use_ssm_image_tags = true, the legacy block is empty and the tags
+# come from SSM Parameter Store via the get-parameters-by-path step above.
+# The deploy workflow mutates SSM + `docker compose pull && up -d` over SSH
+# without changing user_data, so the VM is not replaced.
 cat >> /opt/axiome/.env <<EOF
 ENVIRONMENT=${environment}
 PROJECT_NAME=${project_name}
 ECR_REGISTRY=${ecr_registry}
-BACKEND_IMAGE_TAG=${backend_image_tag}
-BIOCOMPUTE_IMAGE_TAG=${biocompute_image_tag}
-FRONTEND_IMAGE_TAG=${frontend_image_tag}
 FQDN=${fqdn}
-EOF
+${legacy_image_tag_env}EOF
 
 chmod 600 /opt/axiome/.env
 

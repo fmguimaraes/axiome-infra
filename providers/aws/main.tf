@@ -128,6 +128,7 @@ module "compute" {
   backend_image_tag    = var.backend_image_tag
   biocompute_image_tag = var.biocompute_image_tag
   frontend_image_tag   = var.frontend_image_tag
+  use_ssm_image_tags   = var.use_ssm_image_tags
 
   # When CloudFront fronts the VM, Caddy on the VM serves plain HTTP on :80
   # and stops managing certs. Keep these toggles in lockstep — flipping one

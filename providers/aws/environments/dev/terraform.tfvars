@@ -55,3 +55,8 @@ use_cloudfront_edge = true
 # rather than creating a duplicate. Safe to remove once you've confirmed
 # the import succeeded.
 import_acm_cert_arn = "arn:aws:acm:us-east-1:225201317100:certificate/980c6b8a-0aff-415c-b091-77351a8fa991"
+
+# Opt into the SSM-backed image-tag flow. Tag bumps no longer recreate the
+# Lightsail VM; the dev-auto-promote workflow writes to SSM and rolls the
+# affected container via SSH (see scripts/roll-service.sh).
+use_ssm_image_tags = true
