@@ -124,6 +124,14 @@ resource "aws_lightsail_instance" "main" {
 resource "aws_lightsail_static_ip_attachment" "main" {
   static_ip_name = aws_lightsail_static_ip.main.name
   instance_name  = aws_lightsail_instance.main.name
+
+  # When the Lightsail instance is replaced (e.g. user_data changes), the
+  # attachment must be re-created — otherwise the static IP stays detached
+  # and DNS keeps resolving to a now-unowned address. The terraform-provider
+  # doesn't infer this dependency from instance_name alone, so force it.
+  lifecycle {
+    replace_triggered_by = [aws_lightsail_instance.main]
+  }
 }
 
 # Open ports: 22 (SSH), 80 (HTTP for ACME challenge), 443 (HTTPS).
