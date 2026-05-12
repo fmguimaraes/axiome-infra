@@ -186,6 +186,22 @@ variable "import_acm_cert_arn" {
   nullable    = true
 }
 
+# ---------------- Image tag delivery ----------------
+
+variable "use_ssm_image_tags" {
+  description = <<-EOT
+    When true, image tags are stored in SSM Parameter Store and the deploy
+    workflow updates them out-of-band (no terraform involvement, no VM
+    recreate). When false (default), tags are templated into cloud-init
+    user_data and a bump forces a destroy/create of the Lightsail instance.
+
+    Recommended: set to true in dev (auto-deploy path), keep false for
+    staging/production until you've migrated their deploy plumbing.
+  EOT
+  type        = bool
+  default     = false
+}
+
 # ---------------- Tags ----------------
 
 variable "common_tags" {

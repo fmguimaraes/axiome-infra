@@ -77,3 +77,20 @@ variable "behind_proxy" {
   type        = bool
   default     = false
 }
+
+variable "use_ssm_image_tags" {
+  description = <<-EOT
+    If true, image tags are stored in SSM Parameter Store and read by the VM at boot
+    via aws ssm get-parameters-by-path. Out-of-band tag updates (via the deploy
+    workflow) no longer change user_data, so the Lightsail instance is NOT recreated
+    on image bumps — deploys become a `docker compose pull && up -d` over SSH.
+
+    If false (legacy), image tags are templated into the cloud-init user_data, so
+    every tag bump changes user_data_hash and forces a destroy/create of the VM.
+
+    Default false to preserve existing staging/production behavior; flip to true on
+    a per-environment basis once SSH + SSM deploy plumbing is in place for that env.
+  EOT
+  type        = bool
+  default     = false
+}

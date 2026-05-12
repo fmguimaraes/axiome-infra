@@ -3,9 +3,18 @@
 # Triggered by `repository_dispatch: image-published` emitted from
 # axiome-{back,front,bio-compute} via reusable-build.yml.
 #
-# This workflow updates providers/${PROVIDER}/environments/dev/images.tfvars
-# and pushes the commit. That commit then triggers terraform-cd.yml ->
-# terraform apply dev.
+# New (SSM + SSH) flow — see also providers/aws/modules/compute/main.tf:
+#
+#   1. Write the new image tag to SSM Parameter Store
+#      (/${SSM_PARAMETER_PREFIX}/<KEY>_IMAGE_TAG)
+#   2. SSH into the running Lightsail VM and:
+#        - refresh /opt/axiome/.env from SSM
+#        - `docker compose pull <service>`
+#        - `docker compose up -d <service>` (rolling-restart of one container)
+#
+# This replaces the previous flow that edited images.tfvars and let
+# terraform-cd `replace_triggered_by = [user_data_hash]` destroy/recreate the
+# whole VM on every image bump. The VM is now untouched on image bumps.
 
 name: dev-auto-promote
 
@@ -16,26 +25,88 @@ on:
 permissions:
   contents: read
 
+env:
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  SSM_PARAMETER_PREFIX: /dev/axiome-dev
+  DEV_HOST: dev.axiomebio.com
+  DEV_USER: ubuntu
+
 jobs:
-  update-dev:
-    name: Update dev — ${{ github.event.client_payload.service }}
+  deploy:
+    name: Deploy ${{ github.event.client_payload.service }} to dev
     runs-on: ubuntu-latest
-    # Serialize promotions so concurrent dispatches don't race on `git push`.
+    # Serialize so concurrent dispatches don't race on SSM + docker compose.
     concurrency:
       group: dev-auto-promote
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v4
-        with:
-          # PAT so the resulting commit triggers terraform-cd.yml.
-          token: ${{ secrets.GH_PAT }}
-          fetch-depth: 0
-
-      - name: Update ${{ github.event.client_payload.service }} in dev
-        env:
-          PROVIDER: ${{ vars.PROVIDER || vars.REGISTRY_PROVIDER || 'aws' }}
+      - name: Resolve SSM key for service
+        id: key
         run: |
-          bash scripts/update-manifest.sh \
-            "${{ github.event.client_payload.service }}" \
-            dev \
-            "${{ github.event.client_payload.image_tag }}"
+          case "${{ github.event.client_payload.service }}" in
+            backend)    echo "name=BACKEND_IMAGE_TAG"    >> "$GITHUB_OUTPUT" ;;
+            biocompute) echo "name=BIOCOMPUTE_IMAGE_TAG" >> "$GITHUB_OUTPUT" ;;
+            frontend)   echo "name=FRONTEND_IMAGE_TAG"   >> "$GITHUB_OUTPUT" ;;
+            *) echo "Unknown service '${{ github.event.client_payload.service }}'" >&2; exit 1 ;;
+          esac
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Publish image tag to SSM
+        env:
+          KEY: ${{ steps.key.outputs.name }}
+          IMAGE_TAG: ${{ github.event.client_payload.image_tag }}
+        run: |
+          aws ssm put-parameter \
+            --name "${SSM_PARAMETER_PREFIX}/${KEY}" \
+            --type String \
+            --value "${IMAGE_TAG}" \
+            --overwrite \
+            > /dev/null
+          echo "Updated ${SSM_PARAMETER_PREFIX}/${KEY} -> ${IMAGE_TAG}"
+
+      - name: Configure SSH
+        env:
+          SSH_KEY: ${{ secrets.DEV_SSH_PRIVATE_KEY }}
+        run: |
+          if [ -z "${SSH_KEY}" ]; then
+            echo "::error::DEV_SSH_PRIVATE_KEY secret is missing. Add it to repo secrets."
+            exit 1
+          fi
+          mkdir -p ~/.ssh
+          printf '%s\n' "${SSH_KEY}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "${DEV_HOST}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Roll service on dev VM
+        env:
+          KEY: ${{ steps.key.outputs.name }}
+          IMAGE_TAG: ${{ github.event.client_payload.image_tag }}
+          SERVICE: ${{ github.event.client_payload.service }}
+        run: |
+          ssh -o StrictHostKeyChecking=accept-new "${DEV_USER}@${DEV_HOST}" \
+            "KEY='${KEY}' IMAGE_TAG='${IMAGE_TAG}' SERVICE='${SERVICE}' bash -s" \
+            < scripts/roll-service.sh
+
+      - name: Smoke test
+        env:
+          SERVICE: ${{ github.event.client_payload.service }}
+        run: |
+          case "${SERVICE}" in
+            backend)    URL="https://${DEV_HOST}/api/v1/health" ;;
+            biocompute) URL="https://${DEV_HOST}/api/v1/version" ;; # gateway exposes biocompute health via /version
+            frontend)   URL="https://${DEV_HOST}/" ;;
+          esac
+          for i in 1 2 3 4 5 6; do
+            code=$(curl -s -m 10 -o /dev/null -w "%{http_code}" "${URL}" || true)
+            echo "smoke ${URL} -> ${code} (attempt ${i})"
+            [[ "${code}" =~ ^2 ]] && exit 0
+            sleep 10
+          done
+          echo "::error::Smoke test failed for ${URL}"
+          exit 1
