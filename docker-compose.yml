@@ -164,24 +164,24 @@ services:
       retries: 5
 
   biocompute:
-    image: python:3.12-slim
+    build:
+      context: ../axiome-bio-compute
+      dockerfile: Dockerfile
     container_name: axiome-biocompute
     working_dir: /app
-    command: sh -c "pip install -r requirements.txt && python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload"
+    command: uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
     environment:
-      PYTHON_ENV: development
-      PORT: "8000"
-      S3_ENDPOINT: http://minio:9000
-      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-minioadmin}
-      S3_SECRET_KEY: ${S3_SECRET_KEY:-minioadmin}
-      S3_BUCKET_ARTIFACTS: axiome-local-artifacts
-      S3_REGION: us-east-1
-      S3_FORCE_PATH_STYLE: "true"
-      DATABASE_URL: postgresql://${POSTGRES_USER:-axiome}:${POSTGRES_PASSWORD:-axiome_local_dev}@postgres:5432/${POSTGRES_DB:-axiome}
+      BIO_COMPUTE_LOG_LEVEL: ${BIOCOMPUTE_LOG_LEVEL:-INFO}
+      BIO_COMPUTE_PORT: "8000"
+      BIO_COMPUTE_S3_ENDPOINT_URL: http://minio:9000
+      BIO_COMPUTE_S3_ACCESS_KEY: ${S3_ACCESS_KEY:-minioadmin}
+      BIO_COMPUTE_S3_SECRET_KEY: ${S3_SECRET_KEY:-minioadmin}
+      BIO_COMPUTE_S3_BUCKET: axiome-local-artifacts
+      BIO_COMPUTE_DASHBOARD_DB_URL: postgresql://${POSTGRES_USER:-axiome}:${POSTGRES_PASSWORD:-axiome_local_dev}@postgres:5432/${POSTGRES_DB:-axiome}
     ports:
       - "${BIOCOMPUTE_PORT:-8000}:8000"
     volumes:
-      - ../axiome-biocompute:/app
+      - ../axiome-bio-compute:/app
     depends_on:
       postgres:
         condition: service_healthy
@@ -190,7 +190,7 @@ services:
     networks:
       - axiome-network
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
       interval: 10s
       timeout: 5s
       retries: 5
