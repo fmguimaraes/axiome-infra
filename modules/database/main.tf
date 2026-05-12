@@ -21,9 +21,9 @@ resource "scaleway_rdb_database" "main" {
 }
 
 resource "scaleway_mongodb_instance" "main" {
-  name      = "${var.naming_prefix}-mongodb"
-  version   = "7.0.12"
-  node_type = var.mongodb_node_type
+  name        = "${var.naming_prefix}-mongodb"
+  version     = "7.0.12"
+  node_type   = var.mongodb_node_type
   node_number = 1
 
   tags = var.tags
