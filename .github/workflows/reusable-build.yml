@@ -24,31 +24,57 @@ jobs:
 
       - name: Resolve registry URL
         id: registry
+        env:
+          REGISTRY_PROVIDER: ${{ secrets.REGISTRY_PROVIDER }}
+          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          SCW_REGISTRY_ENDPOINT: ${{ secrets.SCW_REGISTRY_ENDPOINT }}
         run: |
-          case "${{ secrets.REGISTRY_PROVIDER }}" in
+          set -euo pipefail
+          case "${REGISTRY_PROVIDER:-}" in
             aws)
-              echo "url=${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com" >> "$GITHUB_OUTPUT"
+              : "${AWS_ACCOUNT_ID:?AWS_ACCOUNT_ID secret is required when REGISTRY_PROVIDER=aws}"
+              : "${AWS_REGION:?AWS_REGION secret is required when REGISTRY_PROVIDER=aws}"
+              url="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
               ;;
-            scaleway|*)
-              echo "url=${{ secrets.SCW_REGISTRY_ENDPOINT }}" >> "$GITHUB_OUTPUT"
+            scaleway)
+              : "${SCW_REGISTRY_ENDPOINT:?SCW_REGISTRY_ENDPOINT secret is required when REGISTRY_PROVIDER=scaleway}"
+              url="${SCW_REGISTRY_ENDPOINT}"
+              ;;
+            "")
+              echo "::error::REGISTRY_PROVIDER secret is not set. Configure it as 'aws' or 'scaleway'." >&2
+              exit 1
+              ;;
+            *)
+              echo "::error::Unknown REGISTRY_PROVIDER='${REGISTRY_PROVIDER}'. Expected 'aws' or 'scaleway'." >&2
+              exit 1
               ;;
           esac
+          echo "url=${url}" >> "$GITHUB_OUTPUT"
 
       - name: Login to registry
-        run: |
-          case "${{ secrets.REGISTRY_PROVIDER }}" in
-            aws)
-              aws ecr get-login-password --region "${{ secrets.AWS_REGION }}" | \
-                docker login --username AWS --password-stdin "${{ steps.registry.outputs.url }}"
-              ;;
-            scaleway|*)
-              echo "${{ secrets.SCW_SECRET_KEY }}" | \
-                docker login "${{ steps.registry.outputs.url }}" -u nologin --password-stdin
-              ;;
-          esac
         env:
+          REGISTRY_PROVIDER: ${{ secrets.REGISTRY_PROVIDER }}
+          REGISTRY_URL: ${{ steps.registry.outputs.url }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          SCW_SECRET_KEY: ${{ secrets.SCW_SECRET_KEY }}
+        run: |
+          set -euo pipefail
+          case "${REGISTRY_PROVIDER}" in
+            aws)
+              : "${AWS_ACCESS_KEY_ID:?AWS_ACCESS_KEY_ID secret is required when REGISTRY_PROVIDER=aws}"
+              : "${AWS_SECRET_ACCESS_KEY:?AWS_SECRET_ACCESS_KEY secret is required when REGISTRY_PROVIDER=aws}"
+              aws ecr get-login-password --region "${AWS_REGION}" \
+                | docker login --username AWS --password-stdin "${REGISTRY_URL}"
+              ;;
+            scaleway)
+              : "${SCW_SECRET_KEY:?SCW_SECRET_KEY secret is required when REGISTRY_PROVIDER=scaleway}"
+              printf '%s' "${SCW_SECRET_KEY}" \
+                | docker login "${REGISTRY_URL}" -u nologin --password-stdin
+              ;;
+          esac
 
       - name: Build image
         run: |
