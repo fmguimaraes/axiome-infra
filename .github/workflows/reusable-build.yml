@@ -33,6 +33,8 @@ jobs:
           SCW_SECRET_KEY: ${{ secrets.SCW_SECRET_KEY }}
           VAR_REGISTRY_PROVIDER: ${{ vars.REGISTRY_PROVIDER }}
           VAR_AWS_REGION: ${{ vars.AWS_REGION }}
+          VAR_REGISTRY_NAMESPACE: ${{ vars.REGISTRY_NAMESPACE }}
+          SECRET_REGISTRY_NAMESPACE: ${{ secrets.REGISTRY_NAMESPACE }}
         run: |
           set -u
           probe() {
@@ -61,18 +63,21 @@ jobs:
           probe "secrets.AWS_SECRET_ACCESS_KEY" "${AWS_SECRET_ACCESS_KEY:-}"
           probe "secrets.SCW_REGISTRY_ENDPOINT" "${SCW_REGISTRY_ENDPOINT:-}"
           probe "secrets.SCW_SECRET_KEY"    "${SCW_SECRET_KEY:-}"
+          probe "secrets.REGISTRY_NAMESPACE" "${SECRET_REGISTRY_NAMESPACE:-}"
           echo "::endgroup::"
 
           echo "::group::Variable presence (vars.* context, separate from secrets.*)"
-          probe "vars.REGISTRY_PROVIDER" "${VAR_REGISTRY_PROVIDER:-}"
-          probe "vars.AWS_REGION"        "${VAR_AWS_REGION:-}"
+          probe "vars.REGISTRY_PROVIDER"  "${VAR_REGISTRY_PROVIDER:-}"
+          probe "vars.AWS_REGION"         "${VAR_AWS_REGION:-}"
+          probe "vars.REGISTRY_NAMESPACE" "${VAR_REGISTRY_NAMESPACE:-}"
           echo "::endgroup::"
 
           echo "::group::Non-sensitive values (only safe-to-print)"
-          echo "  secrets.REGISTRY_PROVIDER literal: '${REGISTRY_PROVIDER:-}'"
-          echo "  secrets.AWS_REGION literal:        '${AWS_REGION:-}'"
-          echo "  vars.REGISTRY_PROVIDER literal:    '${VAR_REGISTRY_PROVIDER:-}'"
-          echo "  vars.AWS_REGION literal:           '${VAR_AWS_REGION:-}'"
+          echo "  secrets.REGISTRY_PROVIDER literal:  '${REGISTRY_PROVIDER:-}'"
+          echo "  secrets.AWS_REGION literal:         '${AWS_REGION:-}'"
+          echo "  vars.REGISTRY_PROVIDER literal:     '${VAR_REGISTRY_PROVIDER:-}'"
+          echo "  vars.AWS_REGION literal:            '${VAR_AWS_REGION:-}'"
+          echo "  vars.REGISTRY_NAMESPACE literal:    '${VAR_REGISTRY_NAMESPACE:-}'"
           echo "::endgroup::"
 
           echo "::group::Tooling"
@@ -136,22 +141,32 @@ jobs:
           esac
 
       - name: Build image
+        env:
+          REGISTRY: ${{ steps.registry.outputs.url }}
+          NAMESPACE: ${{ vars.REGISTRY_NAMESPACE || secrets.REGISTRY_NAMESPACE }}
+          SERVICE: ${{ inputs.service_name }}
+          TAG: ${{ steps.meta.outputs.tag }}
         run: |
-          REGISTRY="${{ steps.registry.outputs.url }}"
-          SERVICE="${{ inputs.service_name }}"
-          TAG="${{ steps.meta.outputs.tag }}"
+          set -euo pipefail
+          REPO="${REGISTRY}/${NAMESPACE:+${NAMESPACE}/}${SERVICE}"
+          echo "Building ${REPO}:${TAG}"
           docker build \
-            -t "${REGISTRY}/${SERVICE}:${TAG}" \
-            -t "${REGISTRY}/${SERVICE}:latest" \
+            -t "${REPO}:${TAG}" \
+            -t "${REPO}:latest" \
             .
 
       - name: Push image
+        env:
+          REGISTRY: ${{ steps.registry.outputs.url }}
+          NAMESPACE: ${{ vars.REGISTRY_NAMESPACE || secrets.REGISTRY_NAMESPACE }}
+          SERVICE: ${{ inputs.service_name }}
+          TAG: ${{ steps.meta.outputs.tag }}
         run: |
-          REGISTRY="${{ steps.registry.outputs.url }}"
-          SERVICE="${{ inputs.service_name }}"
-          TAG="${{ steps.meta.outputs.tag }}"
-          docker push "${REGISTRY}/${SERVICE}:${TAG}"
-          docker push "${REGISTRY}/${SERVICE}:latest"
+          set -euo pipefail
+          REPO="${REGISTRY}/${NAMESPACE:+${NAMESPACE}/}${SERVICE}"
+          echo "Pushing ${REPO}:${TAG} and :latest"
+          docker push "${REPO}:${TAG}"
+          docker push "${REPO}:latest"
 
   notify-infra:
     name: Notify Infra
