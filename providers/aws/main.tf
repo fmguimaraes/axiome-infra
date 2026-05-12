@@ -171,7 +171,8 @@ module "edge" {
     aws.us_east_1 = aws.us_east_1
   }
 
-  fqdn      = local.fqdn
-  origin_ip = module.compute.static_ip
-  tags      = local.base_tags
+  fqdn       = local.fqdn
+  origin_ip  = module.compute.static_ip
+  aws_region = var.aws_region
+  tags       = local.base_tags
 }
