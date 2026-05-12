@@ -174,17 +174,33 @@ jobs:
     needs: [build-and-push]
     steps:
       - name: Trigger infra repository_dispatch
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+          OWNER: ${{ github.repository_owner }}
+          SERVICE: ${{ inputs.service_name }}
+          IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
+          SOURCE_REPO: ${{ github.repository }}
+          SOURCE_SHA: ${{ github.sha }}
         run: |
-          curl -X POST \
+          set -euo pipefail
+          : "${GH_PAT:?GH_PAT secret is required to dispatch image-published event}"
+          body=$(jq -nc \
+            --arg service   "$SERVICE" \
+            --arg image_tag "$IMAGE_TAG" \
+            --arg repo      "$SOURCE_REPO" \
+            --arg sha       "$SOURCE_SHA" \
+            '{event_type:"image-published", client_payload:{service:$service, image_tag:$image_tag, repo:$repo, sha:$sha}}')
+          response=$(mktemp)
+          http_code=$(curl -sS -o "$response" -w '%{http_code}' \
+            -X POST \
             -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer ${{ secrets.GH_PAT }}" \
-            "https://api.github.com/repos/${{ github.repository_owner }}/axiome-infra/dispatches" \
-            -d '{
-              "event_type": "image-published",
-              "client_payload": {
-                "service": "${{ inputs.service_name }}",
-                "image_tag": "${{ needs.build-and-push.outputs.image_tag }}",
-                "repo": "${{ github.repository }}",
-                "sha": "${{ github.sha }}"
-              }
-            }'
+            -H "Authorization: Bearer ${GH_PAT}" \
+            "https://api.github.com/repos/${OWNER}/axiome-infra/dispatches" \
+            -d "$body")
+          echo "HTTP ${http_code}"
+          cat "$response"
+          if [[ ! "$http_code" =~ ^2 ]]; then
+            echo "::error::repository_dispatch to axiome-infra failed: HTTP ${http_code}"
+            exit 1
+          fi
+          echo "::notice::repository_dispatch accepted by axiome-infra (HTTP ${http_code})"
