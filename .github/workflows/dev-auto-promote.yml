@@ -20,6 +20,10 @@ jobs:
   update-dev:
     name: Update dev — ${{ github.event.client_payload.service }}
     runs-on: ubuntu-latest
+    # Serialize promotions so concurrent dispatches don't race on `git push`.
+    concurrency:
+      group: dev-auto-promote
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
         with:
