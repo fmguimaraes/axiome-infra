@@ -1,6 +1,6 @@
-environment   = "staging"
-project_name  = "axiome"
-aws_region    = "eu-west-3"
+environment  = "staging"
+project_name = "axiome"
+aws_region   = "eu-west-3"
 
 # DNS managed manually at Hostinger — see providers/aws/README.md §0.4.
 domain      = "axiomebio.com"
@@ -17,7 +17,7 @@ neon_project_region_id         = "aws-eu-central-1"
 neon_compute_min_cu            = 0.25
 neon_compute_max_cu            = 1.0
 neon_autosuspend_seconds       = 0
-neon_history_retention_seconds = 86400  # 1 day; requires Launch+ (Free max = 21600)
+neon_history_retention_seconds = 86400 # 1 day; requires Launch+ (Free max = 21600)
 
 # Atlas — M0 if cost-constrained, M10 for production-shape validation
 atlas_org_id         = "6a009f5d529be1fb7cad2dc1"

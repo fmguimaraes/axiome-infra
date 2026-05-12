@@ -1,7 +1,7 @@
-environment      = "dev"
-project_name     = "axiome"
-scaleway_region  = "fr-par"
-scaleway_zone    = "fr-par-1"
+environment     = "dev"
+project_name    = "axiome"
+scaleway_region = "fr-par"
+scaleway_zone   = "fr-par-1"
 
 domain    = "axiome.example.com"
 subdomain = "dev"

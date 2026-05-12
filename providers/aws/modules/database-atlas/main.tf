@@ -46,18 +46,18 @@ resource "mongodbatlas_project_ip_access_list" "anywhere" {
 }
 
 resource "mongodbatlas_advanced_cluster" "axiome" {
-  project_id     = mongodbatlas_project.axiome.id
-  name           = "${var.naming_prefix}-cluster"
-  cluster_type   = "REPLICASET"
+  project_id   = mongodbatlas_project.axiome.id
+  name         = "${var.naming_prefix}-cluster"
+  cluster_type = "REPLICASET"
   # M0 (tenant/Free) locks the MongoDB version — Atlas rejects any value, even matching the actual one.
   mongo_db_major_version = var.cluster_tier == "M0" ? null : var.mongo_version
 
   replication_specs {
     region_configs {
-      provider_name = var.cluster_tier == "M0" ? "TENANT" : var.cloud_provider
+      provider_name         = var.cluster_tier == "M0" ? "TENANT" : var.cloud_provider
       backing_provider_name = var.cluster_tier == "M0" ? var.cloud_provider : null
-      region_name   = var.region
-      priority      = 7
+      region_name           = var.region
+      priority              = 7
 
       electable_specs {
         instance_size = var.cluster_tier

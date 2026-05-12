@@ -74,34 +74,34 @@ module "database_atlas" {
 module "compute" {
   source = "./modules/compute"
 
-  naming_prefix          = local.naming_prefix
-  environment            = var.environment
-  zone                   = var.scaleway_zone
-  region                 = var.scaleway_region
-  instance_type          = var.instance_type
-  instance_image         = var.instance_image
-  root_volume_size_gb    = var.instance_root_volume_size_gb
-  fqdn                   = local.fqdn
+  naming_prefix       = local.naming_prefix
+  environment         = var.environment
+  zone                = var.scaleway_zone
+  region              = var.scaleway_region
+  instance_type       = var.instance_type
+  instance_image      = var.instance_image
+  root_volume_size_gb = var.instance_root_volume_size_gb
+  fqdn                = local.fqdn
 
-  registry_endpoint      = module.registry.registry_endpoint
-  registry_credentials   = module.registry.pull_secret_key
+  registry_endpoint    = module.registry.registry_endpoint
+  registry_credentials = module.registry.pull_secret_key
 
-  postgres_url           = module.database_neon.connection_string
-  mongodb_url            = module.database_atlas.connection_string
+  postgres_url = module.database_neon.connection_string
+  mongodb_url  = module.database_atlas.connection_string
 
-  s3_endpoint            = module.storage.endpoint
-  s3_region              = var.scaleway_region
-  s3_artifacts_bucket    = module.storage.artifacts_bucket_name
-  s3_uploads_bucket      = module.storage.uploads_bucket_name
-  s3_system_bucket       = module.storage.system_bucket_name
-  s3_access_key          = module.storage.access_key
-  s3_secret_key          = module.storage.secret_key
+  s3_endpoint         = module.storage.endpoint
+  s3_region           = var.scaleway_region
+  s3_artifacts_bucket = module.storage.artifacts_bucket_name
+  s3_uploads_bucket   = module.storage.uploads_bucket_name
+  s3_system_bucket    = module.storage.system_bucket_name
+  s3_access_key       = module.storage.access_key
+  s3_secret_key       = module.storage.secret_key
 
-  backend_image_tag      = var.backend_image_tag
-  biocompute_image_tag   = var.biocompute_image_tag
-  frontend_image_tag     = var.frontend_image_tag
+  backend_image_tag    = var.backend_image_tag
+  biocompute_image_tag = var.biocompute_image_tag
+  frontend_image_tag   = var.frontend_image_tag
 
-  tags                   = local.base_tags
+  tags = local.base_tags
 }
 
 # ---------------- DNS (Scaleway Domain) ----------------

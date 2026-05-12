@@ -63,21 +63,21 @@ module "secrets" {
 module "compute" {
   source = "./modules/compute"
 
-  naming_prefix          = local.naming_prefix
-  region                 = var.region
-  registry_endpoint      = module.registry.registry_endpoint
-  private_network_id     = module.network.private_network_id
-  backend_image_tag      = var.backend_image_tag
-  biocompute_image_tag   = var.biocompute_image_tag
-  frontend_image_tag     = var.frontend_image_tag
-  backend_min_scale      = var.backend_min_scale
-  backend_max_scale      = var.backend_max_scale
-  backend_cpu_limit      = var.backend_cpu_limit
-  backend_memory_limit   = var.backend_memory_limit
-  biocompute_min_scale   = var.biocompute_min_scale
-  biocompute_max_scale   = var.biocompute_max_scale
-  biocompute_cpu_limit   = var.biocompute_cpu_limit
-  biocompute_memory_limit = var.biocompute_memory_limit
+  naming_prefix             = local.naming_prefix
+  region                    = var.region
+  registry_endpoint         = module.registry.registry_endpoint
+  private_network_id        = module.network.private_network_id
+  backend_image_tag         = var.backend_image_tag
+  biocompute_image_tag      = var.biocompute_image_tag
+  frontend_image_tag        = var.frontend_image_tag
+  backend_min_scale         = var.backend_min_scale
+  backend_max_scale         = var.backend_max_scale
+  backend_cpu_limit         = var.backend_cpu_limit
+  backend_memory_limit      = var.backend_memory_limit
+  biocompute_min_scale      = var.biocompute_min_scale
+  biocompute_max_scale      = var.biocompute_max_scale
+  biocompute_cpu_limit      = var.biocompute_cpu_limit
+  biocompute_memory_limit   = var.biocompute_memory_limit
   enable_frontend_container = var.enable_frontend_container
-  tags                   = local.common_tags
+  tags                      = local.common_tags
 }

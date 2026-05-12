@@ -106,7 +106,7 @@ output "lock_table" {
 
 output "backend_hcl" {
   description = "Drop this into providers/aws/environments/<env>/backend.hcl"
-  value = <<-EOT
+  value       = <<-EOT
     bucket         = "${aws_s3_bucket.tfstate.id}"
     key            = "infrastructure/terraform.tfstate"
     region         = "${var.aws_region}"

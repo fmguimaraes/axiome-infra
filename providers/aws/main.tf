@@ -21,6 +21,18 @@ provider "aws" {
   }
 }
 
+# CloudFront + ACM are global services that require us-east-1 for the cert
+# (CloudFront only consumes ACM certs from us-east-1). Aliased provider used
+# by the `edge` module; the rest of the stack stays in var.aws_region.
+provider "aws" {
+  alias  = "us_east_1"
+  region = "us-east-1"
+
+  default_tags {
+    tags = local.base_tags
+  }
+}
+
 provider "neon" {}
 provider "mongodbatlas" {}
 
@@ -85,13 +97,13 @@ module "database_neon" {
 module "database_atlas" {
   source = "./modules/database-atlas"
 
-  naming_prefix    = local.naming_prefix
-  environment      = var.environment
-  org_id           = var.atlas_org_id
-  cluster_tier     = var.atlas_cluster_tier
-  cloud_provider   = var.atlas_cloud_provider
-  region           = var.atlas_region
-  mongo_version    = var.atlas_mongo_version
+  naming_prefix  = local.naming_prefix
+  environment    = var.environment
+  org_id         = var.atlas_org_id
+  cluster_tier   = var.atlas_cluster_tier
+  cloud_provider = var.atlas_cloud_provider
+  region         = var.atlas_region
+  mongo_version  = var.atlas_mongo_version
 }
 
 # ---------------- Compute (Lightsail) ----------------
@@ -99,25 +111,30 @@ module "database_atlas" {
 module "compute" {
   source = "./modules/compute"
 
-  naming_prefix          = local.naming_prefix
-  environment            = var.environment
-  aws_region             = var.aws_region
-  availability_zone      = var.lightsail_availability_zone
-  blueprint_id           = var.lightsail_blueprint_id
-  bundle_id              = var.lightsail_bundle_id
-  key_pair_name          = var.lightsail_key_pair_name
-  fqdn                   = local.fqdn
+  naming_prefix     = local.naming_prefix
+  environment       = var.environment
+  aws_region        = var.aws_region
+  availability_zone = var.lightsail_availability_zone
+  blueprint_id      = var.lightsail_blueprint_id
+  bundle_id         = var.lightsail_bundle_id
+  key_pair_name     = var.lightsail_key_pair_name
+  fqdn              = local.fqdn
 
-  ssm_parameter_prefix   = module.secrets.parameter_prefix
-  ssm_iam_role_arn       = module.secrets.lightsail_iam_role_arn
-  ecr_registry           = module.registry.registry_url
-  ecr_pull_role_arn      = module.registry.pull_role_arn
+  ssm_parameter_prefix = module.secrets.parameter_prefix
+  ssm_iam_role_arn     = module.secrets.lightsail_iam_role_arn
+  ecr_registry         = module.registry.registry_url
+  ecr_pull_role_arn    = module.registry.pull_role_arn
 
-  backend_image_tag      = var.backend_image_tag
-  biocompute_image_tag   = var.biocompute_image_tag
-  frontend_image_tag     = var.frontend_image_tag
+  backend_image_tag    = var.backend_image_tag
+  biocompute_image_tag = var.biocompute_image_tag
+  frontend_image_tag   = var.frontend_image_tag
 
-  tags                   = local.base_tags
+  # When CloudFront fronts the VM, Caddy on the VM serves plain HTTP on :80
+  # and stops managing certs. Keep these toggles in lockstep — flipping one
+  # without the other breaks the request path.
+  behind_proxy = var.use_cloudfront_edge
+
+  tags = local.base_tags
 
   depends_on = [
     module.secrets,
@@ -138,4 +155,23 @@ module "dns" {
   fqdn        = local.fqdn
   static_ip   = module.compute.static_ip
   environment = var.environment
+}
+
+# ---------------- Edge (CloudFront + ACM) — optional ----------------
+# Only created when var.use_cloudfront_edge = true. See `variable
+# use_cloudfront_edge` in variables.tf for the why and the operator
+# checklist for the two manual DNS records.
+
+module "edge" {
+  source = "./modules/edge"
+  count  = var.use_cloudfront_edge ? 1 : 0
+
+  providers = {
+    aws           = aws
+    aws.us_east_1 = aws.us_east_1
+  }
+
+  fqdn      = local.fqdn
+  origin_ip = module.compute.static_ip
+  tags      = local.base_tags
 }

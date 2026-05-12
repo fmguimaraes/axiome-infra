@@ -1,10 +1,10 @@
-environment      = "production"
-project_name     = "axiome"
-scaleway_region  = "fr-par"
-scaleway_zone    = "fr-par-1"
+environment     = "production"
+project_name    = "axiome"
+scaleway_region = "fr-par"
+scaleway_zone   = "fr-par-1"
 
 domain    = "axiome.example.com"
-subdomain = ""  # Apex
+subdomain = "" # Apex
 
 instance_type                = "DEV1-M"
 instance_image               = "ubuntu_jammy"
