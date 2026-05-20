@@ -116,10 +116,12 @@ services:
     image: node:20-alpine
     container_name: axiome-backend
     working_dir: /app
-    command: sh -c "apk add --no-cache openssl && npm install && npm run dev"
+    command: sh -c "apk add --no-cache openssl chromium nss freetype harfbuzz ca-certificates ttf-freefont && npm install && npm run dev"
     environment:
       NODE_ENV: development
       PORT: "3000"
+      PUPPETEER_SKIP_DOWNLOAD: "true"
+      PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium-browser
       DATABASE_URL: postgresql://${POSTGRES_USER:-axiome}:${POSTGRES_PASSWORD:-axiome_local_dev}@postgres:5432/${POSTGRES_DB:-axiome}
       USER_DATABASE_URL: postgresql://${POSTGRES_USER:-axiome}:${POSTGRES_PASSWORD:-axiome_local_dev}@postgres:5432/${POSTGRES_DB:-axiome}?schema=user_svc
       ORGANIZATION_DATABASE_URL: postgresql://${POSTGRES_USER:-axiome}:${POSTGRES_PASSWORD:-axiome_local_dev}@postgres:5432/${POSTGRES_DB:-axiome}?schema=organization_svc
@@ -133,7 +135,8 @@ services:
       S3_BUCKET_UPLOADS: axiome-local-uploads
       S3_REGION: us-east-1
       S3_FORCE_PATH_STYLE: "true"
-      BIOCOMPUTE_URL: http://biocompute:8000
+      BIO_COMPUTE_URL: http://biocompute:8000
+      CALLBACK_BASE_URL: http://backend:3004
       JWT_SECRET: ${JWT_SECRET:-local-dev-jwt-secret-change-in-production}
       BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-admin@axiome.local}
       BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-admin}
@@ -178,6 +181,7 @@ services:
       BIO_COMPUTE_S3_SECRET_KEY: ${S3_SECRET_KEY:-minioadmin}
       BIO_COMPUTE_S3_BUCKET: axiome-local-artifacts
       BIO_COMPUTE_DASHBOARD_DB_URL: postgresql://${POSTGRES_USER:-axiome}:${POSTGRES_PASSWORD:-axiome_local_dev}@postgres:5432/${POSTGRES_DB:-axiome}
+      BIO_COMPUTE_JWT_SECRET: ${JWT_SECRET:-local-dev-jwt-secret-change-in-production}
     ports:
       - "${BIOCOMPUTE_PORT:-8000}:8000"
     volumes:
