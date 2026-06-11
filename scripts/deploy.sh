@@ -17,7 +17,7 @@ Arguments:
 
 Environment variables:
   PROVIDER              Required. Selects the infra codepath:
-                        aws | scaleway | onprem
+                        aws | ovh | scaleway | onprem
                         (corresponds to a providers/\${PROVIDER}/ subtree)
   AWS_ACCESS_KEY_ID     AWS access key (required when PROVIDER=aws —
                         used by both the S3 state backend and the AWS
@@ -38,10 +38,10 @@ case "${ENVIRONMENT}" in
   *) echo "Error: environment must be dev, staging, or production"; exit 1 ;;
 esac
 
-: "${PROVIDER:?PROVIDER is required (aws | scaleway | onprem)}"
+: "${PROVIDER:?PROVIDER is required (aws | ovh | scaleway | onprem)}"
 case "${PROVIDER}" in
-  aws|scaleway|onprem) ;;
-  *) echo "Error: PROVIDER must be aws, scaleway, or onprem (got '${PROVIDER}')"; exit 1 ;;
+  aws|ovh|scaleway|onprem) ;;
+  *) echo "Error: PROVIDER must be aws, ovh, scaleway, or onprem (got '${PROVIDER}')"; exit 1 ;;
 esac
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -74,6 +74,16 @@ fi
 if [ "${PROVIDER}" = "aws" ]; then
   : "${AWS_ACCESS_KEY_ID:?AWS_ACCESS_KEY_ID is required when PROVIDER=aws}"
   : "${AWS_SECRET_ACCESS_KEY:?AWS_SECRET_ACCESS_KEY is required when PROVIDER=aws}"
+fi
+
+if [ "${PROVIDER}" = "ovh" ]; then
+  # OVH resource provider credentials
+  : "${OVH_APPLICATION_KEY:?OVH_APPLICATION_KEY is required when PROVIDER=ovh}"
+  : "${OVH_APPLICATION_SECRET:?OVH_APPLICATION_SECRET is required when PROVIDER=ovh}"
+  : "${OVH_CONSUMER_KEY:?OVH_CONSUMER_KEY is required when PROVIDER=ovh}"
+  # OVH Object Storage (S3-compatible) keys for the Terraform state backend
+  : "${AWS_ACCESS_KEY_ID:?AWS_ACCESS_KEY_ID (OVH Object Storage S3 key) is required when PROVIDER=ovh}"
+  : "${AWS_SECRET_ACCESS_KEY:?AWS_SECRET_ACCESS_KEY (OVH Object Storage S3 secret) is required when PROVIDER=ovh}"
 fi
 
 echo "==> Initializing terraform for ${ENVIRONMENT} (PROVIDER=${PROVIDER})..."

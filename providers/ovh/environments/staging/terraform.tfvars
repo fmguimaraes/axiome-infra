@@ -1,0 +1,29 @@
+environment  = "staging"
+project_name = "axiome"
+
+ovh_region    = "GRA11"
+ovh_s3_region = "gra"
+
+domain    = "axiomebio.com"
+subdomain = "staging"
+
+ovh_instance_flavor              = "b3-8"
+ovh_instance_image               = "Ubuntu 22.04"
+ovh_instance_root_volume_size_gb = 40
+
+neon_project_region_id   = "aws-eu-central-1"
+neon_compute_min_cu      = 0.25
+neon_compute_max_cu      = 1.0
+neon_autosuspend_seconds = 300
+
+atlas_org_id         = ""
+atlas_cluster_tier   = "M0"
+atlas_cloud_provider = "AWS"
+atlas_region         = "EU_CENTRAL_1"
+atlas_mongo_version  = "7.0"
+
+backend_image_tag    = "latest"
+biocompute_image_tag = "latest"
+frontend_image_tag   = "latest"
+
+tags = ["tier:staging"]
