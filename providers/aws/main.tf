@@ -117,6 +117,35 @@ module "database_atlas" {
   mongo_version  = var.atlas_mongo_version
 }
 
+# ---------------- HDS data stack (parallel stand-up) — FR1 / FR2 / NFR7 ----------------
+# Gated by var.use_hds_data_stack. Stands up the new private network + RDS Postgres
+# alongside the live stack so it can be migrated and tested before cutover (S13).
+
+module "network" {
+  source = "./modules/network"
+  count  = var.use_hds_data_stack ? 1 : 0
+
+  naming_prefix = local.naming_prefix
+  environment   = var.environment
+  vpc_cidr      = var.vpc_cidr
+  tags          = local.base_tags
+}
+
+module "database_rds" {
+  source = "./modules/database-rds"
+  count  = var.use_hds_data_stack ? 1 : 0
+
+  naming_prefix          = local.naming_prefix
+  environment            = var.environment
+  kms_key_arn            = module.kms.key_arn
+  subnet_ids             = module.network[0].private_subnet_ids
+  vpc_security_group_ids = [module.network[0].data_security_group_id]
+  instance_class         = var.rds_instance_class
+  allocated_storage      = var.rds_allocated_storage
+  multi_az               = var.rds_multi_az
+  tags                   = local.base_tags
+}
+
 # ---------------- Compute (Lightsail) ----------------
 
 module "compute" {

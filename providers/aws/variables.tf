@@ -209,3 +209,36 @@ variable "common_tags" {
   type        = map(string)
   default     = {}
 }
+
+# ---------------- HDS data stack (FR1/FR2/NFR7) — parallel stand-up ----------------
+
+variable "use_hds_data_stack" {
+  description = <<-EOT
+    When true, provision the HDS-architecture data stack (VPC + 3-tier security
+    groups + RDS Postgres, CMK-encrypted) ALONGSIDE the current Lightsail/Neon
+    stack (strangler pattern — Feature MIPP-Hosting-Environment.md). Default false
+    so apply does not disturb the live deployment until cutover (S13 / AXI-963).
+  EOT
+  type        = bool
+  default     = false
+}
+
+variable "vpc_cidr" {
+  type    = string
+  default = "10.20.0.0/16"
+}
+
+variable "rds_instance_class" {
+  type    = string
+  default = "db.t3.micro"
+}
+
+variable "rds_allocated_storage" {
+  type    = number
+  default = 20
+}
+
+variable "rds_multi_az" {
+  type    = bool
+  default = false
+}
