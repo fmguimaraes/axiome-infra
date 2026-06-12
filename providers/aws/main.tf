@@ -146,6 +146,29 @@ module "database_rds" {
   tags                   = local.base_tags
 }
 
+# Provider-native EC2 compute (replaces Lightsail when use_ec2_compute = true).
+module "compute_ec2" {
+  source = "./modules/compute-ec2"
+  count  = (var.use_ec2_compute && var.use_hds_data_stack) ? 1 : 0
+
+  naming_prefix         = local.naming_prefix
+  environment           = var.environment
+  aws_region            = var.aws_region
+  instance_type         = var.ec2_instance_type
+  vpc_id                = module.network[0].vpc_id
+  subnet_id             = module.network[0].public_subnet_ids[0]
+  app_security_group_id = module.network[0].app_security_group_id
+  key_name              = var.lightsail_key_pair_name
+  ssm_parameter_prefix  = module.secrets.parameter_prefix
+  ecr_registry          = module.registry.registry_url
+  fqdn                  = local.fqdn
+  backend_image_tag     = var.backend_image_tag
+  biocompute_image_tag  = var.biocompute_image_tag
+  frontend_image_tag    = var.frontend_image_tag
+  use_ssm_image_tags    = var.use_ssm_image_tags
+  tags                  = local.base_tags
+}
+
 # ---------------- Compute (Lightsail) ----------------
 
 module "compute" {

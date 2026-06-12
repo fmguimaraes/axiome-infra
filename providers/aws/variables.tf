@@ -242,3 +242,14 @@ variable "rds_multi_az" {
   type    = bool
   default = false
 }
+
+variable "use_ec2_compute" {
+  description = "When true (requires use_hds_data_stack), run the app stack on EC2 in the VPC instead of Lightsail (FR1). Exposes an Elastic IP for the Hostinger DNS record. Default false."
+  type        = bool
+  default     = false
+}
+
+variable "ec2_instance_type" {
+  type    = string
+  default = "t3.medium"
+}
