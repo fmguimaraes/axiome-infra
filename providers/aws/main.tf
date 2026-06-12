@@ -36,6 +36,16 @@ provider "aws" {
 provider "neon" {}
 provider "mongodbatlas" {}
 
+# ---------------- KMS (customer-managed key for data-at-rest) ----------------
+
+module "kms" {
+  source = "./modules/kms"
+
+  naming_prefix = local.naming_prefix
+  environment   = var.environment
+  tags          = local.base_tags
+}
+
 # ---------------- Storage (S3) ----------------
 
 module "storage" {
@@ -43,6 +53,7 @@ module "storage" {
 
   naming_prefix = local.naming_prefix
   environment   = var.environment
+  kms_key_arn   = module.kms.key_arn
   tags          = local.base_tags
 }
 
