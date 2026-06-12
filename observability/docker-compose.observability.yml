@@ -1,0 +1,51 @@
+# Portable observability stack (FR9 / NFR8) — Prometheus + Grafana + Loki + Promtail.
+# Provider-agnostic: runs as containers on any provider's compute (AWS/OVH/Scaleway),
+# so observability carries no AWS lock-in. Provider-native sinks (CloudWatch / Scaleway
+# Cockpit / OVH LDP) are OPTIONAL and selected per provider. No secrets/PII in logs.
+#
+# Compose overlay: `docker compose -f docker-compose.yml -f observability/docker-compose.observability.yml up -d`
+services:
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    restart: unless-stopped
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    networks: [axiome-network]
+
+  loki:
+    image: grafana/loki:3.1.1
+    restart: unless-stopped
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - loki_data:/loki
+    networks: [axiome-network]
+
+  promtail:
+    image: grafana/promtail:3.1.1
+    restart: unless-stopped
+    command: -config.file=/etc/promtail/config.yml
+    volumes:
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [axiome-network]
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    restart: unless-stopped
+    environment:
+      # Admin password comes from the secrets store at deploy time — never hard-coded.
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set via secrets store}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    networks: [axiome-network]
+
+volumes:
+  prometheus_data:
+  loki_data:
+  grafana_data:
+
+networks:
+  axiome-network:
+    external: true
