@@ -28,8 +28,8 @@ After apply: `terraform output ec2_public_ip` and `rds_endpoint`.
 
 ## S6 — Messaging & cache (FR4 / FR5)
 
-- **RabbitMQ:** runs as a **container** on the compute host (cloud-init compose) — FR4. Not a managed service.
-- **Redis:** runs as a container today; **externalization to a dedicated in-region deployment (FR5)** is the remaining refinement — portable OSS Redis, never ElastiCache. Tracked under AXI-956.
+- **RabbitMQ:** runs as a **container** on the compute host (cloud-init compose) — FR4. Not a managed service (no Amazon MQ).
+- **Redis:** **managed via AWS ElastiCache** (FR5) — private subnets + data SG, CMK at-rest + TLS in transit; wire the `rediss://` primary endpoint into `REDIS_URL`. OVH/Scaleway use their managed Redis behind the same `REDIS_URL` (Redis-protocol) contract. Module: `modules/cache-redis`.
 
 ## S5 — Event store (FR3)
 
@@ -59,7 +59,7 @@ After apply: `terraform output ec2_public_ip` and `rds_endpoint`.
 | AXI-961 Qualification Record (FR14) | ✅ tested | fail-closed |
 | AXI-963 cutover/migration | ✅ script | run at cutover |
 | AXI-955 event-store | 🟡 infra + plan | **backend repository code pending** |
-| AXI-956 Redis externalization | 🟡 container today | dedicated deployment pending |
+| AXI-956 RabbitMQ container + ElastiCache Redis | ✅ AWS real, validate ✓ | OVH/SCW managed-Redis scaffolds |
 | AXI-962 HDS scope + sign-off | 🟡 checklist | run after deploy (NFR1/NFR6) |
 
 All AWS Terraform is `terraform validate`-clean. OVH/Scaleway modules are scaffolds to refine + validate in the test pass.

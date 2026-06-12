@@ -67,6 +67,11 @@ output "rds_endpoint" {
   value       = try(module.database_rds[0].endpoint, null)
 }
 
+output "redis_endpoint" {
+  description = "ElastiCache primary endpoint. null until use_hds_data_stack = true."
+  value       = try(module.cache_redis[0].primary_endpoint, null)
+}
+
 # ---------------- Edge outputs (only populated when use_cloudfront_edge = true) ----------------
 
 output "cloudfront_domain_name" {
