@@ -253,3 +253,15 @@ variable "ec2_instance_type" {
   type    = string
   default = "t3.medium"
 }
+
+variable "use_legacy_stack" {
+  description = <<-EOT
+    Keep the legacy Lightsail compute. Default true. Set false in the final cutover
+    step (after the EC2/RDS/ElastiCache stack is live, data migrated with verified
+    parity, DNS cut over, and sign-off recorded) to destroy Lightsail declaratively.
+    Decommissioning Neon/Atlas rides with the secrets rewire (their connection strings
+    feed the secrets module) — see providers/RUNBOOK.md.
+  EOT
+  type        = bool
+  default     = true
+}

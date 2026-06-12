@@ -9,13 +9,13 @@ output "dns_managed_by_terraform" {
 }
 
 output "lightsail_static_ip" {
-  description = "Lightsail static IP for SSH and DNS"
-  value       = module.compute.static_ip
+  description = "Lightsail static IP for SSH and DNS. null once use_legacy_stack = false."
+  value       = try(module.compute[0].static_ip, null)
 }
 
 output "lightsail_instance_name" {
-  description = "Lightsail instance name (for SSH / management)"
-  value       = module.compute.instance_name
+  description = "Lightsail instance name. null once use_legacy_stack = false."
+  value       = try(module.compute[0].instance_name, null)
 }
 
 output "ecr_registry_url" {

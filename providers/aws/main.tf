@@ -187,6 +187,7 @@ module "cache_redis" {
 
 module "compute" {
   source = "./modules/compute"
+  count  = var.use_legacy_stack ? 1 : 0
 
   naming_prefix     = local.naming_prefix
   environment       = var.environment
@@ -231,7 +232,7 @@ module "dns" {
 
   domain      = var.domain
   fqdn        = local.fqdn
-  static_ip   = module.compute.static_ip
+  static_ip   = try(module.compute[0].static_ip, try(module.compute_ec2[0].public_ip, null))
   environment = var.environment
 }
 
@@ -250,7 +251,7 @@ module "edge" {
   }
 
   fqdn       = local.fqdn
-  origin_ip  = module.compute.static_ip
+  origin_ip  = try(module.compute[0].static_ip, try(module.compute_ec2[0].public_ip, null))
   aws_region = var.aws_region
   tags       = local.base_tags
 }
