@@ -24,14 +24,14 @@ output "ecr_registry_url" {
 }
 
 output "neon_connection_string" {
-  description = "Neon Postgres connection string (sensitive)"
-  value       = module.database_neon.connection_string
+  description = "Neon Postgres connection string (sensitive). null when use_legacy_stack = false."
+  value       = try(module.database_neon[0].connection_string, null)
   sensitive   = true
 }
 
 output "atlas_connection_string" {
-  description = "Atlas MongoDB SRV connection string (sensitive)"
-  value       = module.database_atlas.connection_string
+  description = "Atlas MongoDB SRV connection string (sensitive). null when use_legacy_stack = false."
+  value       = try(module.database_atlas[0].connection_string, null)
   sensitive   = true
 }
 

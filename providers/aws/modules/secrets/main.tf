@@ -16,6 +16,17 @@ resource "random_password" "rabbitmq" {
   special = false
 }
 
+# Root password for the in-region self-hosted Mongo container (FR3). Always
+# generated so the container can start; only used by the app when use_inregion_mongo.
+resource "random_password" "mongo" {
+  length  = 32
+  special = false
+}
+
+locals {
+  inregion_mongodb_url = "mongodb://axiome:${random_password.mongo.result}@mongo:27017/axiome?authSource=admin"
+}
+
 resource "aws_ssm_parameter" "database_url" {
   name  = "${local.prefix}/DATABASE_URL"
   type  = "SecureString"
@@ -26,7 +37,25 @@ resource "aws_ssm_parameter" "database_url" {
 resource "aws_ssm_parameter" "mongodb_url" {
   name  = "${local.prefix}/MONGODB_URL"
   type  = "SecureString"
-  value = var.mongodb_url
+  value = var.use_inregion_mongo ? local.inregion_mongodb_url : var.mongodb_url
+  tags  = var.tags
+}
+
+# Root password consumed by the in-region Mongo container (compose MONGO_ROOT_PASSWORD).
+resource "aws_ssm_parameter" "mongo_root_password" {
+  name  = "${local.prefix}/MONGO_ROOT_PASSWORD"
+  type  = "SecureString"
+  value = random_password.mongo.result
+  tags  = var.tags
+}
+
+# REDIS_URL — only published when provided (e.g. ElastiCache). Absent = app uses
+# its local Redis container default (compose REDIS_URL fallback). FR5.
+resource "aws_ssm_parameter" "redis_url" {
+  count = var.publish_redis_url ? 1 : 0
+  name  = "${local.prefix}/REDIS_URL"
+  type  = "SecureString"
+  value = var.redis_url
   tags  = var.tags
 }
 

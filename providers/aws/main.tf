@@ -77,8 +77,12 @@ module "secrets" {
   naming_prefix = local.naming_prefix
   environment   = var.environment
 
-  postgres_url        = module.database_neon.connection_string
-  mongodb_url         = module.database_atlas.connection_string
+  # Legacy stack -> Neon/Atlas; new HDS stack -> RDS + in-region Mongo + ElastiCache (FR2/FR3/FR5).
+  postgres_url        = var.use_legacy_stack ? try(module.database_neon[0].connection_string, "") : try(module.database_rds[0].connection_string, "")
+  mongodb_url         = var.use_legacy_stack ? try(module.database_atlas[0].connection_string, "") : ""
+  use_inregion_mongo  = !var.use_legacy_stack
+  redis_url           = var.use_hds_data_stack ? try(module.cache_redis[0].redis_url, "") : ""
+  publish_redis_url   = var.use_hds_data_stack
   s3_artifacts_bucket = module.storage.artifacts_bucket_name
   s3_uploads_bucket   = module.storage.uploads_bucket_name
   s3_system_bucket    = module.storage.system_bucket_name
@@ -93,6 +97,7 @@ module "secrets" {
 
 module "database_neon" {
   source = "./modules/database-neon"
+  count  = var.use_legacy_stack ? 1 : 0
 
   naming_prefix             = local.naming_prefix
   environment               = var.environment
@@ -107,6 +112,7 @@ module "database_neon" {
 
 module "database_atlas" {
   source = "./modules/database-atlas"
+  count  = var.use_legacy_stack ? 1 : 0
 
   naming_prefix  = local.naming_prefix
   environment    = var.environment
