@@ -57,6 +57,27 @@ resource "aws_iam_access_key" "runtime" {
   user = aws_iam_user.runtime.name
 }
 
+# SSM Session Manager — keyless, auditable shell + run-command (no SSH key on this
+# box). Needed for HDS ops (migrations, debugging) without opening port 22 to SSH.
+resource "aws_iam_role" "ssm" {
+  name = "${var.naming_prefix}-ec2-ssm"
+  assume_role_policy = jsonencode({
+    Version   = "2012-10-17"
+    Statement = [{ Effect = "Allow", Principal = { Service = "ec2.amazonaws.com" }, Action = "sts:AssumeRole" }]
+  })
+  tags = var.tags
+}
+
+resource "aws_iam_role_policy_attachment" "ssm" {
+  role       = aws_iam_role.ssm.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
+resource "aws_iam_instance_profile" "ssm" {
+  name = "${var.naming_prefix}-ec2-ssm"
+  role = aws_iam_role.ssm.name
+}
+
 locals {
   caddyfile = templatefile("${path.module}/../../cloud-init/Caddyfile.tftpl", {
     fqdn         = var.fqdn
@@ -130,6 +151,7 @@ resource "aws_instance" "main" {
   subnet_id              = var.subnet_id
   vpc_security_group_ids = [aws_security_group.instance.id, var.app_security_group_id]
   key_name               = var.key_name
+  iam_instance_profile   = aws_iam_instance_profile.ssm.name
   user_data              = local.cloud_init
 
   root_block_device {
