@@ -37,12 +37,12 @@ AWS list prices, eu-west-3, USD (before EUR/VAT). Greenfield production = `use_h
 
 - **Cost-optimized for the pilot:** NAT Gateway off (−~$33) and single-node Redis (−~$14) vs. the HA default.
 - **Scale levers:** bump `redis_num_cache_clusters=2` (Multi-AZ, +~$14), larger `rds_instance_class` / `ec2_instance_type`, set `enable_nat_gateway=true` only if a private workload needs egress.
-- Excludes data-transfer-out at scale, backups beyond free allotment, and the Hostinger domain. Observability (Prometheus/Grafana/Loki) runs as containers on the EC2 → no extra AWS line item. Neon/Atlas/Lightsail are **$0** here (gated off).
+- Excludes data-transfer-out at scale, backups beyond free allotment, and the Microsoft 365 domain. Observability (Prometheus/Grafana/Loki) runs as containers on the EC2 → no extra AWS line item. Neon/Atlas/Lightsail are **$0** here (gated off).
 
 ## S8 — TLS + DNS (FR7)
 
 - **TLS:** Caddy + Let's Encrypt on the compute (rendered from `cloud-init/Caddyfile.tftpl`; reused by the EC2 module). Portable across providers.
-- **DNS:** managed **manually in the Hostinger zone** (no first-class Terraform support). Create the A record:
+- **DNS:** managed **manually in the Microsoft 365 zone** (no first-class Terraform support). Create the A record:
   `platform.axiomebio.com  A  <terraform output ec2_public_ip>`
   This is the single documented manual step (FR12 carve-out).
 
@@ -73,7 +73,7 @@ AWS list prices, eu-west-3, USD (before EUR/VAT). Greenfield production = `use_h
 | AXI-953 network + EC2 compute | ✅ AWS real, validate ✓ | OVH/SCW network scaffolds; OVH/SCW compute pending |
 | AXI-954 RDS Postgres | ✅ AWS real, validate ✓ | OVH/SCW managed-PG scaffolds |
 | AXI-957 object storage | ✅ AWS real | OVH/SCW scaffolds |
-| AXI-958 TLS+DNS | ✅ Caddy + manual Hostinger DNS | — |
+| AXI-958 TLS+DNS | ✅ Caddy + manual Microsoft 365 DNS | — |
 | AXI-959 observability | ✅ portable stack | provider-native sinks optional |
 | AXI-960 HDS report (FR13) | ✅ tested | secrets redacted |
 | AXI-961 Qualification Record (FR14) | ✅ tested | fail-closed |

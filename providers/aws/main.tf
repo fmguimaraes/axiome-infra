@@ -230,7 +230,7 @@ module "compute" {
 
 # ---------------- DNS (Route 53 — optional) ----------------
 # Only created when var.use_route53 = true. Default deployment manages DNS
-# manually at the registrar (Hostinger) — see providers/aws/README.md §0.4.
+# manually at the registrar (Microsoft 365) — see providers/aws/README.md §0.4.
 
 module "dns" {
   source = "./modules/dns"

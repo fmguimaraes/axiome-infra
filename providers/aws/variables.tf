@@ -37,7 +37,7 @@ variable "subdomain" {
 }
 
 variable "use_route53" {
-  description = "If true, manage the env A record in a pre-existing Route 53 hosted zone for var.domain. If false (default), DNS is configured manually at the domain registrar (e.g., Hostinger) — Terraform only provisions the Lightsail static IP and exposes it via the lightsail_static_ip output."
+  description = "If true, manage the env A record in a pre-existing Route 53 hosted zone for var.domain. If false (default), DNS is configured manually at the domain registrar (e.g., Microsoft 365) — Terraform only provisions the Lightsail static IP and exposes it via the lightsail_static_ip output."
   type        = bool
   default     = false
 }
@@ -163,7 +163,7 @@ variable "use_cloudfront_edge" {
     Lightsail instance no longer disturbs certs (avoids today's Let's Encrypt
     rate-limit incident where ~5 recreates burned the 5/168h limit).
 
-    DNS isn't terraform-managed (Hostinger), so two manual records at the
+    DNS isn't terraform-managed (Microsoft 365), so two manual records at the
     registrar are required: an ACM validation CNAME and a final CNAME from
     var.fqdn -> the cloudfront_domain_name output.
 
@@ -244,7 +244,7 @@ variable "rds_multi_az" {
 }
 
 variable "use_ec2_compute" {
-  description = "When true (requires use_hds_data_stack), run the app stack on EC2 in the VPC instead of Lightsail (FR1). Exposes an Elastic IP for the Hostinger DNS record. Default false."
+  description = "When true (requires use_hds_data_stack), run the app stack on EC2 in the VPC instead of Lightsail (FR1). Exposes an Elastic IP for the Microsoft 365 DNS record. Default false."
   type        = bool
   default     = false
 }

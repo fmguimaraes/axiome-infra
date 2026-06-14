@@ -7,7 +7,7 @@ aws_region   = "eu-west-3"
 # leave create_ecr_repositories unset (or = false) in their tfvars.
 create_ecr_repositories = true
 
-# Domain — DNS is managed manually at Hostinger (see providers/aws/README.md §0.4).
+# Domain — DNS is managed manually at Microsoft 365 (see providers/aws/README.md §0.4).
 # After apply, retrieve lightsail_static_ip from outputs and create the matching A record.
 # To switch to Terraform-managed Route 53, pre-create a hosted zone for var.domain and set use_route53 = true.
 domain      = "axiomebio.com"

@@ -2,7 +2,7 @@ environment  = "staging"
 project_name = "axiome"
 aws_region   = "eu-west-3"
 
-# DNS managed manually at Hostinger — see providers/aws/README.md §0.4.
+# DNS managed manually at Microsoft 365 — see providers/aws/README.md §0.4.
 domain      = "axiomebio.com"
 subdomain   = "staging"
 use_route53 = false

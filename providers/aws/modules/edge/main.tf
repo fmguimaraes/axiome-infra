@@ -19,13 +19,13 @@
 #     browsers that already pinned HSTS during the LE days.
 #
 # DNS:
-#   This module does NOT manage DNS records (axiomebio.com is on Hostinger,
+#   This module does NOT manage DNS records (axiomebio.com is on Microsoft 365,
 #   not Route 53). Two manual records at the registrar:
 #     1. CNAME from acm_validation_record.name -> acm_validation_record.value
 #        (one-shot, validates the cert).
 #     2. CNAME from var.fqdn -> cloudfront_domain_name (replaces the
 #        existing A record that points at the Lightsail static IP).
-#   Outputs surface both so the operator can paste them into Hostinger.
+#   Outputs surface both so the operator can paste them into Microsoft 365.
 
 resource "aws_acm_certificate" "main" {
   provider = aws.us_east_1

@@ -2,14 +2,14 @@ environment  = "production"
 project_name = "axiome"
 aws_region   = "eu-west-3"
 
-# DNS managed manually at Hostinger — see providers/aws/README.md §0.4.
+# DNS managed manually at Microsoft 365 — see providers/aws/README.md §0.4.
 domain      = "axiomebio.com"
 subdomain   = "platform" # production serves at platform.axiomebio.com (apex is the marketing landing page)
 use_route53 = false
 
 # --- HDS cutover (AXI-916) — stand up the new stack alongside Lightsail (strangler) ---
 use_hds_data_stack = true  # VPC + 3-tier SGs + RDS + ElastiCache
-use_ec2_compute    = true  # EC2 + Elastic IP (the Hostinger A-record target)
+use_ec2_compute    = true  # EC2 + Elastic IP (the Microsoft 365 A-record target)
 use_legacy_stack   = false # greenfield production — no Lightsail (nothing to keep/roll back to)
 # ECR repos (axiome/backend|biocompute|frontend) + the ecr-pull role are account-level and already
 # exist (created by dev) — reference them, don't recreate.

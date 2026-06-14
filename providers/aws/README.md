@@ -1,6 +1,6 @@
 # AWS Provider — Bootstrap Guide
 
-Complete Day-0 bootstrap for the AWS provider variant: Lightsail compute + Neon Postgres + Atlas MongoDB + S3 + ECR. DNS is managed manually in Hostinger (see §0.4); Route 53 is **not** used in the default setup.
+Complete Day-0 bootstrap for the AWS provider variant: Lightsail compute + Neon Postgres + Atlas MongoDB + S3 + ECR. DNS is managed manually in Microsoft 365 (see §0.4); Route 53 is **not** used in the default setup.
 
 This guide is run **once per AWS account, then once per environment**. Subsequent operations use the Makefile targets.
 
@@ -16,10 +16,10 @@ This guide is run **once per AWS account, then once per environment**. Subsequen
 | Object storage | S3 (3 buckets per env: artifacts, uploads, system) | <$1/mo |
 | Container registry | ECR (account-shared across envs) | <$1/mo |
 | TLS / Reverse proxy | Caddy + Let's Encrypt (on the VM) | $0 |
-| DNS | Hostinger (manual A records pointing at Lightsail static IPs — see §0.4) | included with domain |
+| DNS | Microsoft 365 (manual A records pointing at Lightsail static IPs — see §0.4) | included with domain |
 | Secrets / config | SSM Parameter Store | $0 |
 
-**Three environments**: `dev`, `staging`, `production` — each is one Lightsail VM, one Neon project, one Atlas cluster, three S3 buckets, one A record at Hostinger. They share one ECR registry at the AWS-account level. DNS is managed manually in Hostinger (see §0.4); no shared Route 53 zone.
+**Three environments**: `dev`, `staging`, `production` — each is one Lightsail VM, one Neon project, one Atlas cluster, three S3 buckets, one A record at Microsoft 365. They share one ECR registry at the AWS-account level. DNS is managed manually in Microsoft 365 (see §0.4); no shared Route 53 zone.
 
 ---
 
@@ -65,15 +65,15 @@ aws sts get-caller-identity
 
 For this project, AWS credentials may already exist at `/home/felipe/dev/quietstage/tarot/back/.env.dev`. Source them or copy into `~/.aws/credentials` — do not commit them.
 
-### 0.4. DNS — Hostinger (current setup)
+### 0.4. DNS — Microsoft 365 (current setup)
 
-The domain is registered and managed at **Hostinger**. DNS records are created **manually in the Hostinger control panel** pointing at the Lightsail static IPs that Terraform provisions. We do **not** use Route 53 in this setup.
+The domain is registered and managed at **Microsoft 365**. DNS records are created **manually in the Microsoft 365 control panel** pointing at the Lightsail static IPs that Terraform provisions. We do **not** use Route 53 in this setup.
 
-> **Terraform note:** the `providers/aws/modules/dns` module is gated on `var.use_route53` (default **false**). With the default, Terraform does **not** touch Route 53 and `make apply` will not look up a hosted zone — it only provisions the Lightsail static IP, which you then point to manually in Hostinger. To switch back to Route 53 management later, pre-create a hosted zone for `var.domain` and set `use_route53 = true` in the env's `terraform.tfvars`.
+> **Terraform note:** the `providers/aws/modules/dns` module is gated on `var.use_route53` (default **false**). With the default, Terraform does **not** touch Route 53 and `make apply` will not look up a hosted zone — it only provisions the Lightsail static IP, which you then point to manually in Microsoft 365. To switch back to Route 53 management later, pre-create a hosted zone for `var.domain` and set `use_route53 = true` in the env's `terraform.tfvars`.
 
 #### 0.4.1. Required DNS records (recovery reference)
 
-After `make apply` completes for an environment, retrieve the static IP and add the corresponding A record(s) in Hostinger.
+After `make apply` completes for an environment, retrieve the static IP and add the corresponding A record(s) in Microsoft 365.
 
 | Environment | FQDN | Record type | Value | TTL |
 |---|---|---|---|---|
@@ -81,7 +81,7 @@ After `make apply` completes for an environment, retrieve the static IP and add 
 | staging | `staging.axiomebio.com` | A | `<lightsail-static-ip-staging>` | 300 |
 | production | `platform.axiomebio.com` | A | `<lightsail-static-ip-prod>` | 300 |
 
-The apex `axiomebio.com` is the marketing landing page and is **not** managed by this Terraform stack — leave its existing A/CNAME records in Hostinger untouched.
+The apex `axiomebio.com` is the marketing landing page and is **not** managed by this Terraform stack — leave its existing A/CNAME records in Microsoft 365 untouched.
 
 #### 0.4.2. How to retrieve the static IP from Terraform
 
@@ -94,12 +94,12 @@ make output ENV=staging | grep static_ip
 make output ENV=prod  | grep static_ip
 ```
 
-#### 0.4.3. How to configure in Hostinger
+#### 0.4.3. How to configure in Microsoft 365
 
-1. Log in to Hostinger → **Domains** → select the base domain → **DNS / Nameservers**.
-2. Confirm Hostinger's default nameservers are active (NOT delegated to Route 53). If they were ever pointed elsewhere, restore them from Hostinger's panel.
+1. Log in to Microsoft 365 → **Domains** → select the base domain → **DNS / Nameservers**.
+2. Confirm Microsoft 365's default nameservers are active (NOT delegated to Route 53). If they were ever pointed elsewhere, restore them from Microsoft 365's panel.
 3. Add or update the A records from the table above. For the production apex, edit the existing `@` record; for subdomains, create a new A record with the env name as the host.
-4. Save. Propagation: typically ~5 min on Hostinger, but TLS issuance via Caddy may need up to ~10 min after DNS resolves.
+4. Save. Propagation: typically ~5 min on Microsoft 365, but TLS issuance via Caddy may need up to ~10 min after DNS resolves.
 5. Verify:
    ```bash
    dig +short dev.axiomebio.com   # should return the Lightsail IP
@@ -108,7 +108,7 @@ make output ENV=prod  | grep static_ip
 
 #### 0.4.4. Recovery procedure (if DNS records are lost or domain is migrated)
 
-If the Hostinger DNS configuration is wiped or the domain is moved between Hostinger accounts:
+If the Microsoft 365 DNS configuration is wiped or the domain is moved between Microsoft 365 accounts:
 
 1. Confirm the Lightsail VMs are still running and have their static IPs:
    ```bash
@@ -116,7 +116,7 @@ If the Hostinger DNS configuration is wiped or the domain is moved between Hosti
      --query 'staticIps[].{Name:name,IP:ipAddress,AttachedTo:attachedTo}' --output table
    ```
 2. For each env, recreate the A record per the table in §0.4.1 using the IPs from step 1.
-3. If the domain itself was moved, also re-verify ownership / re-enable email forwarding / etc. from Hostinger's domain page.
+3. If the domain itself was moved, also re-verify ownership / re-enable email forwarding / etc. from Microsoft 365's domain page.
 4. Wait for propagation, then re-run the verification curls in [§1.9](#19-verify).
 
 **No data is at risk during DNS recovery** — Postgres lives in Neon, MongoDB in Atlas, blobs in S3. Only the public name → IP mapping is being restored.
@@ -150,7 +150,7 @@ export TF_VAR_atlas_org_id="<organization-id>"
 
 ### 0.6. Scope down Terraform IAM (recommended after first apply)
 
-After the first successful `terraform apply`, replace the AdministratorAccess policy on `axiome-terraform` with the least-privilege set covering only the resources Terraform manages (Lightsail, S3, IAM, ECR, SSM, DynamoDB — plus Route 53 only if you flip `use_route53 = true`; the default Hostinger setup does not need it). This is the standard production-hygiene step. A policy template is at [docs/iam-terraform-policy.json](../../docs/iam-terraform-policy.json) (create separately as the policy stabilizes).
+After the first successful `terraform apply`, replace the AdministratorAccess policy on `axiome-terraform` with the least-privilege set covering only the resources Terraform manages (Lightsail, S3, IAM, ECR, SSM, DynamoDB — plus Route 53 only if you flip `use_route53 = true`; the default Microsoft 365 setup does not need it). This is the standard production-hygiene step. A policy template is at [docs/iam-terraform-policy.json](../../docs/iam-terraform-policy.json) (create separately as the policy stabilizes).
 
 ---
 
@@ -186,17 +186,17 @@ The bootstrap state is local (`bootstrap/terraform.tfstate`). Back it up to your
 Edit `providers/aws/environments/<env>/terraform.tfvars`:
 
 ```hcl
-domain    = "axiomebio.com"   # Your base domain registered at Hostinger
+domain    = "axiomebio.com"   # Your base domain registered at Microsoft 365
 subdomain = "dev"                   # dev → dev.axiomebio.com
                                     # staging → staging.axiomebio.com
                                     # production → "" (apex)
 atlas_org_id = "<your-atlas-org-id>"  # From 0.5
-# use_route53 = false               # default; leave unset for Hostinger DNS
+# use_route53 = false               # default; leave unset for Microsoft 365 DNS
 ```
 
 Sensitive values (`atlas_org_id` is benign; the API keys are sensitive) flow through environment variables — never commit them.
 
-After `make apply` completes, retrieve the Lightsail static IP and add the matching A record(s) in the Hostinger DNS panel — see [§0.4.1](#041-required-dns-records-recovery-reference) for the table and [§0.4.3](#043-how-to-configure-in-hostinger) for the click-path.
+After `make apply` completes, retrieve the Lightsail static IP and add the matching A record(s) in the Microsoft 365 DNS panel — see [§0.4.1](#041-required-dns-records-recovery-reference) for the table and [§0.4.3](#043-how-to-configure-in-hostinger) for the click-path.
 
 ### 1.3. Initialize Terraform with the remote backend
 
@@ -225,7 +225,7 @@ Expected resources for dev (~30):
 - ~8 SSM parameters
 - 1 Neon project + branch + role + database
 - 1 Atlas project + cluster + DB user + IP allowlist
-- *(DNS: configured manually in Hostinger after apply — see §0.4)*
+- *(DNS: configured manually in Microsoft 365 after apply — see §0.4)*
 
 ### 1.5. Apply
 

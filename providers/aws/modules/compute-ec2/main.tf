@@ -1,6 +1,6 @@
 # HDS-in-scope EC2 compute (FR1) — replaces Lightsail. Runs the same containerized
 # stack via the shared cloud-init templates, in the VPC, with an Elastic IP that the
-# Hostinger A record for platform.axiomebio.com points at (FR7). TLS via Caddy/LE.
+# Microsoft 365 A record for platform.axiomebio.com points at (FR7). TLS via Caddy/LE.
 
 data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
