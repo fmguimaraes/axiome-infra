@@ -60,7 +60,8 @@ data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
 
 resource "aws_iam_role" "ecr_pull" {
-  name = "${var.project_name}-${terraform.workspace}-ecr-pull"
+  count = var.create_repositories ? 1 : 0
+  name  = "${var.project_name}-${terraform.workspace}-ecr-pull"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -75,7 +76,8 @@ resource "aws_iam_role" "ecr_pull" {
 }
 
 resource "aws_iam_role_policy" "ecr_pull" {
-  role = aws_iam_role.ecr_pull.id
+  count = var.create_repositories ? 1 : 0
+  role  = aws_iam_role.ecr_pull[0].id
 
   policy = jsonencode({
     Version = "2012-10-17"

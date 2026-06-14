@@ -140,7 +140,7 @@ resource "aws_vpc_security_group_egress_rule" "app_all" {
 # No 0.0.0.0/0 ingress here — closes the current Atlas open-access gap (NFR7).
 resource "aws_security_group" "data" {
   name        = "${var.naming_prefix}-data"
-  description = "Data tier (Postgres, Mongo, Redis, RabbitMQ) — private only"
+  description = "Data tier (Postgres, Mongo, Redis, RabbitMQ) - private only"
   vpc_id      = aws_vpc.this.id
   tags        = merge(var.tags, { Name = "${var.naming_prefix}-data" })
 }

@@ -4,11 +4,11 @@ output "registry_url" {
 }
 
 output "pull_role_arn" {
-  value = aws_iam_role.ecr_pull.arn
+  value = try(aws_iam_role.ecr_pull[0].arn, null)
 }
 
 output "pull_role_name" {
-  value = aws_iam_role.ecr_pull.name
+  value = try(aws_iam_role.ecr_pull[0].name, null)
 }
 
 output "repository_urls" {

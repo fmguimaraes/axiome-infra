@@ -11,6 +11,9 @@ use_route53 = false
 use_hds_data_stack = true  # VPC + 3-tier SGs + RDS + ElastiCache
 use_ec2_compute    = true  # EC2 + Elastic IP (the Hostinger A-record target)
 use_legacy_stack   = false # greenfield production — no Lightsail (nothing to keep/roll back to)
+# ECR repos (axiome/backend|biocompute|frontend) + the ecr-pull role are account-level and already
+# exist (created by dev) — reference them, don't recreate.
+create_ecr_repositories = false
 
 # Lightsail — production gets 4 GB headroom (medium_3_0). eu-west-3 has no ARM.
 # Upgrade triggers documented in graduation-criteria.md
