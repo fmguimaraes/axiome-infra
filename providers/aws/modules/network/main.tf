@@ -35,12 +35,14 @@ resource "aws_subnet" "private" {
 
 # NAT for private-subnet egress (image pulls, package updates).
 resource "aws_eip" "nat" {
+  count  = var.enable_nat_gateway ? 1 : 0
   domain = "vpc"
   tags   = merge(var.tags, { Name = "${var.naming_prefix}-nat-eip" })
 }
 
 resource "aws_nat_gateway" "this" {
-  allocation_id = aws_eip.nat.id
+  count         = var.enable_nat_gateway ? 1 : 0
+  allocation_id = aws_eip.nat[0].id
   subnet_id     = aws_subnet.public[0].id
   tags          = merge(var.tags, { Name = "${var.naming_prefix}-nat" })
   depends_on    = [aws_internet_gateway.this]
@@ -63,9 +65,14 @@ resource "aws_route_table_association" "public" {
 
 resource "aws_route_table" "private" {
   vpc_id = aws_vpc.this.id
-  route {
-    cidr_block     = "0.0.0.0/0"
-    nat_gateway_id = aws_nat_gateway.this.id
+  # Egress route only when a NAT Gateway is provisioned; otherwise the private
+  # subnets are fully isolated (RDS/ElastiCache need no outbound internet).
+  dynamic "route" {
+    for_each = var.enable_nat_gateway ? [1] : []
+    content {
+      cidr_block     = "0.0.0.0/0"
+      nat_gateway_id = aws_nat_gateway.this[0].id
+    }
   }
   tags = merge(var.tags, { Name = "${var.naming_prefix}-rt-private" })
 }

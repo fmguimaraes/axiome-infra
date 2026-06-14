@@ -12,12 +12,32 @@ PROVIDER=aws bash scripts/deploy.sh <env> [--plan-only]
 
 New HDS stack is gated (strangler — runs alongside the live Lightsail/Neon stack):
 
-| Toggle | Effect |
-|---|---|
-| `use_hds_data_stack=true` | provision VPC + 3-tier SGs + RDS Postgres (CMK-encrypted) |
-| `use_ec2_compute=true`    | run the app stack on EC2 in the VPC (Elastic IP) instead of Lightsail |
+| Toggle | Default | Effect |
+|---|---|---|
+| `use_hds_data_stack` | `false` | provision VPC + 3-tier SGs + RDS + ElastiCache (CMK-encrypted) |
+| `use_ec2_compute`    | `false` | run the app stack on EC2 in the VPC (Elastic IP) instead of Lightsail |
+| `use_legacy_stack`   | `true`  | keep Lightsail + Neon + Atlas. Set `false` for greenfield / after cutover (destroys/skip them; secrets repoint to RDS / in-region Mongo / ElastiCache) |
+| `redis_num_cache_clusters` | `1` | ElastiCache nodes. `1` = single (pilot, cheapest); `2+` = Multi-AZ failover |
+| `enable_nat_gateway` (network module) | `false` | NAT for private-subnet egress. Off by default — RDS/ElastiCache need none and EC2 is in a public subnet. On adds ~$33/mo |
 
 After apply: `terraform output ec2_public_ip` and `rds_endpoint`.
+
+## Monthly cost (estimate)
+
+AWS list prices, eu-west-3, USD (before EUR/VAT). Greenfield production = `use_hds_data_stack=true`, `use_ec2_compute=true`, `use_legacy_stack=false`.
+
+| Item | Config | ~$/mo |
+|---|---|---|
+| EC2 | `t3.medium` + 40 GB gp3 | ~$39 |
+| RDS Postgres | `db.t3.micro` single-AZ + 20 GB | ~$16 |
+| ElastiCache | 1× `cache.t3.micro` (`redis_num_cache_clusters=1`) | ~$14 |
+| KMS / ECR / S3 / DynamoDB / SSM | CMK + images + near-empty buckets | ~$3 |
+| NAT Gateway | **disabled** (`enable_nat_gateway=false`) | $0 |
+| **Total** | pilot sizing | **≈ $75–85 / mo** |
+
+- **Cost-optimized for the pilot:** NAT Gateway off (−~$33) and single-node Redis (−~$14) vs. the HA default.
+- **Scale levers:** bump `redis_num_cache_clusters=2` (Multi-AZ, +~$14), larger `rds_instance_class` / `ec2_instance_type`, set `enable_nat_gateway=true` only if a private workload needs egress.
+- Excludes data-transfer-out at scale, backups beyond free allotment, and the Hostinger domain. Observability (Prometheus/Grafana/Loki) runs as containers on the EC2 → no extra AWS line item. Neon/Atlas/Lightsail are **$0** here (gated off).
 
 ## S8 — TLS + DNS (FR7)
 

@@ -254,6 +254,12 @@ variable "ec2_instance_type" {
   default = "t3.medium"
 }
 
+variable "redis_num_cache_clusters" {
+  description = "ElastiCache node count. 1 = single node (pilot default, cheapest). 2+ = Multi-AZ failover for higher availability."
+  type        = number
+  default     = 1
+}
+
 variable "use_legacy_stack" {
   description = <<-EOT
     Keep the legacy Lightsail compute. Default true. Set false in the final cutover

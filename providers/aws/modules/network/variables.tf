@@ -29,6 +29,12 @@ variable "data_ports" {
   default     = [5432, 27017, 6379, 5672]
 }
 
+variable "enable_nat_gateway" {
+  description = "Provision a NAT Gateway for private-subnet egress. Default false — RDS/ElastiCache need no outbound internet and the EC2 app host sits in a public subnet (IGW). Enabling adds ~$33/mo; turn on only if a private-subnet workload needs egress."
+  type        = bool
+  default     = false
+}
+
 variable "tags" {
   type    = map(string)
   default = {}

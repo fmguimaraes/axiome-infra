@@ -185,7 +185,7 @@ module "cache_redis" {
   subnet_ids             = module.network[0].private_subnet_ids
   vpc_security_group_ids = [module.network[0].data_security_group_id]
   kms_key_arn            = module.kms.key_arn
-  num_cache_clusters     = var.environment == "production" ? 2 : 1
+  num_cache_clusters     = var.redis_num_cache_clusters
   tags                   = local.base_tags
 }
 
