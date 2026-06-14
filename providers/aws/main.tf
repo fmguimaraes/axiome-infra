@@ -157,6 +157,11 @@ module "compute_ec2" {
   source = "./modules/compute-ec2"
   count  = (var.use_ec2_compute && var.use_hds_data_stack) ? 1 : 0
 
+  # Wait for the SSM params (and their upstream RDS/ElastiCache) to exist before the
+  # instance boots — cloud-init reads them at first boot. module.secrets.parameter_prefix
+  # is a plain string, so without this the EC2 can boot before the params are written.
+  depends_on = [module.secrets]
+
   naming_prefix         = local.naming_prefix
   environment           = var.environment
   aws_region            = var.aws_region
