@@ -5,8 +5,8 @@ ovh_region    = "GRA11"
 ovh_s3_region = "gra"
 
 domain = "axiomebio.com"
-# MIPP pilot host -> aphm-mipp.axiomebio.com (FR7)
-subdomain = "aphm-mipp"
+# MIPP pilot host -> platform.axiomebio.com (FR7)
+subdomain = "platform"
 
 # Production / pilot sizing — b3-16 = 4 vCPU / 16 GB
 ovh_instance_flavor              = "b3-16"

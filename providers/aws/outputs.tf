@@ -58,7 +58,7 @@ output "ssm_parameter_prefix" {
 # ---------------- HDS data stack outputs (use_hds_data_stack / use_ec2_compute) ----------------
 
 output "ec2_public_ip" {
-  description = "Elastic IP of the EC2 compute. Point the Hostinger A record (aphm-mipp.axiomebio.com) at this (FR7). null until use_ec2_compute = true."
+  description = "Elastic IP of the EC2 compute. Point the Hostinger A record (platform.axiomebio.com) at this (FR7). null until use_ec2_compute = true."
   value       = try(module.compute_ec2[0].public_ip, null)
 }
 

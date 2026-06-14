@@ -23,7 +23,7 @@ After apply: `terraform output ec2_public_ip` and `rds_endpoint`.
 
 - **TLS:** Caddy + Let's Encrypt on the compute (rendered from `cloud-init/Caddyfile.tftpl`; reused by the EC2 module). Portable across providers.
 - **DNS:** managed **manually in the Hostinger zone** (no first-class Terraform support). Create the A record:
-  `aphm-mipp.axiomebio.com  A  <terraform output ec2_public_ip>`
+  `platform.axiomebio.com  A  <terraform output ec2_public_ip>`
   This is the single documented manual step (FR12 carve-out).
 
 ## S6 — Messaging & cache (FR4 / FR5)

@@ -7,6 +7,11 @@ domain      = "axiomebio.com"
 subdomain   = "platform" # production serves at platform.axiomebio.com (apex is the marketing landing page)
 use_route53 = false
 
+# --- HDS cutover (AXI-916) — stand up the new stack alongside Lightsail (strangler) ---
+use_hds_data_stack = true # VPC + 3-tier SGs + RDS + ElastiCache
+use_ec2_compute    = true # EC2 + Elastic IP (the Hostinger A-record target)
+# use_legacy_stack = false   # leave true until decommission (step 6); flipping false destroys Lightsail
+
 # Lightsail — production gets 4 GB headroom (medium_3_0). eu-west-3 has no ARM.
 # Upgrade triggers documented in graduation-criteria.md
 lightsail_blueprint_id      = "ubuntu_22_04"

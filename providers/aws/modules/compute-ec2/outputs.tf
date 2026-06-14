@@ -1,5 +1,5 @@
 output "public_ip" {
-  description = "Elastic IP — point the Hostinger A record (aphm-mipp.axiomebio.com) here (FR7)."
+  description = "Elastic IP — point the Hostinger A record (platform.axiomebio.com) here (FR7)."
   value       = aws_eip.main.public_ip
 }
 

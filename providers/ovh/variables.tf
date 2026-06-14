@@ -21,7 +21,7 @@ variable "domain" {
 }
 
 variable "subdomain" {
-  description = "Environment subdomain prefix (e.g. aphm-mipp)"
+  description = "Environment subdomain prefix (e.g. platform)"
   type        = string
 }
 

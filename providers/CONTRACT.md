@@ -30,7 +30,7 @@ Every provider root `variables.tf` MUST declare these with identical names/seman
 - `environment` — `dev | staging | production` (validated)
 - `project_name` — default `axiome`
 - `domain` — base DNS zone (e.g. `axiomebio.com`)
-- `subdomain` — environment host prefix (e.g. `aphm-mipp`)
+- `subdomain` — environment host prefix (e.g. `platform`)
 - `backend_image_tag`, `biocompute_image_tag`, `frontend_image_tag`
 - `neon_project_region_id`, `neon_compute_min_cu`, `neon_compute_max_cu`, `neon_autosuspend_seconds`
 - `atlas_org_id`, `atlas_cluster_tier`, `atlas_cloud_provider`, `atlas_region`, `atlas_mongo_version`
