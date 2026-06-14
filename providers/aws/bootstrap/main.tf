@@ -1,19 +1,20 @@
-# One-time bootstrap: creates the S3 state bucket and DynamoDB lock table that
-# the root Terraform stack uses. Run this with LOCAL state once per AWS account
-# before initializing any environment.
+# One-time bootstrap: creates the S3 state bucket + DynamoDB lock table for EVERY
+# environment in one local-state apply. Run once per AWS account before initializing
+# any environment's root.
 #
 # Usage:
 #   cd providers/aws/bootstrap
 #   terraform init
-#   terraform apply -var=environment=dev
-#   terraform apply -var=environment=staging
-#   terraform apply -var=environment=production
+#   terraform apply                       # creates all of var.environments at once
+#   # add an env later: edit var.environments (or -var), re-apply — never destroys others.
 #
-# After all three are created, return to providers/aws/ and run:
+# Then, per environment, in providers/aws/:
 #   terraform init -backend-config=environments/<env>/backend.hcl
 #
-# State for this bootstrap module itself is intentionally local — losing it is
-# not catastrophic (the bucket and table can be imported or recreated).
+# This module uses for_each keyed by environment, so each env's bucket/table is an
+# independent resource — changing the set never replaces another env's state bucket
+# (the old single-resource design did: switching `environment` renamed the one bucket
+# = destroy + create). State here is intentionally local and disposable.
 
 terraform {
   required_version = ">= 1.5.0"
@@ -25,9 +26,10 @@ terraform {
   }
 }
 
-variable "environment" {
-  description = "Environment name (dev, staging, production)"
-  type        = string
+variable "environments" {
+  description = "Environments to provision state backends for."
+  type        = set(string)
+  default     = ["dev", "staging", "production"]
 }
 
 variable "aws_region" {
@@ -45,25 +47,28 @@ provider "aws" {
 }
 
 resource "aws_s3_bucket" "tfstate" {
-  bucket = "${var.project_name}-${var.environment}-tfstate"
+  for_each = var.environments
+  bucket   = "${var.project_name}-${each.key}-tfstate"
 
   tags = {
     Project     = var.project_name
-    Environment = var.environment
+    Environment = each.key
     Purpose     = "terraform-state"
     ManagedBy   = "terraform-bootstrap"
   }
 }
 
 resource "aws_s3_bucket_versioning" "tfstate" {
-  bucket = aws_s3_bucket.tfstate.id
+  for_each = var.environments
+  bucket   = aws_s3_bucket.tfstate[each.key].id
   versioning_configuration {
     status = "Enabled"
   }
 }
 
 resource "aws_s3_bucket_server_side_encryption_configuration" "tfstate" {
-  bucket = aws_s3_bucket.tfstate.id
+  for_each = var.environments
+  bucket   = aws_s3_bucket.tfstate[each.key].id
   rule {
     apply_server_side_encryption_by_default {
       sse_algorithm = "AES256"
@@ -72,7 +77,8 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "tfstate" {
 }
 
 resource "aws_s3_bucket_public_access_block" "tfstate" {
-  bucket                  = aws_s3_bucket.tfstate.id
+  for_each                = var.environments
+  bucket                  = aws_s3_bucket.tfstate[each.key].id
   block_public_acls       = true
   block_public_policy     = true
   ignore_public_acls      = true
@@ -80,7 +86,8 @@ resource "aws_s3_bucket_public_access_block" "tfstate" {
 }
 
 resource "aws_dynamodb_table" "tflock" {
-  name         = "${var.project_name}-${var.environment}-tflock"
+  for_each     = var.environments
+  name         = "${var.project_name}-${each.key}-tflock"
   billing_mode = "PAY_PER_REQUEST"
   hash_key     = "LockID"
 
@@ -91,26 +98,15 @@ resource "aws_dynamodb_table" "tflock" {
 
   tags = {
     Project     = var.project_name
-    Environment = var.environment
+    Environment = each.key
     Purpose     = "terraform-lock"
   }
 }
 
-output "state_bucket" {
-  value = aws_s3_bucket.tfstate.id
+output "state_buckets" {
+  value = { for e in var.environments : e => aws_s3_bucket.tfstate[e].id }
 }
 
-output "lock_table" {
-  value = aws_dynamodb_table.tflock.name
-}
-
-output "backend_hcl" {
-  description = "Drop this into providers/aws/environments/<env>/backend.hcl"
-  value       = <<-EOT
-    bucket         = "${aws_s3_bucket.tfstate.id}"
-    key            = "infrastructure/terraform.tfstate"
-    region         = "${var.aws_region}"
-    dynamodb_table = "${aws_dynamodb_table.tflock.name}"
-    encrypt        = true
-  EOT
+output "lock_tables" {
+  value = { for e in var.environments : e => aws_dynamodb_table.tflock[e].name }
 }
