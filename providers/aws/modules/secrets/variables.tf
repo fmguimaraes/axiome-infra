@@ -70,3 +70,9 @@ variable "tags" {
   type    = map(string)
   default = {}
 }
+
+variable "create_lightsail_iam" {
+  type        = bool
+  default     = true
+  description = "Create the Lightsail SSM-read IAM role. Only needed for the legacy Lightsail compute path; the EC2/HDS stack uses its own instance profile."
+}

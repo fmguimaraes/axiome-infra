@@ -77,6 +77,9 @@ module "secrets" {
   naming_prefix = local.naming_prefix
   environment   = var.environment
 
+  # Lightsail SSM-read role only for the legacy compute path; EC2/HDS uses its own profile.
+  create_lightsail_iam = var.use_legacy_stack
+
   # Legacy stack -> Neon/Atlas; new HDS stack -> RDS + in-region Mongo + ElastiCache (FR2/FR3/FR5).
   postgres_url        = var.use_legacy_stack ? try(module.database_neon[0].connection_string, "") : try(module.database_rds[0].connection_string, "")
   mongodb_url         = var.use_legacy_stack ? try(module.database_atlas[0].connection_string, "") : ""

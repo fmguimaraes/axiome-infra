@@ -151,9 +151,12 @@ resource "aws_ssm_parameter" "cors_origins" {
   tags  = var.tags
 }
 
-# IAM role for the Lightsail VM to read SSM parameters.
+# IAM role for the Lightsail VM to read SSM parameters. Only created for the
+# legacy Lightsail compute path (var.create_lightsail_iam). The EC2/HDS stack
+# uses its own instance profile (modules/compute-ec2), so this is not created.
 resource "aws_iam_role" "lightsail_ssm" {
-  name = "${var.naming_prefix}-lightsail-ssm"
+  count = var.create_lightsail_iam ? 1 : 0
+  name  = "${var.naming_prefix}-lightsail-ssm"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -168,7 +171,8 @@ resource "aws_iam_role" "lightsail_ssm" {
 }
 
 resource "aws_iam_role_policy" "lightsail_ssm" {
-  role = aws_iam_role.lightsail_ssm.id
+  count = var.create_lightsail_iam ? 1 : 0
+  role  = aws_iam_role.lightsail_ssm[0].id
 
   policy = jsonencode({
     Version = "2012-10-17"

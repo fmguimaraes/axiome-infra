@@ -160,6 +160,13 @@ resource "aws_instance" "main" {
   }
 
   tags = merge(var.tags, { Name = "${var.naming_prefix}-ec2" })
+
+  # Pin the AMI: data.aws_ami.ubuntu uses most_recent, so each new Canonical
+  # release would otherwise force-replace this stateful VM (wiping the in-VM
+  # mongo_data volume + causing downtime). OS patching happens in-place via apt.
+  lifecycle {
+    ignore_changes = [ami]
+  }
 }
 
 resource "aws_eip" "main" {
