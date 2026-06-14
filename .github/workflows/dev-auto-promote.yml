@@ -26,7 +26,7 @@ permissions:
   contents: read
 
 env:
-  AWS_REGION: ${{ secrets.AWS_REGION }}
+  AWS_REGION: ${{ vars.AWS_REGION || secrets.AWS_REGION }}
   SSM_PARAMETER_PREFIX: /dev/axiome-dev
   DEV_HOST: dev.axiomebio.com
   DEV_USER: ubuntu
