@@ -83,3 +83,85 @@ AWS list prices, eu-west-3, USD (before EUR/VAT). Greenfield production = `use_h
 | AXI-962 HDS scope + sign-off | 🟡 checklist | run after deploy (NFR1/NFR6) |
 
 All AWS Terraform is `terraform validate`-clean. OVH/Scaleway modules are scaffolds to refine + validate in the test pass.
+
+---
+
+# Sovereign cutover to Scaleway (AXI-921)
+
+> Reuses this provider-portable IaC via `PROVIDER=scaleway`. The Scaleway root
+> (`providers/scaleway`) is now `terraform validate`-clean against provider 2.76, with
+> the sovereign IAM domain, Secret Manager, Key Manager (CMK) and private-network +
+> 3-tier SG modules implemented and gated. Requirements live in axiome-docs
+> `features/Sovereignty-Layer.md`; posture in `04 - architecture/infrastructure/Sovereignty-Posture.md`.
+> **Gate:** do not run the live cutover until the MIPP pilot is complete and the
+> sovereign Scaleway Organization exists.
+
+## Sovereign toggles (Scaleway root)
+
+| Toggle | Default | Effect |
+|---|---|---|
+| `scaleway_organization_id` / `scaleway_project_id` | `""` | sovereign tenancy boundary; empty = credential default. Set to the dedicated sovereign project (AXI-990). |
+| `use_sovereign_iam` | `false` | provision the deploy IAM identity scoped to the sovereign project (FR2/FR3). |
+| `use_secret_manager` | `false` | store runtime config in Scaleway Secret Manager under `/<env>/<prefix>` (FR3). |
+| `use_private_network` | `false` | VPC + private network + edge/app/data SGs, default-deny, no `0.0.0.0/0` to data ports (NFR7/AC11). |
+| `use_cmk` | `false` | Scaleway Key Manager CMK for data-at-rest (FR6/NFR5). |
+
+## AXI-992 — CI/CD provider cutover (config toggle, not a code flip)
+
+`terraform-cd.yml` already routes on `vars.PROVIDER || vars.REGISTRY_PROVIDER || 'aws'`,
+and `reusable-build.yml` routes the registry on `REGISTRY_PROVIDER`. The cutover is an
+**ops toggle** (so the running AWS pilot is never silently redirected):
+
+1. Set repository variables: `PROVIDER=scaleway`, `REGISTRY_PROVIDER=scaleway`,
+   `SCW_REGISTRY_ENDPOINT=rg.fr-par.scw.cloud`.
+2. Set repository secrets: `SCW_ACCESS_KEY` / `SCW_SECRET_KEY` (the sovereign deploy key
+   from `module.iam`), and point `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` at the
+   **Scaleway Object Storage** keys used for the S3-compatible state backend (CONTRACT §7).
+3. State backend is already configured: `providers/scaleway/environments/<env>/backend.hcl`
+   (`s3.fr-par.scw.cloud`, bucket `axiome-<env>-tfstate`).
+4. `staging`/`production` still require GitHub environment approval; `dev` auto-applies.
+
+## AXI-993 — Data migration & DNS cutover
+
+1. **Provision** (per env): `PROVIDER=scaleway bash scripts/deploy.sh <env>` with the
+   sovereign toggles set. Then `PROVIDER=scaleway bash scripts/verify-deploy.sh <env>`
+   (provider-aware; resolves `public_ip`).
+2. **Lower DNS TTL** on `platform.axiomebio.com` ahead of the window (Microsoft 365 zone).
+3. **Migrate** (fail-closed parity): `migrate-data.sh scaleway production` —
+   `SOURCE_PG_DSN`=AWS RDS/Neon, `TARGET_PG_DSN`=Scaleway PG; `SOURCE_MONGO_URI`=AWS,
+   `TARGET_MONGO_URI`=Scaleway. The script aborts (exit 1) and emits no "complete"
+   record on any count/checksum mismatch.
+4. **DNS cutover:** point `platform.axiomebio.com A` at the Scaleway `public_ip`
+   (manual Microsoft 365, or onboard the zone to Scaleway DNS — `modules/dns`).
+5. **Residency audit (AC8):** confirm every store/cache/key/log is in `fr-par`; record in
+   the Sovereignty-Posture doc + the generated Scaleway evidence report.
+
+## Rollback
+
+The AWS `eu-west-3` stack stays live and warm until decommission sign-off.
+
+- **Before DNS cutover:** abort is a no-op (traffic still on AWS).
+- **After DNS cutover:** repoint `platform.axiomebio.com A` back to the AWS IP (TTL is
+  low). Data written to Scaleway during the window must be reconciled before retrying —
+  no dual-write is run, so the AWS dataset is the rollback source of truth.
+- **CI:** unset the `PROVIDER` / `REGISTRY_PROVIDER` repo variables to fall back to AWS.
+
+## Scaleway monthly cost (estimate, fr-par)
+
+| Item | Config | ~€/mo |
+|---|---|---|
+| Instance | `DEV1-M` (prod) / `PLAY2-PICO` (dev) | ~€12 / ~€7 |
+| Managed PostgreSQL | `DB-DEV-S` (or Neon, interim) | ~€20 |
+| Object Storage + Registry | near-empty buckets + images | <€2 |
+| Key Manager (CMK) + Secret Manager | per key/secret | ~€1 |
+| **Total** | pilot sizing | **≈ €35–55 / mo** |
+
+## Per-story status (AXI-921, branch `feat/AXI-916-hosting-portable`)
+
+| Story | Status | Notes |
+|---|---|---|
+| AXI-989 decision + posture | ✅ docs (axiome-docs, pushed) | residency audit + IQ/OQ/PQ refresh pending live deploy |
+| AXI-990 sovereign IAM + secrets | ✅ modules, validate ✓ | live apply needs sovereign Org + creds |
+| AXI-991 KMS + network | ✅ modules, validate ✓ | wired gated (`use_cmk`, `use_private_network`) |
+| AXI-992 CI/CD cutover | ✅ documented toggle | flip repo vars/secrets at cutover (above) |
+| AXI-993 data + DNS cutover | ✅ tooling + runbook | live migration/DNS gated on pilot + Org |
