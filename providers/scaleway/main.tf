@@ -14,8 +14,10 @@ locals {
 }
 
 provider "scaleway" {
-  region = var.scaleway_region
-  zone   = var.scaleway_zone
+  region          = var.scaleway_region
+  zone            = var.scaleway_zone
+  project_id      = var.scaleway_project_id != "" ? var.scaleway_project_id : null
+  organization_id = var.scaleway_organization_id != "" ? var.scaleway_organization_id : null
 }
 
 provider "neon" {}
@@ -113,4 +115,36 @@ module "dns" {
   fqdn        = local.fqdn
   static_ip   = module.compute.public_ip
   environment = var.environment
+}
+
+# ---------------- Sovereign IAM domain (AXI-990 / FR2, FR3, NFR1, NFR3) ----------------
+
+module "iam" {
+  count  = var.use_sovereign_iam ? 1 : 0
+  source = "./modules/iam"
+
+  naming_prefix   = local.naming_prefix
+  scaleway_region = var.scaleway_region
+  tags            = local.base_tags
+}
+
+# ---------------- Runtime secrets (AXI-990 / FR3, CONTRACT §4) ----------------
+
+locals {
+  runtime_secrets = {
+    DATABASE_URL = module.database_neon.connection_string
+    MONGODB_URL  = module.database_atlas.connection_string
+    S3_ENDPOINT  = module.storage.endpoint
+  }
+}
+
+module "secrets" {
+  count  = var.use_secret_manager ? 1 : 0
+  source = "./modules/secrets"
+
+  naming_prefix   = local.naming_prefix
+  environment     = var.environment
+  scaleway_region = var.scaleway_region
+  secrets         = local.runtime_secrets
+  tags            = local.base_tags
 }

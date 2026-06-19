@@ -22,6 +22,32 @@ variable "scaleway_zone" {
   default = "fr-par-1"
 }
 
+# ---------------- Sovereign tenancy (AXI-921 / AXI-990) ----------------
+
+variable "scaleway_organization_id" {
+  description = "Sovereign Scaleway Organization id. Empty = use the credential default."
+  type        = string
+  default     = ""
+}
+
+variable "scaleway_project_id" {
+  description = "Dedicated sovereign Project id (the tenancy boundary). Empty = credential default project."
+  type        = string
+  default     = ""
+}
+
+variable "use_sovereign_iam" {
+  description = "Provision the sovereign IAM domain (deploy identity scoped to the project)."
+  type        = bool
+  default     = false
+}
+
+variable "use_secret_manager" {
+  description = "Store runtime config in Scaleway Secret Manager instead of cloud-init only."
+  type        = bool
+  default     = false
+}
+
 variable "domain" {
   description = "Base domain for the platform (must already be a Scaleway-managed DNS zone)"
   type        = string
