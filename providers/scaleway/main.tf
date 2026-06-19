@@ -148,3 +148,27 @@ module "secrets" {
   secrets         = local.runtime_secrets
   tags            = local.base_tags
 }
+
+# ---------------- Private network + 3-tier SGs (AXI-991 / NFR7, AC11) ----------------
+
+module "network" {
+  count  = var.use_private_network ? 1 : 0
+  source = "./modules/network"
+
+  naming_prefix   = local.naming_prefix
+  environment     = var.environment
+  scaleway_region = var.scaleway_region
+  tags            = local.base_tags
+}
+
+# ---------------- Data-at-rest CMK (AXI-991 / FR6, NFR5) ----------------
+
+module "kms" {
+  count  = var.use_cmk ? 1 : 0
+  source = "./modules/kms"
+
+  naming_prefix   = local.naming_prefix
+  environment     = var.environment
+  scaleway_region = var.scaleway_region
+  tags            = local.base_tags
+}

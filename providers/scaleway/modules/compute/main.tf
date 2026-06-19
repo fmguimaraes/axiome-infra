@@ -40,9 +40,9 @@ resource "scaleway_instance_ip" "main" {
 }
 
 resource "scaleway_instance_server" "main" {
-  name        = "${var.naming_prefix}-vm"
-  type        = var.instance_type
-  image       = var.instance_image
+  name  = "${var.naming_prefix}-vm"
+  type  = var.instance_type
+  image = var.instance_image
   zone  = var.zone
   ip_id = scaleway_instance_ip.main.id
   # IPv6 is governed by the attached routed IP (scaleway_instance_ip type

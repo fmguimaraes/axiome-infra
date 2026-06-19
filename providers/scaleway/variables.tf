@@ -48,6 +48,18 @@ variable "use_secret_manager" {
   default     = false
 }
 
+variable "use_private_network" {
+  description = "Provision the VPC + private network + 3-tier security groups (NFR7, AC11)."
+  type        = bool
+  default     = false
+}
+
+variable "use_cmk" {
+  description = "Provision a Scaleway Key Manager CMK for data-at-rest encryption (FR6, NFR5)."
+  type        = bool
+  default     = false
+}
+
 variable "domain" {
   description = "Base domain for the platform (must already be a Scaleway-managed DNS zone)"
   type        = string
