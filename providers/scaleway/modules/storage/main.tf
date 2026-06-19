@@ -27,19 +27,14 @@ resource "scaleway_object_bucket" "system" {
   tags = {
     purpose = "system"
   }
-}
 
-resource "scaleway_object_bucket_lifecycle_configuration" "system" {
-  bucket = scaleway_object_bucket.system.name
-  region = var.region
-
-  rule {
-    id     = "expire-old-backups"
-    status = "Enabled"
-
-    filter {
-      prefix = "backups/"
-    }
+  # Backup retention is expressed as a lifecycle_rule block on the bucket itself;
+  # the standalone scaleway_object_bucket_lifecycle_configuration resource was
+  # removed in provider 2.x.
+  lifecycle_rule {
+    id      = "expire-old-backups"
+    prefix  = "backups/"
+    enabled = true
 
     expiration {
       days = var.environment == "production" ? 90 : 30

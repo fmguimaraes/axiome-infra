@@ -43,9 +43,10 @@ resource "scaleway_instance_server" "main" {
   name        = "${var.naming_prefix}-vm"
   type        = var.instance_type
   image       = var.instance_image
-  zone        = var.zone
-  ip_id       = scaleway_instance_ip.main.id
-  enable_ipv6 = false
+  zone  = var.zone
+  ip_id = scaleway_instance_ip.main.id
+  # IPv6 is governed by the attached routed IP (scaleway_instance_ip type
+  # routed_ipv4); the legacy `enable_ipv6` argument was removed in provider 2.x.
 
   root_volume {
     size_in_gb = var.root_volume_size_gb
