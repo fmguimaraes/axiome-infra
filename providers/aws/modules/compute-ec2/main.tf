@@ -237,6 +237,13 @@ resource "aws_instance" "main" {
   iam_instance_profile   = aws_iam_instance_profile.ssm.name
   user_data              = local.cloud_init
 
+  # Do NOT replace the instance when cloud-init changes. This is the single live
+  # platform with in-VM state (mongo_data); a cloud-init edit (e.g. adding the
+  # CloudWatch agent) must not trigger a destroy/recreate. The new user_data applies
+  # on the next natural boot; to roll it onto the running box immediately, push the
+  # change via SSM (scripts/ssm-exec.sh) instead of rebuilding.
+  user_data_replace_on_change = false
+
   # IMDSv2 required; hop limit 2 so containers on the Docker bridge network can
   # reach the metadata endpoint to assume the instance role (S3 access).
   metadata_options {

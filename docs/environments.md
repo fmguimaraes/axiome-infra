@@ -1,13 +1,22 @@
 # Environments
 
+> **Current reality (2026-06):** only **production** exists. There is a single live
+> platform — that's it. The `dev` and `staging` rows below describe the *intended*
+> model and the repo still scaffolds `environments/dev/` and `environments/staging/`
+> tfvars, but **no dev or staging infrastructure is provisioned** (no dev/staging
+> Terraform state-lock tables, no running instances). Consequently `terraform-cd` only
+> targets production: infra pushes run a production **plan**, and applies happen via a
+> manual `workflow_dispatch`. Do not assume dev/staging are deployable until they are
+> actually stood up.
+
 ## Environment Model
 
 | Environment | Purpose | Deployment | Access |
 |------------|---------|------------|--------|
 | local | Developer workstation | docker-compose | localhost |
-| dev | Integration testing | Auto-deploy on merge to main | Team |
-| staging | Pre-production validation | Manual promotion from dev | Team + stakeholders |
-| production | Live platform | Manual promotion from staging | End users |
+| dev | Integration testing | *(not provisioned — scaffold only)* | Team |
+| staging | Pre-production validation | *(not provisioned — scaffold only)* | Team + stakeholders |
+| production | Live platform — the only real environment | Manual `workflow_dispatch` (plan on push) | End users |
 
 ## Configuration
 
