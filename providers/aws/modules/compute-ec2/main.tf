@@ -82,11 +82,24 @@ resource "aws_iam_role_policy" "s3" {
   role = aws_iam_role.ssm.name
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [{
-      Effect   = "Allow"
-      Action   = ["s3:ListBucket", "s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
-      Resource = ["arn:aws:s3:::${var.naming_prefix}-*", "arn:aws:s3:::${var.naming_prefix}-*/*"]
-    }]
+    Statement = concat(
+      [{
+        Sid      = "S3ObjectAccess"
+        Effect   = "Allow"
+        Action   = ["s3:ListBucket", "s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
+        Resource = ["arn:aws:s3:::${var.naming_prefix}-*", "arn:aws:s3:::${var.naming_prefix}-*/*"]
+      }],
+      # The platform buckets are SSE-KMS encrypted with the data CMK, so writing an
+      # object requires the caller (this role, via IMDS) to generate a data key and
+      # reading requires Decrypt. Without this, a presigned PUT/GET is signed fine but
+      # S3 returns 403 (kms:GenerateDataKey denied) on the actual upload.
+      var.data_cmk_arn == "" ? [] : [{
+        Sid      = "DataCmkForS3Sse"
+        Effect   = "Allow"
+        Action   = ["kms:GenerateDataKey", "kms:Decrypt", "kms:Encrypt", "kms:ReEncrypt*", "kms:DescribeKey"]
+        Resource = [var.data_cmk_arn]
+      }]
+    )
   })
 }
 

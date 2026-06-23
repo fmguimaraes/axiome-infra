@@ -53,6 +53,23 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "uploads" {
   }
 }
 
+# Browser uploads/downloads (logos, datasets) hit the uploads bucket directly via
+# presigned URLs, so the bucket must allow CORS from the app origin only. Without
+# this, the browser PUT is blocked by the same-origin policy. Scoped to the app
+# origin(s); empty list disables CORS (e.g. non-browser-facing environments).
+resource "aws_s3_bucket_cors_configuration" "uploads" {
+  count  = length(var.cors_allowed_origins) > 0 ? 1 : 0
+  bucket = aws_s3_bucket.uploads.id
+
+  cors_rule {
+    allowed_methods = ["PUT", "GET", "HEAD"]
+    allowed_origins = var.cors_allowed_origins
+    allowed_headers = ["*"]
+    expose_headers  = ["ETag"]
+    max_age_seconds = 3000
+  }
+}
+
 resource "aws_s3_bucket" "system" {
   bucket = "${var.naming_prefix}-system"
   tags   = merge(var.tags, { Purpose = "system" })

@@ -80,6 +80,16 @@ variable "log_retention_days" {
   default     = 30
 }
 
+variable "data_cmk_arn" {
+  description = <<-EOT
+    ARN of the data-at-rest CMK that encrypts the platform S3 buckets. Granted to
+    the instance-profile role so containers (via IMDS) can generate/decrypt data
+    keys for SSE-KMS uploads/downloads. Empty disables the KMS grant.
+  EOT
+  type        = string
+  default     = ""
+}
+
 variable "tags" {
   type    = map(string)
   default = {}
