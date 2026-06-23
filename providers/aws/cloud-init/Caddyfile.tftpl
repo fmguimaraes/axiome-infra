@@ -26,7 +26,10 @@
     encode gzip zstd
 
     # API, docs, websocket, and health routed to gateway.
-    @api path /v1/* /api/* /auth/* /docs* /events /events/* /health /ready
+    # /socket.io/* is the Socket.IO transport path (the client's `/events` is a
+    # namespace, NOT a URL path) — it must reach the gateway or the WS upgrade
+    # falls through to the static frontend and fails.
+    @api path /v1/* /api/* /auth/* /docs* /socket.io/* /events /events/* /health /ready
     handle @api {
         reverse_proxy gateway:3000
     }
@@ -57,7 +60,10 @@ ${fqdn} {
 
     # API, docs, websocket, and health routed to gateway.
     # NestJS applies a global /v1 version prefix; legacy /api/* kept as an alias.
-    @api path /v1/* /api/* /auth/* /docs* /events /events/* /health /ready
+    # /socket.io/* is the Socket.IO transport path (the client's `/events` is a
+    # namespace, NOT a URL path) — it must reach the gateway or the WS upgrade
+    # falls through to the static frontend and fails.
+    @api path /v1/* /api/* /auth/* /docs* /socket.io/* /events /events/* /health /ready
     handle @api {
         reverse_proxy gateway:3000 {
             header_up X-Real-IP {remote_host}
