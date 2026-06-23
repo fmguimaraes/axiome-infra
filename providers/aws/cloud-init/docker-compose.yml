@@ -105,7 +105,7 @@ services:
     networks:
       - axiome
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/health"]
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/v1/health/live"]
       interval: 30s
       timeout: 5s
       retries: 5

@@ -6,7 +6,9 @@
 {$FQDN} {
     encode gzip zstd
 
-    @api path /api/* /health /ready
+    # /api/* covers the versioned health probes too (/api/v1/health[/live|/ready]).
+    # The backend serves nothing at unprefixed /health or /ready, so don't route them.
+    @api path /api/*
     handle @api {
         reverse_proxy backend:3000 {
             header_up X-Real-IP {remote_host}

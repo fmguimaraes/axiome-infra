@@ -8,7 +8,7 @@
 #
 # Checks:
 #   1. DNS resolves to the provider's public IP
-#   2. https://<fqdn>/health returns 2xx (TLS valid)
+#   2. https://<fqdn>/api/v1/health returns 2xx (TLS valid)
 #   3. https://<fqdn>/ returns 2xx
 #
 # Exits non-zero if any check fails.
@@ -19,7 +19,7 @@
 #   FQDN              Full domain. Default: terraform output -raw fqdn
 #   EXPECTED_IP       IP it should resolve to. Default: terraform output -raw <IP_OUTPUT>
 #   IP_OUTPUT         Terraform output key for the public IP. Default: per-provider.
-#   HEALTH_PATH       Default: /health
+#   HEALTH_PATH       Default: /api/v1/health  (gateway uses the api/v1 URI prefix)
 #   ROOT_PATH         Default: /
 #   TIMEOUT           Per-curl timeout in seconds. Default: 10
 
@@ -43,7 +43,7 @@ else
   IP_OUTPUT="${IP_OUTPUT:-public_ip}"
 fi
 
-HEALTH_PATH="${HEALTH_PATH:-/health}"
+HEALTH_PATH="${HEALTH_PATH:-/api/v1/health}"
 ROOT_PATH="${ROOT_PATH:-/}"
 TIMEOUT="${TIMEOUT:-10}"
 
