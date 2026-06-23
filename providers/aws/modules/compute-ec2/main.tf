@@ -49,14 +49,6 @@ resource "aws_iam_user_policy" "runtime" {
         Action   = ["s3:ListBucket", "s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
         Resource = ["arn:aws:s3:::${var.naming_prefix}-*", "arn:aws:s3:::${var.naming_prefix}-*/*"]
       },
-      # CloudWatch Logs ingestion (FR9 / NFR8). The amazon-cloudwatch-agent on the box
-      # runs under these [default] creds, so the log-shipping grant lives here, scoped
-      # to the single in-region log group it writes to.
-      {
-        Effect   = "Allow"
-        Action   = ["logs:CreateLogStream", "logs:PutLogEvents", "logs:DescribeLogStreams", "logs:CreateLogGroup"]
-        Resource = ["${aws_cloudwatch_log_group.ec2.arn}", "${aws_cloudwatch_log_group.ec2.arn}:*"]
-      },
     ]
   })
 }
@@ -158,6 +150,21 @@ resource "aws_cloudwatch_log_group" "ec2" {
   retention_in_days = var.log_retention_days
   kms_key_id        = aws_kms_key.logs.arn
   tags              = var.tags
+}
+
+# The amazon-cloudwatch-agent authenticates as the INSTANCE ROLE (via IMDS), not the
+# runtime IAM user in /root/.aws/credentials — so the log-shipping grant must live on
+# the instance profile role, scoped to the single in-region log group it writes to.
+resource "aws_iam_role_policy" "cloudwatch_logs" {
+  role = aws_iam_role.ssm.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["logs:CreateLogStream", "logs:PutLogEvents", "logs:DescribeLogStreams", "logs:CreateLogGroup"]
+      Resource = ["${aws_cloudwatch_log_group.ec2.arn}", "${aws_cloudwatch_log_group.ec2.arn}:*"]
+    }]
+  })
 }
 
 locals {

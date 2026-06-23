@@ -82,6 +82,8 @@ jobs:
       - name: Tag release
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.plan_only != true }}
         run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           TAG="prod-$(date -u +%Y%m%d-%H%M%S)-$(git rev-parse --short HEAD)"
           git tag -a "$TAG" -m "Prod deploy $(date -u '+%Y-%m-%d %H:%M UTC') — run ${{ github.run_id }}"
           git push origin "$TAG"
