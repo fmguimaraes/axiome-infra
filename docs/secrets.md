@@ -30,7 +30,7 @@ you put them at the organization level.
 | `AWS_ACCOUNT_ID` | Secret | 12-digit AWS account number | Used to compose ECR URL `<acct>.dkr.ecr.<region>.amazonaws.com`. |
 | `AWS_ACCESS_KEY_ID` | Secret | IAM key with ECR push perms | Login to ECR. |
 | `AWS_SECRET_ACCESS_KEY` | Secret | Paired with above | Login to ECR. |
-| `GH_PAT` | Secret | PAT with `Contents: write` on `axiome-infra` | Used by `reusable-build.yml`'s `Notify Infra` step to POST `repository_dispatch`. Also used by the `promote` job to check out `axiome-infra` and run scripts. |
+| `GH_PAT` | Secret | PAT with `Contents: write` on `axiome-infra` | Used by `reusable-build.yml`'s `Notify Infra` step to POST `repository_dispatch`. Also used by the `promote-staging` / `promote-production` jobs to check out `axiome-infra` and run `update-manifest.sh`. |
 
 IAM policy for the service-repo AWS key needs at minimum:
 - `ecr:GetAuthorizationToken`
@@ -44,11 +44,14 @@ plus credentials for the third-party providers (Neon, MongoDB Atlas).
 | Name | Kind | Value / source | Why |
 |---|---|---|---|
 | `PROVIDER` (or `REGISTRY_PROVIDER`) | Variable | `aws` | Selects the codepath under `providers/${PROVIDER}/` for `deploy.sh` and `update-manifest.sh`. |
+| `AWS_REGION` | Variable | `eu-west-3` | Needed by `dev-auto-promote.yml`'s `aws-actions/configure-aws-credentials` (SSM put-parameter) and the `roll-service` SSH step. Unlike the build (which inherits the service repo's value via `secrets: inherit`), `dev-auto-promote` runs natively in this repo and reads *this repo's* `AWS_REGION`. The workflow falls back to `eu-west-3` if unset, but set it explicitly to avoid surprises. |
 | `AWS_ACCESS_KEY_ID` | Secret | IAM key with broad permissions | Used by both the S3 state backend and the AWS resource provider. |
 | `AWS_SECRET_ACCESS_KEY` | Secret | Paired with above | Same. |
 | `NEON_API_KEY` | Secret | Neon API key, project-scoped | `kislerdm/neon` provider. Required only if Neon resources are in plan. |
 | `MONGODB_ATLAS_PUBLIC_KEY` | Secret | Atlas API key (public part) | `mongodb/mongodbatlas` provider. Required as a pair. |
 | `MONGODB_ATLAS_PRIVATE_KEY` | Secret | Atlas API key (private part) | Paired with above. |
+| `MAILJET_API_KEY` | Secret | Mailjet API key | Transactional email (user-service `EmailService`). Exported as `TF_VAR_mailjet_api_key` → written to SSM `MAILJET_API_KEY`. Optional: if unset, email sending is disabled and the service logs links instead. Required as a pair with the secret key. |
+| `MAILJET_SECRET_KEY` | Secret | Mailjet secret key | Paired with `MAILJET_API_KEY`; exported as `TF_VAR_mailjet_secret_key` → SSM `MAILJET_SECRET_KEY`. |
 | `GH_PAT` | Secret | PAT with `Contents: write` on `axiome-infra` | Used by `dev-auto-promote.yml`'s `actions/checkout@v4` so the resulting commit can trigger `terraform-cd.yml` (a checkout with `GITHUB_TOKEN` would not). |
 
 IAM policy for the infra-repo AWS key needs at minimum, beyond the
@@ -65,11 +68,12 @@ scope by ARN.
 
 ## GitHub environment scoping
 
-Each deploy job in `terraform-cd.yml` sets
-`environment: dev | staging | production`. The corresponding GitHub
-Environment must exist (`Settings → Environments → New environment`),
-and you may scope secrets/variables to it instead of the repository
-level if different environments use different credentials.
+`terraform-cd.yml`'s `apply-production` job sets `environment: production`,
+which is also where the **Required reviewers** approval gate is configured
+(see `ci-cd.md` → Production gate). The corresponding GitHub Environment must
+exist (`Settings → Environments → New environment`), and you may scope
+secrets/variables to it instead of the repository level if different
+environments use different credentials.
 
 Lookup order:
 

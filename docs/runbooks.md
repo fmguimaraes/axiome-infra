@@ -30,6 +30,42 @@ make apply ENV=production
 3. Redeploy backend via promote workflow
 4. Existing sessions will be invalidated — users will need to re-authenticate
 
+### Approve a production deployment
+
+Production applies are gated by the `production` GitHub Environment's
+**Required reviewers** rule (see `docs/ci-cd.md` → Production gate). When a push
+promotes a new image to production, `terraform-cd` runs `ci-gate`
+(fmt/validate/plan) and then **pauses** `apply-production` for approval.
+
+One-time setup (enables the gate): `axiome-infra → Settings → Environments →
+production → Required reviewers` → add approvers → Save. Without this, no human
+gate exists and `apply-production` proceeds automatically once `ci-gate` passes.
+
+Per deployment:
+
+1. `axiome-infra → Actions → terraform-cd` → open the running run.
+2. Wait for `ci-gate` to pass; review the plan in its logs.
+3. `apply-production` shows **Waiting** with a yellow **Review deployments**
+   banner. Click it → tick `production` → **Approve and deploy** (or **Reject**).
+4. `apply-production` then runs `terraform apply`.
+
+Reviewers also receive an email and can approve from the GitHub mobile app.
+CLI / API alternative:
+
+```bash
+# find the waiting run
+gh run list --repo <owner>/axiome-infra --workflow terraform-cd.yml
+# inspect the plan, then approve the pending production deployment
+gh api repos/<owner>/axiome-infra/actions/runs/<run-id>/pending_deployments \
+  -f 'environment_ids[]=<production-env-id>' -f state=approved -f comment='approved'
+```
+
+> **Rollout caveat:** approving the apply does not, by itself, roll the running
+> production containers in the current mode (`use_ssm_image_tags = false` /
+> `user_data_replace_on_change = false`) — see `docs/ci-cd.md` → Known
+> follow-ups. Actual image rollout still uses the ECR `:stable` retag +
+> `compose pull` path described under **Debug a failed deployment** / `deployment.md`.
+
 ### Debug a failed deployment
 
 1. Check GitHub Actions workflow run for error messages
