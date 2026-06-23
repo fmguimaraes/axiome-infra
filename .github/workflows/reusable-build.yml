@@ -17,10 +17,24 @@ jobs:
       registry_url: ${{ steps.registry.outputs.url }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history + tags so `git describe` can derive a version per commit.
+          fetch-depth: 0
 
       - name: Compute image tag
         id: meta
         run: echo "tag=$(echo '${{ github.sha }}' | cut -c1-8)" >> "$GITHUB_OUTPUT"
+
+      - name: Compute version metadata
+        id: version
+        run: |
+          set -euo pipefail
+          # Git-derived, human-readable version that changes every commit, e.g.
+          # `1.0.0-5-gab12cd8` (nearest tag + commits since + short sha), or just
+          # the short sha when the repo has no tags yet.
+          version="$(git describe --tags --always --dirty 2>/dev/null || git rev-parse --short HEAD)"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "::notice::Build version=${version} sha=${{ github.sha }}"
 
       - name: Debug context
         env:
@@ -146,11 +160,17 @@ jobs:
           NAMESPACE: ${{ vars.REGISTRY_NAMESPACE || secrets.REGISTRY_NAMESPACE }}
           SERVICE: ${{ inputs.service_name }}
           TAG: ${{ steps.meta.outputs.tag }}
+          APP_VERSION: ${{ steps.version.outputs.version }}
+          BUILD_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           REPO="${REGISTRY}/${NAMESPACE:+${NAMESPACE}/}${SERVICE}"
-          echo "Building ${REPO}:${TAG}"
+          echo "Building ${REPO}:${TAG} (version=${APP_VERSION})"
+          # Every service Dockerfile accepts APP_VERSION + BUILD_SHA and surfaces
+          # them on its /version endpoint (front bakes APP_VERSION into the bundle).
           docker build \
+            --build-arg APP_VERSION="${APP_VERSION}" \
+            --build-arg BUILD_SHA="${BUILD_SHA}" \
             -t "${REPO}:${TAG}" \
             -t "${REPO}:latest" \
             .
