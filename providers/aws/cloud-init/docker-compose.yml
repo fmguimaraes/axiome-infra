@@ -93,7 +93,7 @@ services:
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       JWT_SECRET: ${JWT_SECRET}
       CORS_ORIGINS: ${CORS_ORIGINS}
-      BIOCOMPUTE_URL: http://biocompute:8000
+      BIO_COMPUTE_URL: http://biocompute:8000
       USER_SERVICE_URL: http://user-service:3002
       ORGANIZATION_SERVICE_URL: http://organization-service:3004
       EVENT_SERVICE_URL: http://event-service:3003
@@ -151,6 +151,7 @@ services:
       S3_BUCKET_UPLOADS: ${S3_BUCKET_UPLOADS}
       S3_BUCKET_SYSTEM: ${S3_BUCKET_SYSTEM}
       JWT_SECRET: ${JWT_SECRET}
+      BIO_COMPUTE_URL: http://biocompute:8000
     depends_on:
       rabbitmq:
         condition: service_healthy
