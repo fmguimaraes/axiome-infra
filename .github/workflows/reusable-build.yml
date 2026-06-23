@@ -18,23 +18,42 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # Full history + tags so `git describe` can derive a version per commit.
+          # Full history + tags so we can read the latest semver tag, and a PAT
+          # so the auto-patch step below can push the new tag back to the repo.
           fetch-depth: 0
+          token: ${{ secrets.GH_PAT }}
 
       - name: Compute image tag
         id: meta
         run: echo "tag=$(echo '${{ github.sha }}' | cut -c1-8)" >> "$GITHUB_OUTPUT"
 
-      - name: Compute version metadata
+      - name: Auto-bump patch version & tag
         id: version
         run: |
           set -euo pipefail
-          # Git-derived, human-readable version that changes every commit, e.g.
-          # `1.0.0-5-gab12cd8` (nearest tag + commits since + short sha), or just
-          # the short sha when the repo has no tags yet.
-          version="$(git describe --tags --always --dirty 2>/dev/null || git rev-parse --short HEAD)"
-          echo "version=${version}" >> "$GITHUB_OUTPUT"
-          echo "::notice::Build version=${version} sha=${{ github.sha }}"
+          git fetch --tags --force --quiet
+
+          # Reuse an existing semver tag on this commit (re-runs are idempotent).
+          existing="$(git tag --points-at HEAD -l 'v[0-9]*.[0-9]*.[0-9]*' | sort -V | tail -n1 || true)"
+          if [[ -n "${existing}" ]]; then
+            echo "::notice::Commit already tagged ${existing}; reusing it"
+            echo "version=${existing#v}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Patch auto-bumps off the highest semver tag; minor/major are bumped
+          # manually by pushing a vMAJOR.MINOR.0 tag (CI then patches from there).
+          latest="$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n1)"
+          latest="${latest:-v0.0.0}"
+          IFS='.' read -r major minor patch <<<"${latest#v}"
+          next="v${major}.${minor}.$((patch + 1))"
+          echo "::notice::Bumping ${latest} -> ${next} (sha ${{ github.sha }})"
+
+          git config user.name "axiome-ci"
+          git config user.email "ci@axiomebio.com"
+          git tag -a "${next}" -m "Automated patch release ${next}"
+          git push origin "refs/tags/${next}"
+          echo "version=${next#v}" >> "$GITHUB_OUTPUT"
 
       - name: Debug context
         env:
