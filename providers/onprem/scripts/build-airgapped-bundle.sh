@@ -43,8 +43,10 @@ for service in backend biocompute frontend; do
     docker tag "$REGISTRY/axiome/$service:$VERSION" "axiome/$service:stable"
 done
 
-# Also pull infrastructure images so the install is fully offline
-for img in postgres:15-alpine mongo:7 minio/minio:latest minio/mc:latest caddy:2-alpine; do
+# Also pull infrastructure images so the install is fully offline. Includes the
+# logging stack (Loki/Promtail/Grafana) so air-gapped sites get log ingestion too.
+for img in postgres:15-alpine mongo:7 minio/minio:latest minio/mc:latest caddy:2-alpine \
+           grafana/loki:3.1.1 grafana/promtail:3.1.1 grafana/grafana:11.2.0; do
     docker pull "$img"
 done
 
@@ -58,6 +60,9 @@ docker save \
     minio/minio:latest \
     minio/mc:latest \
     caddy:2-alpine \
+    grafana/loki:3.1.1 \
+    grafana/promtail:3.1.1 \
+    grafana/grafana:11.2.0 \
     -o "$BUNDLE_DIR/images.tar"
 
 cp -r "$PROVIDER_DIR/compose"   "$BUNDLE_DIR/compose"

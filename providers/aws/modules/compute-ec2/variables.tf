@@ -74,6 +74,12 @@ variable "use_ssm_image_tags" {
   default = true
 }
 
+variable "log_retention_days" {
+  description = "CloudWatch Logs retention for the EC2 log group. Logs stay in-region (eu-west-3) per CONTRACT §1."
+  type        = number
+  default     = 30
+}
+
 variable "tags" {
   type    = map(string)
   default = {}

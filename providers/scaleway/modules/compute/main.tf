@@ -31,6 +31,9 @@ locals {
 
     docker_compose_yml = local.docker_compose_yml
     caddyfile          = local.caddyfile
+
+    cockpit_push_url = var.cockpit_push_url
+    cockpit_token    = var.cockpit_token
   })
 }
 

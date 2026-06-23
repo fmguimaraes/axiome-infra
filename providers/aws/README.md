@@ -18,6 +18,15 @@ This guide is run **once per AWS account, then once per environment**. Subsequen
 | TLS / Reverse proxy | Caddy + Let's Encrypt (on the VM) | $0 |
 | DNS | Microsoft 365 (manual A records pointing at Lightsail static IPs — see §0.4) | included with domain |
 | Secrets / config | SSM Parameter Store | $0 |
+| Logs (FR9) | CloudWatch Logs — group `/axiome/<env>/ec2`, CMK-encrypted, `eu-west-3` only (EC2/HDS path) | ~$0.50/GB ingested |
+
+**Logs:** on the EC2/HDS compute path the `amazon-cloudwatch-agent` ships container
+stdout/stderr (json-file — `docker compose logs` still works) plus
+`/var/log/axiome-init.log` and `docker-prune.log` to CloudWatch Logs group
+`/axiome/<env>/ec2`. The group is encrypted with a dedicated CMK and stays in-region.
+Retention defaults to 30 days (`compute-ec2` `log_retention_days`). Streams:
+`<instance-id>/containers`, `<instance-id>/axiome-init`, `<instance-id>/docker-prune`.
+Query in **CloudWatch → Logs Insights**. The legacy Lightsail path has no CloudWatch sink.
 
 **Three environments**: `dev`, `staging`, `production` — each is one Lightsail VM, one Neon project, one Atlas cluster, three S3 buckets, one A record at Microsoft 365. They share one ECR registry at the AWS-account level. DNS is managed manually in Microsoft 365 (see §0.4); no shared Route 53 zone.
 
@@ -147,6 +156,31 @@ export MONGODB_ATLAS_PUBLIC_KEY="<public-key>"
 export MONGODB_ATLAS_PRIVATE_KEY="<private-key>"
 export TF_VAR_atlas_org_id="<organization-id>"
 ```
+
+#### Mailjet (transactional email)
+
+Powers the user-service `EmailService` (welcome, password reset, export, and
+sponsor-publish emails). Optional — if the keys are absent, Terraform skips the
+SSM parameters and the service logs links instead of sending.
+
+1. Sign up at https://app.mailjet.com and open **Account → API Key Management**.
+2. Save the **API Key** and **Secret Key**.
+3. Verify the sender address you intend to send from (**Account → Senders & Domains**).
+   It must match `mailjet_from_email` (default `contact@axiomebio.com`), or Mailjet
+   rejects the send.
+
+```bash
+export TF_VAR_mailjet_api_key="<api-key>"
+export TF_VAR_mailjet_secret_key="<secret-key>"
+```
+
+In CI these come from the `MAILJET_API_KEY` / `MAILJET_SECRET_KEY` GitHub secrets
+(see [docs/secrets.md](../../docs/secrets.md)); the `export-deploy-credentials`
+action re-exports them as the `TF_VAR_*` above. The secrets module then writes
+them to SSM (`MAILJET_API_KEY`, `MAILJET_SECRET_KEY`) along with `MAILJET_FROM_EMAIL`,
+`MAILJET_FROM_NAME`, and `FRONTEND_URL` (derived from the env's `fqdn`), all of
+which land in `/opt/axiome/.env` at boot. Override the From identity per env with
+`-var mailjet_from_email=...` / `-var mailjet_from_name=...` if needed.
 
 ### 0.6. Scope down Terraform IAM (recommended after first apply)
 

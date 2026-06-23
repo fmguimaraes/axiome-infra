@@ -100,6 +100,8 @@ locals {
     docker_compose_yml    = local.docker_compose_yml
     caddyfile             = local.caddyfile
     legacy_image_tag_env  = local.legacy_image_tag_env
+    # Legacy Lightsail path has no CloudWatch sink; empty value skips the agent block.
+    cloudwatch_log_group = ""
   })
 }
 

@@ -16,6 +16,8 @@
     axiome_install_dir: /opt/axiome
     axiome_images_tar: ""          # required when mode=airgapped
     axiome_env_file: ""            # path on control node to .env file to upload
+    axiome_logging: true           # deploy the Loki/Promtail/Grafana log stack (FR9)
+    axiome_compose_flags: "{{ '-f ' + axiome_install_dir + '/docker-compose.yml' + (' -f ' + axiome_install_dir + '/docker-compose.logging.yml' if axiome_logging else '') }}"
 
   tasks:
     - name: Verify mode
@@ -82,6 +84,29 @@
         dest: "{{ axiome_install_dir }}/Caddyfile"
         mode: "0644"
 
+    - name: (logging) Ensure grafana provisioning dir
+      when: axiome_logging | bool
+      file:
+        path: "{{ axiome_install_dir }}/grafana"
+        state: directory
+        mode: "0755"
+
+    - name: (logging) Upload log-stack overlay + configs
+      when: axiome_logging | bool
+      copy:
+        src: "../compose/{{ item.src }}"
+        dest: "{{ axiome_install_dir }}/{{ item.dest }}"
+        mode: "0644"
+      loop:
+        - { src: "docker-compose.logging.yml", dest: "docker-compose.logging.yml" }
+        - { src: "promtail-config.yml", dest: "promtail-config.yml" }
+        - { src: "grafana/datasource.yml", dest: "grafana/datasource.yml" }
+
+    - name: (logging) Require GRAFANA_ADMIN_PASSWORD in .env
+      when: axiome_logging | bool
+      command: grep -q '^GRAFANA_ADMIN_PASSWORD=.\+' {{ axiome_install_dir }}/.env
+      changed_when: false
+
     - name: (airgapped) Upload images tarball
       when: axiome_mode == "airgapped"
       copy:
@@ -96,13 +121,13 @@
 
     - name: (connected) docker compose pull
       when: axiome_mode == "connected"
-      command: docker compose -f {{ axiome_install_dir }}/docker-compose.yml pull
+      command: docker compose {{ axiome_compose_flags }} pull
       args:
         chdir: "{{ axiome_install_dir }}"
       changed_when: true
 
     - name: Start docker compose stack
-      command: docker compose -f {{ axiome_install_dir }}/docker-compose.yml up -d
+      command: docker compose {{ axiome_compose_flags }} up -d
       args:
         chdir: "{{ axiome_install_dir }}"
       changed_when: true

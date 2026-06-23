@@ -1,0 +1,61 @@
+# On-prem native log sink (FR9 / NFR8) — portable Loki + Promtail + Grafana stack.
+# This is the on-prem equivalent of AWS CloudWatch / Scaleway Cockpit: fully local, so
+# it works in BOTH connected and air-gapped modes with no internet egress. Overlay onto
+# the main compose: `docker compose -f docker-compose.yml -f docker-compose.logging.yml up -d`
+# (install.sh does this automatically unless --no-logging is passed).
+services:
+  loki:
+    image: grafana/loki:3.1.1
+    container_name: axiome-loki
+    restart: unless-stopped
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - loki_data:/loki
+    networks:
+      - axiome
+    mem_limit: 256m
+
+  promtail:
+    image: grafana/promtail:3.1.1
+    container_name: axiome-promtail
+    restart: unless-stopped
+    command: -config.file=/etc/promtail/config.yml
+    volumes:
+      - ./promtail-config.yml:/etc/promtail/config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/log:/var/log:ro
+    depends_on:
+      - loki
+    networks:
+      - axiome
+    mem_limit: 128m
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: axiome-grafana
+    restart: unless-stopped
+    environment:
+      # Admin password comes from .env (secrets store) — never hard-coded.
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in .env}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/datasource.yml:/etc/grafana/provisioning/datasources/loki.yml:ro
+    # Bound to localhost only — reach via SSH tunnel, never exposed publicly (NFR7).
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      - loki
+    networks:
+      - axiome
+    mem_limit: 256m
+
+volumes:
+  loki_data:
+  grafana_data:
+
+networks:
+  axiome:
+    driver: bridge
+    name: axiome-onprem

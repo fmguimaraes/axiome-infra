@@ -67,9 +67,21 @@ Each provider implements these modules under `providers/<provider>/modules/`:
 | `database-neon`  | PostgreSQL (managed-Postgres target replaces this in S4) | AXI-954 |
 | `database-atlas` | event store (self-hosted in-region replaces this in S5)  | AXI-955 |
 | `dns`            | DNS records for `fqdn`                                   | AXI-958 |
+| `logging`        | native log sink + retention (in-region, FR9/NFR8)        | AXI-953 |
 
 Module **input/output interfaces** MUST match across providers (same names) so the
 root composition is provider-agnostic.
+
+### 4.1 Logging (FR9 / NFR8)
+
+Each provider ships **container stdout/stderr + host bootstrap logs** to a native,
+in-region sink via an agent on the compute VM. The `json-file` Docker driver is **kept**
+(so `docker logs` keeps working for SSM/console debugging) — the agent tails it; no
+cloud log-driver is used. Sinks: **AWS** CloudWatch Logs (CMK-encrypted), **Scaleway**
+Cockpit, **OVH** Logs Data Platform, **on-prem** the portable Loki/Promtail/Grafana
+stack (works air-gapped). No secrets/PII in logs. Logs never leave the French region
+(§1). On-prem uses Docker-Compose (`providers/onprem/compose/docker-compose.logging.yml`),
+not Terraform, consistent with the rest of that provider.
 
 ## 5. Network isolation policy (NFR7, AC11)
 

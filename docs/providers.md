@@ -43,6 +43,7 @@ The boxes marked Neon, Atlas, S3-compatible, and Registry are the **portable lay
 | Container registry | ECR | Scaleway Container Registry | ECR (pull) | Image tarball preloaded |
 | TLS | Caddy + Let's Encrypt | Caddy + Let's Encrypt | Caddy + Let's Encrypt | Caddy + customer's internal CA |
 | DNS | Route 53 | Scaleway DNS | Customer DNS | Customer internal DNS |
+| Logs (FR9) | CloudWatch Logs (CW agent) | Cockpit / Loki (Alloy) | Portable Loki/Promtail/Grafana | Portable Loki/Promtail/Grafana (no egress) |
 | Secrets | SSM Parameter Store | Cloud-init injection | `.env` file (root-only) | `.env` file (root-only) |
 | State backend (TF) | S3 + DynamoDB lock | Scaleway Object Storage (no lock) | N/A — provisioned by install.sh | N/A |
 

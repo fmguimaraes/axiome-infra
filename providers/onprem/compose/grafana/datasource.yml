@@ -1,0 +1,10 @@
+# Grafana datasource provisioning — wires Loki as the default source so logs are
+# queryable out of the box (no click-ops). Mounted read-only into Grafana.
+apiVersion: 1
+datasources:
+  - name: Loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    isDefault: true
+    editable: false

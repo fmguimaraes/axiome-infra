@@ -14,12 +14,14 @@ set -euo pipefail
 MODE=""
 IMAGES_TAR=""
 INSTALL_DIR="/opt/axiome"
+LOGGING="true"
 
 while [[ $# -gt 0 ]]; do
     case $1 in
         --mode)        MODE="$2";        shift 2 ;;
         --images-tar)  IMAGES_TAR="$2";  shift 2 ;;
         --install-dir) INSTALL_DIR="$2"; shift 2 ;;
+        --no-logging)  LOGGING="false";  shift   ;;
         *) echo "Unknown arg: $1" >&2; exit 1 ;;
     esac
 done
@@ -92,6 +94,26 @@ PROVIDER_DIR="$(dirname "$SCRIPT_DIR")"
 cp "$PROVIDER_DIR/compose/docker-compose.${MODE}.yml" "$INSTALL_DIR/docker-compose.yml"
 cp "$PROVIDER_DIR/compose/Caddyfile" "$INSTALL_DIR/Caddyfile"
 
+# Compose invocation — base stack, plus the logging overlay (Loki/Promtail/Grafana)
+# unless --no-logging was passed. The same flags go into the systemd unit so logging
+# comes back on reboot.
+COMPOSE_ARGS=(-f "$INSTALL_DIR/docker-compose.yml")
+COMPOSE_FLAGS_STR="-f $INSTALL_DIR/docker-compose.yml"
+if [[ "$LOGGING" == "true" ]]; then
+    cp "$PROVIDER_DIR/compose/docker-compose.logging.yml" "$INSTALL_DIR/docker-compose.logging.yml"
+    cp "$PROVIDER_DIR/compose/promtail-config.yml" "$INSTALL_DIR/promtail-config.yml"
+    mkdir -p "$INSTALL_DIR/grafana"
+    cp "$PROVIDER_DIR/compose/grafana/datasource.yml" "$INSTALL_DIR/grafana/datasource.yml"
+    COMPOSE_ARGS+=(-f "$INSTALL_DIR/docker-compose.logging.yml")
+    COMPOSE_FLAGS_STR="$COMPOSE_FLAGS_STR -f $INSTALL_DIR/docker-compose.logging.yml"
+
+    if ! grep -q '^GRAFANA_ADMIN_PASSWORD=.\+' "$INSTALL_DIR/.env"; then
+        echo "Error: logging is enabled but GRAFANA_ADMIN_PASSWORD is not set in $INSTALL_DIR/.env" >&2
+        echo "Set it (or re-run with --no-logging to skip the Loki/Grafana stack)." >&2
+        exit 1
+    fi
+fi
+
 # 7. Mode-specific setup
 case "$MODE" in
     connected)
@@ -102,7 +124,7 @@ case "$MODE" in
             aws ecr get-login-password --region "${AWS_REGION:-eu-west-3}" \
                 | docker login --username AWS --password-stdin "$REGISTRY_URL"
         fi
-        docker compose -f "$INSTALL_DIR/docker-compose.yml" pull
+        docker compose "${COMPOSE_ARGS[@]}" pull
         ;;
     airgapped)
         echo "Airgapped mode: loading images from $IMAGES_TAR..."
@@ -114,7 +136,7 @@ case "$MODE" in
 esac
 
 # 8. Start the stack
-docker compose -f "$INSTALL_DIR/docker-compose.yml" up -d
+docker compose "${COMPOSE_ARGS[@]}" up -d
 
 # 9. Install systemd unit for restart on reboot
 cat > /etc/systemd/system/axiome.service <<SVC
@@ -127,8 +149,8 @@ After=docker.service network-online.target
 Type=oneshot
 RemainAfterExit=yes
 WorkingDirectory=$INSTALL_DIR
-ExecStart=/usr/bin/docker compose up -d
-ExecStop=/usr/bin/docker compose down
+ExecStart=/usr/bin/docker compose $COMPOSE_FLAGS_STR up -d
+ExecStop=/usr/bin/docker compose $COMPOSE_FLAGS_STR down
 TimeoutStartSec=300
 
 [Install]
@@ -197,7 +219,11 @@ ROT
 echo "=== axiome installer finished at $(date) ==="
 echo
 echo "Next steps:"
-echo "  1. Verify the stack: docker compose -f $INSTALL_DIR/docker-compose.yml ps"
-echo "  2. Tail logs:        docker compose -f $INSTALL_DIR/docker-compose.yml logs -f"
+echo "  1. Verify the stack: docker compose $COMPOSE_FLAGS_STR ps"
+echo "  2. Tail logs:        docker compose $COMPOSE_FLAGS_STR logs -f"
 echo "  3. Run migrations:   see README.md §3.6"
 echo "  4. Check health:     curl https://<your-fqdn>/health"
+if [[ "$LOGGING" == "true" ]]; then
+    echo "  5. Browse logs:      Grafana on http://127.0.0.1:3000 (Loki datasource preloaded)"
+    echo "                       reach it via SSH tunnel: ssh -L 3000:127.0.0.1:3000 <host>"
+fi

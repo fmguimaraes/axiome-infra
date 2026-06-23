@@ -109,4 +109,65 @@ cat > /etc/logrotate.d/docker-containers <<'ROT_EOF'
 }
 ROT_EOF
 
+%{ if cockpit_push_url != "" ~}
+# 10. Cockpit log shipper (FR9 / NFR8). Grafana Alloy streams container stdout/stderr
+# (via the Docker API — the json-file driver is kept so `docker logs` still works) plus
+# host bootstrap logs to the Cockpit Loki endpoint (in-region) with a write-only token.
+# No secrets/PII in logs (NFR8).
+mkdir -p /opt/axiome/alloy
+cat > /opt/axiome/alloy/config.alloy <<'ALLOY_EOF'
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+}
+
+discovery.relabel "containers" {
+  targets = discovery.docker.containers.targets
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+}
+
+loki.source.docker "containers" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.containers.output
+  labels     = { job = "docker", host = "${fqdn}", env = "${environment}" }
+  forward_to = [loki.write.cockpit.receiver]
+}
+
+local.file_match "host" {
+  path_targets = [
+    { __path__ = "/var/log/axiome-init.log", job = "host", host = "${fqdn}", env = "${environment}" },
+    { __path__ = "/var/log/docker-prune.log", job = "host", host = "${fqdn}", env = "${environment}" },
+  ]
+}
+
+loki.source.file "host" {
+  targets    = local.file_match.host.targets
+  forward_to = [loki.write.cockpit.receiver]
+}
+
+loki.write "cockpit" {
+  endpoint {
+    url = "${cockpit_push_url}"
+
+    headers = {
+      "X-Token" = "${cockpit_token}",
+    }
+  }
+}
+ALLOY_EOF
+chmod 600 /opt/axiome/alloy/config.alloy
+
+docker rm -f axiome-alloy 2>/dev/null || true
+docker run -d --name axiome-alloy --restart unless-stopped \
+    -v /var/run/docker.sock:/var/run/docker.sock:ro \
+    -v /var/log:/var/log:ro \
+    -v /opt/axiome/alloy/config.alloy:/etc/alloy/config.alloy:ro \
+    grafana/alloy:v1.4.2 \
+    run --server.http.listen-addr=127.0.0.1:12345 /etc/alloy/config.alloy
+
+%{ endif ~}
 echo "=== axiome cloud-init finished at $(date) ==="

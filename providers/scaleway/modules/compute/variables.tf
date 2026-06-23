@@ -92,6 +92,19 @@ variable "frontend_image_tag" {
   type = string
 }
 
+variable "cockpit_push_url" {
+  description = "Cockpit Loki push endpoint. Empty disables the Alloy log shipper."
+  type        = string
+  default     = ""
+}
+
+variable "cockpit_token" {
+  description = "Write-only Cockpit token (X-Token header) for the Alloy log shipper."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
 variable "tags" {
   type    = list(string)
   default = []

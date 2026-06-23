@@ -60,6 +60,18 @@ variable "use_cmk" {
   default     = false
 }
 
+variable "use_cockpit_logs" {
+  description = "Ship container + host logs to Scaleway Cockpit via Grafana Alloy on the VM (FR9, NFR8)."
+  type        = bool
+  default     = true
+}
+
+variable "log_retention_days" {
+  description = "Cockpit logs retention (days). Allowed: 1, 7, 14, 30, 90, 180, 365."
+  type        = number
+  default     = 30
+}
+
 variable "domain" {
   description = "Base domain for the platform (must already be a Scaleway-managed DNS zone)"
   type        = string

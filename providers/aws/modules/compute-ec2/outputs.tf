@@ -10,3 +10,8 @@ output "instance_id" {
 output "security_group_id" {
   value = aws_security_group.instance.id
 }
+
+output "cloudwatch_log_group_name" {
+  description = "CloudWatch Logs group receiving container + host logs (FR9)."
+  value       = aws_cloudwatch_log_group.ec2.name
+}

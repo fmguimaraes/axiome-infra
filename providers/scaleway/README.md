@@ -17,6 +17,13 @@ This guide is run **once per Scaleway organization, then once per environment**.
 | Container registry | Scaleway Container Registry (per-env namespace) | <€1/mo |
 | TLS / Reverse proxy | Caddy + Let's Encrypt on the VM | €0 |
 | DNS | Scaleway DNS (free with the domain) | €0 |
+| Logs (FR9) | Cockpit (managed Loki/Grafana), `fr-par` only | usage-based |
+
+**Logs:** Grafana Alloy on the VM ships container stdout/stderr (via the Docker API —
+`docker logs` still works) plus host bootstrap logs to **Scaleway Cockpit** using a
+write-only token. The `logging` module (`scaleway_cockpit_source` + `scaleway_cockpit_token`)
+keeps logs in `fr-par`; retention defaults to 30 days (`log_retention_days`). Browse them
+in the **Cockpit Grafana** (Console → Cockpit). Toggle with `use_cockpit_logs`.
 
 ---
 

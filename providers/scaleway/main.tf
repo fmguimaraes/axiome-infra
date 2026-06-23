@@ -71,6 +71,17 @@ module "database_atlas" {
   mongo_version  = var.atlas_mongo_version
 }
 
+# ---------------- Native log sink — Cockpit (FR9 / NFR8) ----------------
+
+module "logging" {
+  count  = var.use_cockpit_logs ? 1 : 0
+  source = "./modules/logging"
+
+  naming_prefix      = local.naming_prefix
+  scaleway_region    = var.scaleway_region
+  log_retention_days = var.log_retention_days
+}
+
 # ---------------- Compute (Scaleway Instance) ----------------
 
 module "compute" {
@@ -84,6 +95,10 @@ module "compute" {
   instance_image      = var.instance_image
   root_volume_size_gb = var.instance_root_volume_size_gb
   fqdn                = local.fqdn
+
+  # Cockpit log shipping (empty when disabled -> Alloy step is skipped in cloud-init).
+  cockpit_push_url = var.use_cockpit_logs ? module.logging[0].push_url : ""
+  cockpit_token    = var.use_cockpit_logs ? module.logging[0].token : ""
 
   registry_endpoint    = module.registry.registry_endpoint
   registry_credentials = module.registry.pull_secret_key

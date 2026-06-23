@@ -252,6 +252,25 @@ Document for the customer:
 
 ---
 
+## Logs (FR9)
+
+On-prem ships logs to a **fully local Loki/Promtail/Grafana** stack (the portable
+observability stack) — no internet egress, so it works identically in connected and
+air-gapped modes. `install.sh` deploys it by default (overlay
+`compose/docker-compose.logging.yml`); pass `--no-logging` to skip it, or set
+`axiome_logging: false` with Ansible. Requires `GRAFANA_ADMIN_PASSWORD` in `.env`.
+
+Promtail discovers containers via the Docker API (the `json-file` driver is kept, so
+`docker compose logs` still works) and also tails `/var/log/axiome-install.log`.
+Grafana is bound to `127.0.0.1:3000` with Loki preloaded — reach it over an SSH tunnel:
+
+```bash
+ssh -L 3000:127.0.0.1:3000 operator@customer-host   # then open http://127.0.0.1:3000
+```
+
+The air-gapped bundle includes the Loki/Promtail/Grafana images, so offline sites get
+log ingestion with no extra steps.
+
 ## Day-2 operations
 
 ### Update images (connected mode)

@@ -49,6 +49,14 @@ resource "aws_iam_user_policy" "runtime" {
         Action   = ["s3:ListBucket", "s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
         Resource = ["arn:aws:s3:::${var.naming_prefix}-*", "arn:aws:s3:::${var.naming_prefix}-*/*"]
       },
+      # CloudWatch Logs ingestion (FR9 / NFR8). The amazon-cloudwatch-agent on the box
+      # runs under these [default] creds, so the log-shipping grant lives here, scoped
+      # to the single in-region log group it writes to.
+      {
+        Effect   = "Allow"
+        Action   = ["logs:CreateLogStream", "logs:PutLogEvents", "logs:DescribeLogStreams", "logs:CreateLogGroup"]
+        Resource = ["${aws_cloudwatch_log_group.ec2.arn}", "${aws_cloudwatch_log_group.ec2.arn}:*"]
+      },
     ]
   })
 }
@@ -73,9 +81,83 @@ resource "aws_iam_role_policy_attachment" "ssm" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
+# S3 read/write on the platform buckets, granted to the *instance profile role*
+# (not only the runtime IAM user). Application containers have no static AWS
+# credentials; they obtain temporary credentials from IMDS via this role, which
+# requires metadata_options.http_put_response_hop_limit = 2 on the instance so
+# the Docker bridge network can reach the metadata endpoint.
+resource "aws_iam_role_policy" "s3" {
+  role = aws_iam_role.ssm.name
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["s3:ListBucket", "s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
+      Resource = ["arn:aws:s3:::${var.naming_prefix}-*", "arn:aws:s3:::${var.naming_prefix}-*/*"]
+    }]
+  })
+}
+
 resource "aws_iam_instance_profile" "ssm" {
   name = "${var.naming_prefix}-ec2-ssm"
   role = aws_iam_role.ssm.name
+}
+
+# ---------------- CloudWatch Logs sink (FR9 / NFR8) ----------------
+# Container stdout/stderr (json-file) + host bootstrap logs are shipped here by the
+# amazon-cloudwatch-agent (see cloud-init step 13). The json-file driver is kept so
+# `docker compose logs` still works for SSM debugging; the agent only tails the files.
+#
+# Dedicated CMK (not the shared data CMK, whose default key policy can't be granted to
+# the logs service without an invasive rewrite). Encryption at rest per CONTRACT §6;
+# the group lives in ${data.aws_region.current.name} only, per CONTRACT §1.
+locals {
+  log_group_name = "/axiome/${var.environment}/ec2"
+}
+
+resource "aws_kms_key" "logs" {
+  description             = "${var.naming_prefix} CloudWatch Logs CMK"
+  deletion_window_in_days = var.environment == "production" ? 30 : 7
+  enable_key_rotation     = true
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "EnableRoot"
+        Effect    = "Allow"
+        Principal = { AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root" }
+        Action    = "kms:*"
+        Resource  = "*"
+      },
+      {
+        Sid       = "AllowCloudWatchLogs"
+        Effect    = "Allow"
+        Principal = { Service = "logs.${data.aws_region.current.name}.amazonaws.com" }
+        Action    = ["kms:Encrypt", "kms:Decrypt", "kms:ReEncrypt*", "kms:GenerateDataKey*", "kms:DescribeKey"]
+        Resource  = "*"
+        Condition = {
+          ArnLike = {
+            "kms:EncryptionContext:aws:logs:arn" = "arn:aws:logs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:log-group:${local.log_group_name}"
+          }
+        }
+      },
+    ]
+  })
+
+  tags = merge(var.tags, { Purpose = "cloudwatch-logs-cmk" })
+}
+
+resource "aws_kms_alias" "logs" {
+  name          = "alias/${var.naming_prefix}-logs"
+  target_key_id = aws_kms_key.logs.key_id
+}
+
+resource "aws_cloudwatch_log_group" "ec2" {
+  name              = local.log_group_name
+  retention_in_days = var.log_retention_days
+  kms_key_id        = aws_kms_key.logs.arn
+  tags              = var.tags
 }
 
 locals {
@@ -104,6 +186,7 @@ locals {
     docker_compose_yml    = local.docker_compose_yml
     caddyfile             = local.caddyfile
     legacy_image_tag_env  = local.legacy_image_tag_env
+    cloudwatch_log_group  = local.log_group_name
   })
 }
 
@@ -153,6 +236,14 @@ resource "aws_instance" "main" {
   key_name               = var.key_name
   iam_instance_profile   = aws_iam_instance_profile.ssm.name
   user_data              = local.cloud_init
+
+  # IMDSv2 required; hop limit 2 so containers on the Docker bridge network can
+  # reach the metadata endpoint to assume the instance role (S3 access).
+  metadata_options {
+    http_endpoint               = "enabled"
+    http_tokens                 = "required"
+    http_put_response_hop_limit = 2
+  }
 
   root_block_device {
     volume_size = var.root_volume_size_gb
