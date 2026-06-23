@@ -152,6 +152,7 @@ services:
       S3_BUCKET_SYSTEM: ${S3_BUCKET_SYSTEM}
       JWT_SECRET: ${JWT_SECRET}
       BIO_COMPUTE_URL: http://biocompute:8000
+      CALLBACK_BASE_URL: http://organization-service:3004
     depends_on:
       rabbitmq:
         condition: service_healthy
