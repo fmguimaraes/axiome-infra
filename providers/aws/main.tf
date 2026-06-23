@@ -51,10 +51,11 @@ module "kms" {
 module "storage" {
   source = "./modules/storage"
 
-  naming_prefix = local.naming_prefix
-  environment   = var.environment
-  kms_key_arn   = module.kms.key_arn
-  tags          = local.base_tags
+  naming_prefix        = local.naming_prefix
+  environment          = var.environment
+  kms_key_arn          = module.kms.key_arn
+  cors_allowed_origins = ["https://${local.fqdn}"]
+  tags                 = local.base_tags
 }
 
 # ---------------- Registry (ECR) ----------------
@@ -176,6 +177,7 @@ module "compute_ec2" {
   ssm_parameter_prefix  = module.secrets.parameter_prefix
   ecr_registry          = module.registry.registry_url
   fqdn                  = local.fqdn
+  data_cmk_arn          = module.kms.key_arn
   backend_image_tag     = var.backend_image_tag
   biocompute_image_tag  = var.biocompute_image_tag
   frontend_image_tag    = var.frontend_image_tag

@@ -6,6 +6,12 @@ variable "environment" {
   type = string
 }
 
+variable "cors_allowed_origins" {
+  description = "App origins allowed to PUT/GET the uploads bucket from the browser (presigned URLs). Empty disables CORS."
+  type        = list(string)
+  default     = []
+}
+
 variable "tags" {
   type    = map(string)
   default = {}
