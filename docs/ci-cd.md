@@ -11,7 +11,10 @@ environment. If you are new to the project, start here.
   │                                                                                    │
   │  push to main ─► .github/workflows/ci.yml                                          │
   │                     ├─► test (lint, unit, tsc)                                     │
-  │                     └─► build-push-notify (uses reusable-build.yml @ axiome-infra) │
+  │                     ├─► build-push-notify (uses reusable-build.yml @ axiome-infra) │
+  │                     ├─► promote-staging    (update-manifest.sh <svc> staging)      │
+  │                     └─► promote-production  (update-manifest.sh <svc> production)  │
+  │                          (chained via needs:, automatic on every push to main)     │
   │                                                                                    │
   └──────────────────────────────────────────┬─────────────────────────────────────────┘
                                              │
@@ -30,12 +33,15 @@ environment. If you are new to the project, start here.
   │                                  edits providers/${PROVIDER}/environments/dev/   │
   │                                        images.tfvars and pushes a commit         │
   │                                                                                  │
-  │  push to main (paths: tf, tfvars, providers/**, scripts/**) ─►                   │
+  │  push to main (paths: tf, tfvars, providers/**, scripts/** —                     │
+  │                 dev/staging images.tfvars excluded) ─►                            │
   │       .github/workflows/terraform-cd.yml                                         │
-  │          └─► deploy-{dev,staging,production}                                     │
+  │          ├─► ci-gate            (terraform fmt + validate + plan — infra CI)      │
+  │          └─► apply-production   (needs ci-gate; environment: production)          │
+  │                ├─► [GATE] production Environment required reviewers (approval)    │
   │                ├─► export-deploy-credentials composite action                    │
   │                │     (validates AWS_*, NEON_API_KEY, MONGODB_ATLAS_*)            │
-  │                └─► scripts/deploy.sh <env>                                       │
+  │                └─► scripts/deploy.sh production                                   │
   │                      cd providers/${PROVIDER}/ ; terraform init/plan/apply       │
   │                                                                                  │
   │  PR (paths: tf, tfvars, …) ─► .github/workflows/terraform-ci.yml                 │
@@ -44,14 +50,21 @@ environment. If you are new to the project, start here.
   └──────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-Two distinct flows share most of this plumbing:
+Promotion is **fully automatic** on every push to a service repo's `main`:
 
-- **Auto-promote to dev** — every push to a service repo's `main` lands in
-  dev automatically.
-- **Manual promote to staging/production** — operator triggers
-  `workflow_dispatch` on the service repo. A promotion gate
-  (`check-promotion-gate.sh`) enforces sequential rollout: a tag must
-  already exist in dev before staging, and in staging before production.
+- **Auto-deploy to dev** — `dev-auto-promote.yml` rolls the new image onto
+  the dev VM (SSM/SSH), independent of the staging/production path.
+- **Auto-promote to staging, then production** — the service repo's
+  `ci.yml` runs `promote-staging` → `promote-production` (chained with
+  `needs:`), each committing `images.tfvars` to `axiome-infra`. The
+  `dev → staging → production` sequence is enforced by **job ordering**, not
+  by `check-promotion-gate.sh` (that script is no longer in the auto path;
+  it remains for manual use).
+- **Production gate (in `axiome-infra`)** — the production manifest commit
+  triggers `terraform-cd.yml`, where the apply is blocked by two gates in
+  order: (1) the `ci-gate` job (`terraform fmt` + `validate` + `plan`), and
+  (2) the `production` GitHub Environment's **required reviewers** (manual
+  approval). See [Production gate](#production-gate) below.
 
 ## Repo responsibilities
 
@@ -164,8 +177,8 @@ For a new service:
 |---|---|---|
 | `.github/workflows/reusable-build.yml` | `workflow_call` from service repos | Build docker image, push to registry, dispatch `image-published` event back. |
 | `.github/workflows/dev-auto-promote.yml` | `repository_dispatch: image-published` | Update `providers/${PROVIDER}/environments/dev/images.tfvars` and push. |
-| `.github/workflows/terraform-cd.yml` | Push to `main`, paths under `**.tf`, `**.tfvars`, `providers/**`, `scripts/**`, etc. | Per changed env, run `bash scripts/deploy.sh <env>`. |
-| `.github/workflows/terraform-ci.yml` | PR to `main`, same paths | `terraform fmt -check`, `validate`, and `plan` per env. The gate before merge. |
+| `.github/workflows/terraform-cd.yml` | Push to `main`, paths under `**.tf`, `**.tfvars`, `providers/**`, `scripts/**`, etc. (dev/staging `images.tfvars` excluded) | `ci-gate` (fmt + validate + plan), then `apply-production` (`needs: ci-gate`, `environment: production`) runs `bash scripts/deploy.sh production`. Apply on push and on normal dispatch; plan-only only when dispatched with `plan_only=true`. |
+| `.github/workflows/terraform-ci.yml` | PR to `main`, same paths | `terraform fmt -check`, `validate`, and `plan` per env. The gate before merge. `terraform-cd`'s `ci-gate` mirrors it for push-triggered applies (this workflow only runs on PRs). |
 | `.github/workflows/secrets-check.yml` | Push / PR | Pre-commit secret scanning. |
 
 ### Composite actions
@@ -188,8 +201,8 @@ For a new service:
 | File | Updated by |
 |---|---|
 | `providers/aws/environments/dev/images.tfvars` | `dev-auto-promote.yml` (automatic). |
-| `providers/aws/environments/staging/images.tfvars` | Service repo `promote` job (manual `workflow_dispatch`). |
-| `providers/aws/environments/production/images.tfvars` | Service repo `promote` job (manual `workflow_dispatch`). |
+| `providers/aws/environments/staging/images.tfvars` | Service repo `promote-staging` job (automatic on push to `main`). |
+| `providers/aws/environments/production/images.tfvars` | Service repo `promote-production` job (automatic on push to `main`; the resulting commit triggers `terraform-cd` and its gates). |
 
 Format:
 
@@ -203,12 +216,53 @@ Each service tag is independent — they do not need to match across services.
 
 ## Promotion gate
 
-For staging and production deploys, the service repo's `promote` job
-checks out `axiome-infra`, runs
-`bash scripts/check-promotion-gate.sh <service> <env> <tag>`, and aborts
-if the tag isn't already present in the previous environment's
-`images.tfvars`. This is per-service, so e.g. backend can be in
-production while frontend is still in staging.
+### Sequencing (service repos)
+
+The `dev → staging → production` order is enforced by **job ordering** in
+each service repo's `ci.yml`: `promote-staging` runs after
+`build-push-notify`, and `promote-production` runs after `promote-staging`
+(`needs:`). Because all three jobs promote the **same** short-SHA tag from
+one push, the sequence is satisfied by construction. The older
+`check-promotion-gate.sh` (which compared `images.tfvars` across
+environments) is no longer in the automatic path — it remains in the repo
+for manual/ad-hoc promotions.
+
+### Production gate (`terraform-cd.yml`)
+
+The production apply is the one gated step, because production is the only
+live environment and hosts stateful data. A production `images.tfvars`
+commit triggers `terraform-cd.yml`, where `apply-production` is blocked by
+**two gates, in order**:
+
+1. **`ci-gate` job (infra CI, in the workflow YAML)** — `terraform fmt
+   -check`, `terraform validate`, and a production `terraform plan`. If any
+   fail, the apply never runs. This mirrors `terraform-ci.yml`, which only
+   runs on PRs, so push-triggered applies get the same validation.
+2. **`production` Environment required reviewers (manual approval, a repo
+   setting — NOT in the YAML)** — `apply-production` declares
+   `environment: production`; the *approval rule itself* is configured under
+   **Settings → Environments → production → Required reviewers** in
+   `axiome-infra`. GitHub pauses the job for an approver before its steps
+   run.
+
+   > **Important:** the YAML reference is necessary but not sufficient. If
+   > Required reviewers is *not* configured on the `production` environment,
+   > `apply-production` proceeds automatically once `ci-gate` passes — there
+   > is no human gate. Configuring it is a one-time repo setting.
+
+Only after both gates does `apply-production` run
+`bash scripts/deploy.sh production` (real apply on push and on a normal
+manual dispatch; plan-only only when dispatched with `plan_only=true`).
+
+For the operator procedure — enabling the gate and approving a waiting
+deployment (UI, mobile, and `gh` CLI) — see **Approve a production
+deployment** in [`docs/runbooks.md`](runbooks.md).
+
+`dev`/`staging` `images.tfvars` commits are excluded from the
+`terraform-cd` push trigger: they do not affect the production plan
+(`dev` deploys via `dev-auto-promote.yml`; `staging` is scaffold-only with
+no live infra), so a staging promotion does not spuriously open a prod
+approval.
 
 ## Secret access (cross-repo workflow_call)
 
@@ -258,6 +312,21 @@ a fresh commit (not "Re-run").
 missing on `axiome-infra` (not on the service repos — different store), or
 the deploy job's `environment:` block can't see them.
 
+### dev-auto-promote: `Input required and not supplied: aws-region`
+
+`aws-actions/configure-aws-credentials` failed because `AWS_REGION` resolved
+empty. `dev-auto-promote.yml` runs **natively in `axiome-infra`** and reads
+*this repo's* `vars.AWS_REGION || secrets.AWS_REGION` — it does **not** inherit
+the service repo's value (only `reusable-build.yml`, called with
+`secrets: inherit`, does). The build/push step can therefore succeed while
+dev-auto-promote fails on the same push.
+
+Fix: set `AWS_REGION = eu-west-3` (Variable) on `axiome-infra` (see
+`docs/secrets.md`). The workflow also falls back to `eu-west-3` if unset, so a
+current `axiome-infra/main` won't hit this — push a fresh commit rather than
+"Re-run" if you're on an older SHA. The same applies to the AWS access keys:
+they must exist on `axiome-infra` itself, not just the service repos.
+
 ### terraform-cd: Neon / MongoDB Atlas 401
 
 Provider-specific API keys missing or wrong on `axiome-infra`. See
@@ -279,6 +348,21 @@ are safe to "Re-run" — they reload from `axiome-infra/main`.
 
 ## Known follow-ups
 
+- **Automatic prod promotion is wired and gated, but does not yet roll the
+  running production containers.** Production runs the EC2 compute module
+  with `use_ssm_image_tags = false` (the variable default) and
+  `user_data_replace_on_change = false`. So when `promote-production` writes
+  a new SHA into `production/images.tfvars` and `apply-production` runs,
+  Terraform updates the instance's stored `user_data` but does **not**
+  recreate the host or re-run cloud-init — the live containers keep running
+  their current tag (today, `:stable`). The effect is **inert, not
+  destructive** (no data loss), but the new image is not deployed by the
+  apply alone. Actual prod rollout still goes through advancing ECR
+  `:stable` + `docker compose pull` on the box (see `docs/deployment.md`).
+  To make automatic prod promotion *deploy*, migrate production onto the
+  SSM auto-roll path that dev already uses (`use_ssm_image_tags = true` +
+  a `roll-service.sh`-style step, or a `null_resource`/`remote-exec` pull +
+  restart gated on tag change).
 - **Frontend image bump replaces the entire Lightsail instance.** The
   `frontend_image_tag` is rendered into `user_data`, which is `ForceNew`
   on `aws_lightsail_instance`. Every image update currently destroys and

@@ -1,18 +1,26 @@
-# Terraform CD — terraform plan/apply for the single live environment.
+# Terraform CD — terraform plan/apply for the single live environment (production).
 #
-# REALITY: there is only ONE real environment — production (the "platform"). The repo
-# still scaffolds dev/ and staging/ tfvars, but no dev or staging infrastructure exists
-# (no dev/staging state-lock tables), so this pipeline only ever targets production.
+# Promotion to production is now AUTOMATIC. The service repos
+# (axiome-{front,back,bio-compute}) auto-commit images.tfvars to this repo
+# (staging, then production) on every push to their main. A production-affecting
+# infra change — including a production images.tfvars commit — triggers this
+# workflow on push.
 #
-# Behaviour:
-#   push to main (infra paths)  -> terraform PLAN production (read-only; no changes).
-#                                  This gives visibility + catches errors without
-#                                  touching the single live platform.
-#   workflow_dispatch           -> terraform APPLY production (set plan_only=true to
-#                                  only plan). This is the deliberate, manual deploy.
+# The production apply is GATED by two things, in order:
+#   1. ci-gate job          — terraform fmt + validate + plan must pass (infra CI).
+#   2. `production` Environment — required reviewers must approve (manual approval).
+#                                 Configure under Settings → Environments → production →
+#                                 "Required reviewers" in this repo. Without it, apply runs
+#                                 automatically once ci-gate passes (no human gate).
 #
-# Why apply is never automatic on push: production is the only environment and hosts
-# live data; an unreviewed apply can replace the VM or mutate stateful resources.
+# Only after BOTH gates does apply-production run `terraform apply`.
+#
+# workflow_dispatch remains for manual plan/apply (plan_only input).
+#
+# dev/staging images.tfvars commits are EXCLUDED from the push trigger: they do not
+# affect the production plan, and dev is deployed separately by dev-auto-promote.yml
+# (SSM/SSH). staging is scaffold-only (no live infra), so its manifest commit is a
+# record, not a deploy.
 
 name: terraform-cd
 
@@ -28,6 +36,10 @@ on:
       - 'scripts/**'
       - '.github/workflows/terraform-cd.yml'
       - '.github/actions/export-deploy-credentials/**'
+      - '!providers/*/environments/dev/**'
+      - '!providers/*/environments/staging/**'
+      - '!environments/dev/**'
+      - '!environments/staging/**'
   workflow_dispatch:
     inputs:
       plan_only:
@@ -44,10 +56,46 @@ env:
   TF_IN_AUTOMATION: 'true'
 
 jobs:
-  deploy-production:
-    name: Production (the only live environment — "platform")
+  # Infra CI gate — production apply is blocked unless fmt + validate + plan succeed.
+  # Mirrors terraform-ci.yml (which only runs on PRs) so push-triggered prod applies
+  # get the same validation.
+  ci-gate:
+    name: Infra CI gate (fmt + validate + plan)
     runs-on: ubuntu-latest
-    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: terraform fmt -check
+        run: terraform fmt -recursive -check -diff
+
+      - name: terraform validate
+        run: |
+          terraform init -backend=false -input=false
+          terraform validate
+
+      - name: Export provider credentials
+        uses: ./.github/actions/export-deploy-credentials
+        with:
+          aws_access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          neon_api_key: ${{ secrets.NEON_API_KEY }}
+          mongodb_atlas_public_key: ${{ secrets.MONGODB_ATLAS_PUBLIC_KEY }}
+          mongodb_atlas_private_key: ${{ secrets.MONGODB_ATLAS_PRIVATE_KEY }}
+
+      - name: terraform plan (production)
+        env:
+          PROVIDER: ${{ vars.PROVIDER || vars.REGISTRY_PROVIDER || 'aws' }}
+        run: bash scripts/deploy.sh production --plan-only
+
+  apply-production:
+    name: Production (the only live environment — "platform")
+    needs: [ci-gate]
+    runs-on: ubuntu-latest
+    environment: production   # required reviewers => manual approval gate
     steps:
       - uses: actions/checkout@v4
         with:
@@ -71,16 +119,16 @@ jobs:
         env:
           PROVIDER: ${{ vars.PROVIDER || vars.REGISTRY_PROVIDER || 'aws' }}
         run: |
-          # Push = plan only (never auto-apply to the single live platform).
-          # Apply only on a manual workflow_dispatch with plan_only=false.
-          if [[ "${{ github.event_name }}" == "push" || "${{ inputs.plan_only }}" == "true" ]]; then
+          # Apply on push (automatic promotion) and on a normal manual dispatch.
+          # Only a manual dispatch with plan_only=true stays plan-only.
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.plan_only }}" == "true" ]]; then
             bash scripts/deploy.sh production --plan-only
           else
             bash scripts/deploy.sh production
           fi
 
       - name: Tag release
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.plan_only != true }}
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.plan_only != true }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

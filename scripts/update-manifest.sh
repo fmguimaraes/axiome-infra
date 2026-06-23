@@ -5,6 +5,9 @@ set -euo pipefail
 #
 # Usage: ./update-manifest.sh <service> <environment> <image_tag>
 # Required env: PROVIDER (aws | scaleway | onprem)
+# Optional env: SOURCE_REPO, SOURCE_MESSAGE — when both are set, the commit
+#   message becomes "<repo>-<original commit subject>" instead of the opaque
+#   "ci(<env>): update <service> to <sha>" form, so infra history is readable.
 #
 # Writes to providers/${PROVIDER}/environments/${ENVIRONMENT}/images.tfvars.
 
@@ -56,7 +59,15 @@ if git diff --cached --quiet; then
     exit 0
 fi
 
-git commit -m "ci(${ENVIRONMENT}): update ${SERVICE} to ${IMAGE_TAG}"
+# Prefer a human-readable "<repo>-<original commit subject>" message when the
+# triggering service passes its repo + commit message; fall back otherwise.
+COMMIT_MSG="ci(${ENVIRONMENT}): update ${SERVICE} to ${IMAGE_TAG}"
+if [[ -n "${SOURCE_REPO:-}" && -n "${SOURCE_MESSAGE:-}" ]]; then
+    SOURCE_SUBJECT="${SOURCE_MESSAGE%%$'\n'*}"
+    COMMIT_MSG="${SOURCE_REPO}-${SOURCE_SUBJECT}"
+fi
+
+git commit -m "${COMMIT_MSG}"
 git push origin HEAD
 
 echo "=== ${SERVICE} manifest updated in ${ENVIRONMENT} ==="
