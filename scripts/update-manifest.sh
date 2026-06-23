@@ -45,7 +45,12 @@ fi
 
 echo "=== Updating ${SERVICE} in ${ENVIRONMENT} (PROVIDER=${PROVIDER}): ${TF_KEY} -> ${IMAGE_TAG} ==="
 
-sed -i "s|^${TF_KEY}.*|${TF_KEY} = \"${IMAGE_TAG}\"|" "$TFVARS_FILE"
+# Pad the key so the `=` aligns the way `terraform fmt` expects; otherwise the
+# infra CI `terraform fmt -check` fails on every promote. Width = length of the
+# longest key (biocompute_image_tag, 20 chars); all keys are always present, so
+# this column is stable.
+NEW_LINE="$(printf '%-20s = "%s"' "${TF_KEY}" "${IMAGE_TAG}")"
+sed -i "s|^${TF_KEY}[[:space:]].*|${NEW_LINE}|" "$TFVARS_FILE"
 
 cd "$REPO_ROOT"
 
