@@ -21,6 +21,20 @@ services:
   mongodb:
     image: mongo:7
     container_name: axiome-mongodb
+    # Run as a single-node replica set so Prisma can use transactions
+    # (e.g. event-service audit-log writes). An authenticated replica set
+    # requires a keyfile; we generate a persistent one on first boot, then
+    # the healthcheck initiates rs0 if it is not already configured.
+    entrypoint:
+      - bash
+      - -c
+      - |
+        if [ ! -f /data/db/keyfile ]; then
+          openssl rand -base64 756 > /data/db/keyfile
+          chmod 400 /data/db/keyfile
+          chown 999:999 /data/db/keyfile
+        fi
+        exec docker-entrypoint.sh mongod --replSet rs0 --keyFile /data/db/keyfile --bind_ip_all
     environment:
       MONGO_INITDB_ROOT_USERNAME: ${MONGODB_USER:-axiome}
       MONGO_INITDB_ROOT_PASSWORD: ${MONGODB_PASSWORD:-axiome_local_dev}
@@ -32,10 +46,14 @@ services:
     networks:
       - axiome-network
     healthcheck:
-      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
+      test: >
+        mongosh -u ${MONGODB_USER:-axiome} -p ${MONGODB_PASSWORD:-axiome_local_dev}
+        --authenticationDatabase admin --quiet --eval
+        "try { rs.status().ok } catch(e) { rs.initiate({_id:'rs0',members:[{_id:0,host:'localhost:27017'}]}).ok }"
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
 
   redis:
     image: redis:7-alpine
@@ -125,7 +143,7 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-axiome}:${POSTGRES_PASSWORD:-axiome_local_dev}@postgres:5432/${POSTGRES_DB:-axiome}
       USER_DATABASE_URL: postgresql://${POSTGRES_USER:-axiome}:${POSTGRES_PASSWORD:-axiome_local_dev}@postgres:5432/${POSTGRES_DB:-axiome}?schema=user_svc
       ORGANIZATION_DATABASE_URL: postgresql://${POSTGRES_USER:-axiome}:${POSTGRES_PASSWORD:-axiome_local_dev}@postgres:5432/${POSTGRES_DB:-axiome}?schema=organization_svc
-      MONGODB_URL: mongodb://${MONGODB_USER:-axiome}:${MONGODB_PASSWORD:-axiome_local_dev}@mongodb:27017/${MONGODB_DB:-axiome}?authSource=admin
+      MONGODB_URL: mongodb://${MONGODB_USER:-axiome}:${MONGODB_PASSWORD:-axiome_local_dev}@mongodb:27017/${MONGODB_DB:-axiome}?authSource=admin&directConnection=true
       RABBITMQ_URL: amqp://${RABBITMQ_USER:-axiome}:${RABBITMQ_PASSWORD:-axiome_local_dev}@rabbitmq:5672
       REDIS_URL: redis://redis:6379
       S3_ENDPOINT: http://minio:9000
