@@ -88,6 +88,78 @@ logs at all, you are reaching the right box — the issue is credentials, not ne
 
 ---
 
+## `The column X.Y does not exist in the current database` (Prisma, fresh prod deploy)
+
+**First documented:** 2026-06-23, production. Surfaced as service 500s right after a
+fresh deploy, e.g.:
+
+```
+The column `workspace_members.role_id` does not exist in the current database.
+The column `roles.hierarchy` does not exist in the current database.
+Invalid `prisma.workspaceMember.create()` invocation: ...
+```
+
+### Root cause — prod schema is provisioned by `db push`, not migrations
+
+The production Postgres (`axiome-production-pg` RDS, schemas `organization_svc` /
+`user_svc`) was materialized with **`prisma db push`**, which syncs the schema but
+writes **no migration history**. Confirmed by:
+
+- `prisma migrate status` reports **all** migrations "not yet applied" — including
+  ones whose tables plainly exist — and the `_prisma_migrations` table is **absent**
+  from the schema.
+- The table exists but a recently-added column does not (error is *column* missing,
+  not *relation* missing).
+
+So every time a column/table is added to a service's `schema.prisma`, the Prisma
+**client** ships in the new image and queries the new shape, but **nothing applies
+the DDL to prod**. The deploy pipeline has **no `migrate deploy` / `db push` step**.
+The DB silently falls behind the code; each feature 500s the first time it's hit.
+
+> ⚠️ **Do NOT run `prisma migrate deploy` against prod here.** With an empty
+> `_prisma_migrations`, it would try to replay all migrations from scratch
+> (`CREATE TABLE`/`CREATE TYPE` on objects that already exist) and fail partway,
+> risking a half-applied schema.
+
+### Fix — diff the live DB against the schema and apply the additive DDL
+
+Open the [SSM port-forward to RDS](connect-and-debug.md#51-private-rds-postgres-via-ssm-port-forward--connect-from-your-laptop),
+then for each Postgres service compute the exact forward DDL — **no shadow DB
+needed** with `--from-url`:
+
+```bash
+cd axiome-back
+LOCAL_URL='...@127.0.0.1:55432/axiome?sslmode=require&schema=organization_svc'   # from SSM, host swapped
+./node_modules/.bin/prisma migrate diff \
+  --from-url "$LOCAL_URL" \
+  --to-schema-datamodel apps/organization-service/src/prisma/schema.prisma \
+  --script > org_drift.sql
+```
+
+Review `org_drift.sql` and **scan for destructive statements** before applying —
+`grep -E 'DROP|ALTER COLUMN|SET NOT NULL|ADD COLUMN.*NOT NULL'`. Pure-additive
+output (`CREATE TABLE/TYPE/INDEX`, `ADD VALUE`, nullable `ADD COLUMN`) is safe to
+apply as-is; anything that drops or adds a `NOT NULL` column to a populated table
+needs a backfill plan first. Apply inside a transaction (drive the service's
+generated Prisma client — `node_modules/.prisma/<service>-client` — with
+`$executeRawUnsafe`; see connect-and-debug.md). Re-run the same `migrate diff` with
+`--exit-code` to confirm `IN SYNC`. Repeat per service (`organization`, `user`;
+`event` is MongoDB and unaffected).
+
+### Permanent fix (follow-up, not yet done)
+
+The deploy pipeline must converge the prod DB on every release. Either:
+
+- add a `prisma migrate deploy` step **after baselining** prod (`prisma migrate
+  resolve --applied <each existing migration>` to seed `_prisma_migrations` to match
+  reality), or
+- if staying on the `db push` model, add an explicit `prisma db push` step to deploy.
+
+Until that lands, **every schema change will reproduce this class of outage** and
+must be hand-applied via the diff procedure above.
+
+---
+
 ## General triage order
 
 1. **Is the app up?** `scripts/platform-debug.sh health` → expect `{"status":"ok"}`.

@@ -271,3 +271,17 @@ variable "use_legacy_stack" {
   type        = bool
   default     = true
 }
+
+variable "mailjet_api_key" {
+  description = "Mailjet API key for transactional email. Sourced from the MAILJET_API_KEY GitHub secret via TF_VAR_mailjet_api_key. Empty = email sending disabled."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "mailjet_secret_key" {
+  description = "Mailjet secret key, paired with mailjet_api_key. Sourced from the MAILJET_SECRET_KEY GitHub secret via TF_VAR_mailjet_secret_key."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
