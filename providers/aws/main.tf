@@ -94,6 +94,8 @@ module "secrets" {
   ecr_registry        = module.registry.registry_url
   domain              = local.fqdn
   fqdn                = local.fqdn
+  mailjet_api_key     = var.mailjet_api_key
+  mailjet_secret_key  = var.mailjet_secret_key
   tags                = local.base_tags
 }
 

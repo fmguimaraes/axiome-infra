@@ -125,6 +125,89 @@ psql "$PG"
 scripts/ssm-exec.sh "docker exec axiome-mongo mongosh --quiet --eval 'db.adminCommand({ping:1})'"
 ```
 
+### 5.1 Private RDS (Postgres) via SSM port-forward — connect from your laptop
+
+> **First documented:** 2026-06-23, production. Use this when you need a real SQL
+> session against the production Postgres from your own machine — running a
+> migration, inspecting schema drift, or one-off DDL — rather than via Run Command
+> on the box.
+
+The user/org services do **not** use the Neon `DATABASE_URL` shown above. They point
+at a **private Amazon RDS** instance, `axiome-production-pg`
+(`...rds.amazonaws.com:5432`), referenced by SSM params
+`/production/axiome-production/ORGANIZATION_DATABASE_URL` and `…/USER_DATABASE_URL`.
+
+That instance is **not reachable directly**, and the reasons matter so you don't
+waste time trying:
+
+- `PubliclyAccessible = false`, and its DB subnets have **no internet-gateway
+  route** — a private data tier. A direct `psql`/TCP connect from anywhere outside
+  the VPC returns `No route to host`. Credentials do not change this.
+- It is **standard RDS Postgres, not Aurora**, so there is **no** `aws rds-data
+  execute-statement` Data-API path. There is no pure-CLI way to run SQL against it.
+- Making it reachable "directly" would require adding an IGW route to the prod DB
+  subnets + flipping public access + opening the SG — i.e. putting the production
+  database on the internet. **Don't.**
+
+The supported path is an **SSM port-forward through the prod EC2 box** (already in
+the VPC, already talks to this RDS). No SSH, no inbound ports, no network changes —
+just an `aws ssm` tunnel:
+
+```bash
+# 0. One-time: install the session-manager-plugin (needed for port-forwarding).
+#    No root? Extract the .deb into a local prefix and symlink it onto PATH:
+curl -s -o smp.deb https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_64bit/session-manager-plugin.deb
+dpkg-deb -x smp.deb smp && export PATH="$PWD/smp/usr/local/sessionmanagerplugin/bin:$PATH"
+session-manager-plugin --version   # sanity check
+
+# 1. Find the SSM-managed prod instance (must be "Online"):
+INSTANCE=$(aws ssm describe-instance-information --region eu-west-3 \
+  --query 'InstanceInformationList[0].InstanceId' --output text)
+
+# 2. Open the tunnel: localhost:55432 -> RDS:5432, through the EC2 box. Leave running.
+aws ssm start-session --region eu-west-3 --target "$INSTANCE" \
+  --document-name AWS-StartPortForwardingSessionToRemoteHost \
+  --parameters '{"host":["axiome-production-pg.cfmqsmeou4ci.eu-west-3.rds.amazonaws.com"],"portNumber":["5432"],"localPortNumber":["55432"]}'
+```
+
+Then connect to `127.0.0.1:55432`. **Use `sslmode=require`** (RDS forces TLS; the
+cert CN won't match `localhost`, and `require` encrypts without verifying the host,
+so it works through the tunnel). Reuse the SSM connection string but swap host/port:
+
+```bash
+# Fetch the URL, keep its credentials + ?schema=, point it at the tunnel:
+URL=$(aws ssm get-parameter --region eu-west-3 \
+  --name /production/axiome-production/ORGANIZATION_DATABASE_URL \
+  --with-decryption --query Parameter.Value --output text)
+LOCAL_URL=$(echo "$URL" | sed -E 's#@[^/]+/#@127.0.0.1:55432/#')   # -> ...@127.0.0.1:55432/axiome?sslmode=require&schema=organization_svc
+psql "$LOCAL_URL"
+```
+
+**No `psql`?** Each backend service ships a generated Prisma client you can drive
+with a throwaway Node script — run it from inside `axiome-back/` so `node_modules`
+resolves. Note the per-service client output paths (the root `@prisma/client` is the
+**MongoDB** event-service client; importing it for a Postgres URL fails with
+*"the URL must start with the protocol `mongo`"*):
+
+| Service | Generated client (import path under `axiome-back/`) | SSM param |
+|---|---|---|
+| organization | `./node_modules/.prisma/organization-client/index.js` | `ORGANIZATION_DATABASE_URL` |
+| user | `./node_modules/.prisma/user-client/index.js` *(verify name in its schema's `output`)* | `USER_DATABASE_URL` |
+
+```js
+// axiome-back/probe.mjs  — run: node probe.mjs   (PROBE_URL = the LOCAL_URL above)
+import { PrismaClient } from './node_modules/.prisma/organization-client/index.js';
+const prisma = new PrismaClient({ datasources: { db: { url: process.env.PROBE_URL } } });
+console.log(await prisma.$queryRawUnsafe(
+  `SELECT column_name FROM information_schema.columns
+   WHERE table_schema='organization_svc' AND table_name='workspace_members'`));
+// $executeRawUnsafe for idempotent DDL — see troubleshooting.md "column ... does not exist".
+await prisma.$disconnect();
+```
+
+**Tear down** the tunnel when finished (`Ctrl-C` the `start-session`, or kill it) —
+don't leave a path to prod open.
+
 ---
 
 ## 6. Safety rules

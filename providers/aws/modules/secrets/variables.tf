@@ -66,6 +66,32 @@ variable "fqdn" {
   type        = string
 }
 
+variable "mailjet_api_key" {
+  description = "Mailjet API key for transactional email (user-service EmailService). Empty disables sending; the service falls back to logging links."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "mailjet_secret_key" {
+  description = "Mailjet secret key, paired with mailjet_api_key."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "mailjet_from_email" {
+  description = "Verified Mailjet sender address used as the From of all platform emails."
+  type        = string
+  default     = "contact@axiomebio.com"
+}
+
+variable "mailjet_from_name" {
+  description = "Display name shown on the From of all platform emails."
+  type        = string
+  default     = "Axiome"
+}
+
 variable "tags" {
   type    = map(string)
   default = {}

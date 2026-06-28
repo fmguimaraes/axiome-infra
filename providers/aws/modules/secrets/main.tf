@@ -151,6 +151,48 @@ resource "aws_ssm_parameter" "cors_origins" {
   tags  = var.tags
 }
 
+# Public app URL the backend embeds in transactional emails (password reset,
+# welcome, export, sponsor publish). Without this, EmailService falls back to
+# http://localhost:5173 and every prod email link is broken.
+resource "aws_ssm_parameter" "frontend_url" {
+  name  = "${local.prefix}/FRONTEND_URL"
+  type  = "String"
+  value = "https://${var.fqdn}"
+  tags  = var.tags
+}
+
+# Published only when provided — SSM rejects empty SecureString values, and an
+# absent key simply leaves EmailService in its log-only fallback (no send).
+resource "aws_ssm_parameter" "mailjet_api_key" {
+  count = var.mailjet_api_key != "" ? 1 : 0
+  name  = "${local.prefix}/MAILJET_API_KEY"
+  type  = "SecureString"
+  value = var.mailjet_api_key
+  tags  = var.tags
+}
+
+resource "aws_ssm_parameter" "mailjet_secret_key" {
+  count = var.mailjet_secret_key != "" ? 1 : 0
+  name  = "${local.prefix}/MAILJET_SECRET_KEY"
+  type  = "SecureString"
+  value = var.mailjet_secret_key
+  tags  = var.tags
+}
+
+resource "aws_ssm_parameter" "mailjet_from_email" {
+  name  = "${local.prefix}/MAILJET_FROM_EMAIL"
+  type  = "String"
+  value = var.mailjet_from_email
+  tags  = var.tags
+}
+
+resource "aws_ssm_parameter" "mailjet_from_name" {
+  name  = "${local.prefix}/MAILJET_FROM_NAME"
+  type  = "String"
+  value = var.mailjet_from_name
+  tags  = var.tags
+}
+
 # IAM role for the Lightsail VM to read SSM parameters. Only created for the
 # legacy Lightsail compute path (var.create_lightsail_iam). The EC2/HDS stack
 # uses its own instance profile (modules/compute-ec2), so this is not created.
