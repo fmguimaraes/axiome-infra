@@ -147,6 +147,9 @@ services:
       RABBITMQ_URL: amqp://${RABBITMQ_USER:-axiome}:${RABBITMQ_PASSWORD:-axiome_local_dev}@rabbitmq:5672
       REDIS_URL: redis://redis:6379
       S3_ENDPOINT: http://minio:9000
+      # Browser-facing presigned URLs (upload/download) must use the published
+      # host — the browser can't resolve the in-Docker `minio` hostname.
+      S3_PUBLIC_ENDPOINT: http://localhost:9000
       S3_ACCESS_KEY: ${S3_ACCESS_KEY:-minioadmin}
       S3_SECRET_KEY: ${S3_SECRET_KEY:-minioadmin}
       S3_BUCKET_ARTIFACTS: axiome-local-artifacts
