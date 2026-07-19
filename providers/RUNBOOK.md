@@ -57,6 +57,22 @@ AWS list prices, eu-west-3, USD (before EUR/VAT). Greenfield production = `use_h
 - **Additive:** a **DynamoDB adapter** behind the event-service repository interface — optional, never the sole backend (NFR3).
 - **Remaining (backend code, axiome-back):** introduce the provider-neutral repository interface in `event-service` with shared contract tests. This is application code (TypeScript) and is the substantive open work for AXI-955.
 
+## Pilot-tenant data segregation (AXI-1004 / FR10 / NFR2)
+
+Minimal single-tenant object-store + DB segregation — see `providers/aws/db/README.md`
+for the full picture. Short version:
+
+- **Object store:** the per-environment S3 bucket set (`artifacts`/`uploads`/`system`)
+  and its IAM scoping already are the pilot tenant's dedicated namespace — no
+  further action needed.
+- **DB:** run `providers/aws/db/01_pilot_tenant_app_role.sql` once per environment
+  (after `terraform apply` + Prisma migrations) to create the least-privilege
+  `axiome_app` role. `terraform apply` alone is not sufficient — the SQL step is a
+  **manual, one-time follow-up** per environment (same pattern as
+  `analytics/funnels/00_metabase_readonly_role.sql`), and app containers need a
+  restart afterward to pick up the new `DATABASE_URL`/`USER_DATABASE_URL`/
+  `ORGANIZATION_DATABASE_URL` SSM values.
+
 ## Evidence & qualification (FR13 / FR14)
 
 - `scripts/generate-hds-report.sh <provider> <env>` — HDS evidence report → `axiome-docs/reports/infra/` (sensitive outputs redacted, fail-closed).

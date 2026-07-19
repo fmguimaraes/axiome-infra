@@ -7,6 +7,18 @@ resource "random_password" "db" {
   special = false
 }
 
+# Least-privilege pilot-tenant runtime role (FR10 / NFR2 / AC8). The master user/
+# password above are admin-only (schema migrations, one-off ops) and are never
+# published to the app's runtime secrets — see modules/secrets, which wires
+# app_runtime_connection_string (not `connection_string`) into DATABASE_URL /
+# USER_DATABASE_URL / ORGANIZATION_DATABASE_URL. Terraform only generates the
+# password; db/01_pilot_tenant_app_role.sql creates the role and its schema-scoped
+# grants (run once per environment — see that file's header).
+resource "random_password" "app_runtime" {
+  length  = 24
+  special = false
+}
+
 resource "aws_db_subnet_group" "this" {
   name       = "${var.naming_prefix}-pg"
   subnet_ids = var.subnet_ids

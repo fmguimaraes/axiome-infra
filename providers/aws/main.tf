@@ -82,7 +82,11 @@ module "secrets" {
   create_lightsail_iam = var.use_legacy_stack
 
   # Legacy stack -> Neon/Atlas; new HDS stack -> RDS + in-region Mongo + ElastiCache (FR2/FR3/FR5).
-  postgres_url        = var.use_legacy_stack ? try(module.database_neon[0].connection_string, "") : try(module.database_rds[0].connection_string, "")
+  postgres_url = var.use_legacy_stack ? try(module.database_neon[0].connection_string, "") : try(module.database_rds[0].connection_string, "")
+  # Least-privilege pilot-tenant role (FR10/NFR2/AC8) — only exists on the RDS/HDS
+  # path (see db/01_pilot_tenant_app_role.sql). Empty on the legacy Neon path, which
+  # falls back to postgres_url (master) inside modules/secrets.
+  postgres_app_url    = var.use_legacy_stack ? "" : try(module.database_rds[0].app_runtime_connection_string, "")
   mongodb_url         = var.use_legacy_stack ? try(module.database_atlas[0].connection_string, "") : ""
   use_inregion_mongo  = !var.use_legacy_stack
   redis_url           = var.use_hds_data_stack ? try(module.cache_redis[0].redis_url, "") : ""

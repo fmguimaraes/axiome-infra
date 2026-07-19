@@ -67,6 +67,18 @@ output "rds_endpoint" {
   value       = try(module.database_rds[0].endpoint, null)
 }
 
+output "rds_connection_string_admin" {
+  description = "Master (admin) RDS connection string, for one-off operator use only — e.g. running providers/aws/db/01_pilot_tenant_app_role.sql. Never wired into app runtime secrets (FR10/NFR2). null until use_hds_data_stack = true."
+  value       = try(module.database_rds[0].connection_string, null)
+  sensitive   = true
+}
+
+output "rds_app_runtime_password" {
+  description = "Password for the least-privilege pilot-tenant role (FR10/NFR2), needed as the -v app_password= argument when running providers/aws/db/01_pilot_tenant_app_role.sql. null until use_hds_data_stack = true."
+  value       = try(module.database_rds[0].app_runtime_password, null)
+  sensitive   = true
+}
+
 output "redis_endpoint" {
   description = "ElastiCache primary endpoint. null until use_hds_data_stack = true."
   value       = try(module.cache_redis[0].primary_endpoint, null)
