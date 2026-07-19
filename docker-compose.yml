@@ -154,7 +154,7 @@ services:
       S3_SECRET_KEY: ${S3_SECRET_KEY:-minioadmin}
       S3_BUCKET_ARTIFACTS: axiome-local-artifacts
       S3_BUCKET_UPLOADS: axiome-local-uploads
-      S3_REGION: us-east-1
+      S3_REGION: eu-west-3
       S3_FORCE_PATH_STYLE: "true"
       BIO_COMPUTE_URL: http://biocompute:8000
       CALLBACK_BASE_URL: http://backend:3004
