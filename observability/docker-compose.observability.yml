@@ -10,7 +10,57 @@ services:
     restart: unless-stopped
     volumes:
       - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/alerts.yml:/etc/prometheus/alerts.yml:ro
       - prometheus_data:/prometheus
+    networks: [axiome-network]
+
+  # Actionable alarms (FR12 / AC12) — evaluates observability/alerts.yml and forwards
+  # to the on-call webhook. The receiver URL is injected from the secrets store, never
+  # hard-coded (see alertmanager.yml.tpl); busybox `sh`/`sed` renders it at start.
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    restart: unless-stopped
+    volumes:
+      - ./observability/alertmanager.yml.tpl:/etc/alertmanager/alertmanager.yml.tpl:ro
+      - alertmanager_data:/alertmanager
+    environment:
+      ALERTMANAGER_RECEIVER_WEBHOOK_URL: ${ALERTMANAGER_RECEIVER_WEBHOOK_URL:?set via secrets store}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        sed "s|__WEBHOOK_URL__|$${ALERTMANAGER_RECEIVER_WEBHOOK_URL}|g" /etc/alertmanager/alertmanager.yml.tpl > /tmp/alertmanager.yml &&
+        exec /bin/alertmanager --config.file=/tmp/alertmanager.yml --storage.path=/alertmanager
+    networks: [axiome-network]
+
+  # Host-level metrics (FR12 — disk capacity). Read-only host mount; no write access.
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    restart: unless-stopped
+    command:
+      - --path.rootfs=/host
+      - --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)
+    volumes:
+      - /:/host:ro,rslave
+    networks: [axiome-network]
+
+  # Per-container health/restart metrics (FR12 — container/service health). Read-only
+  # mounts only — no `privileged: true` (NFR5).
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    restart: unless-stopped
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+    networks: [axiome-network]
+
+  # HTTPS reachability + TLS-cert-expiry probing (FR12 — TLS-cert expiry).
+  blackbox-exporter:
+    image: prom/blackbox-exporter:v0.25.0
+    restart: unless-stopped
+    volumes:
+      - ./observability/blackbox-config.yml:/etc/blackbox_exporter/config.yml:ro
     networks: [axiome-network]
 
   loki:
@@ -45,6 +95,7 @@ services:
 
 volumes:
   prometheus_data:
+  alertmanager_data:
   loki_data:
   grafana_data:
 

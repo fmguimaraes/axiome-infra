@@ -285,3 +285,17 @@ variable "mailjet_secret_key" {
   default     = ""
   sensitive   = true
 }
+
+# ---------------- Alerting (FR12 / AC12) ----------------
+
+variable "alert_email" {
+  description = "Email address subscribed to the operational-alarms SNS topic(s). Sourced from a per-env GitHub secret via TF_VAR_alert_email (never hard-coded in tfvars). Empty = no email subscription — the SNS topic still exists and can be subscribed to another protocol (Slack/PagerDuty/Opsgenie) after apply."
+  type        = string
+  default     = ""
+}
+
+variable "alert_disk_threshold_percent" {
+  description = "EC2 root-volume disk_used_percent threshold that pages on-call (FR12)."
+  type        = number
+  default     = 85
+}

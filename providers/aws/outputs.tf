@@ -93,3 +93,15 @@ output "acm_validation_records" {
   description = "DNS records to add at the registrar for ACM validation (paste into Microsoft 365)."
   value       = try(module.edge[0].acm_validation_records, [])
 }
+
+# ---------------- Alerting outputs (FR12 / AC12) ----------------
+
+output "alerts_sns_topic_arn" {
+  description = "SNS topic ARN receiving operational alarms (disk, EC2/RDS/ElastiCache health, RDS backup failure). Subscribe additional protocols after apply if alert_email wasn't set."
+  value       = module.alerting.sns_topic_arn
+}
+
+output "acm_alerts_sns_topic_arn" {
+  description = "us-east-1 SNS topic ARN receiving ACM certificate approaching-expiry notifications. null unless use_cloudfront_edge = true."
+  value       = module.alerting.acm_sns_topic_arn
+}

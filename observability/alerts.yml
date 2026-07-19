@@ -1,0 +1,52 @@
+# Prometheus alerting rules (FR12 / AC12) — disk capacity, container/service health,
+# TLS-cert expiry. Backup success/failure for the stores that actually have automated
+# backups today is wired at the provider level instead (AWS: RDS event subscription in
+# providers/aws/modules/alerting — RDS is the only store with automated backups until
+# AXI-113/FR1 lands). Add a BackupJobFailed rule here once a backup job exports a
+# `backup_last_success_timestamp` metric.
+groups:
+  - name: axiome-operational-alarms
+    rules:
+      - alert: DiskSpaceLow
+        expr: (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay"}) < 0.15
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Disk space low on {{ $labels.instance }} ({{ $labels.mountpoint }})"
+          description: "Less than 15% free space remaining on {{ $labels.mountpoint }}. Investigate before the disk fills and the host stops accepting writes."
+
+      - alert: ServiceDown
+        expr: up{job="axiome-services"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.instance }} is down"
+          description: "Prometheus has failed to scrape {{ $labels.instance }} for 2 minutes — the service is likely crashed or unreachable."
+
+      - alert: ContainerRestartingTooOften
+        expr: changes(container_start_time_seconds{name!=""}[15m]) > 2
+        labels:
+          severity: warning
+        annotations:
+          summary: "Container {{ $labels.name }} is restarting repeatedly"
+          description: "{{ $labels.name }} has restarted more than twice in the last 15 minutes — check container logs for a crash loop."
+
+      - alert: TLSCertExpiringSoon
+        expr: (probe_ssl_earliest_cert_expiry - time()) / 86400 < 14
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "TLS certificate for {{ $labels.instance }} expires in less than 14 days"
+          description: "Verify Caddy/Let's Encrypt renewal is running (CloudFront/ACM envs auto-renew and are also covered by the EventBridge approaching-expiry alarm)."
+
+      - alert: HTTPSProbeFailed
+        expr: probe_success == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "HTTPS probe failing for {{ $labels.instance }}"
+          description: "blackbox_exporter has been unable to reach {{ $labels.instance }} over HTTPS for 5 minutes."

@@ -1,3 +1,8 @@
+output "instance_id" {
+  description = "RDS instance identifier — used to scope CloudWatch alarms / event subscriptions (FR12)."
+  value       = aws_db_instance.this.id
+}
+
 output "endpoint" {
   value = aws_db_instance.this.address
 }
