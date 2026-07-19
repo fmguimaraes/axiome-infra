@@ -8,7 +8,7 @@
 # Usage:  migrate-data.sh <provider> <environment>
 # Env (never printed):
 #   SOURCE_PG_DSN / TARGET_PG_DSN          Neon -> RDS (per-schema)
-#   SOURCE_MONGO_URI / TARGET_MONGO_URI    Atlas -> in-region Mongo
+#   SOURCE_MONGO_URI / TARGET_MONGO_URI    Mongo dump/restore, either direction
 #   PG_SCHEMAS  (default "user_svc organization_svc")
 set -uo pipefail
 
@@ -37,7 +37,7 @@ else
   echo "   SKIP (SOURCE_PG_DSN/TARGET_PG_DSN/pg_dump not provided)"
 fi
 
-echo "== Mongo migration (Atlas -> in-region) =="
+echo "== Mongo migration =="
 if [ -n "${SOURCE_MONGO_URI:-}" ] && [ -n "${TARGET_MONGO_URI:-}" ] && command -v mongodump >/dev/null 2>&1; then
   TMP="$(mktemp -d)"
   if mongodump --uri="${SOURCE_MONGO_URI}" --archive="${TMP}/dump" >/dev/null 2>&1 \

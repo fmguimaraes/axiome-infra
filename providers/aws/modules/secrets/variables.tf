@@ -12,16 +12,10 @@ variable "postgres_url" {
 }
 
 variable "mongodb_url" {
-  description = "External Mongo URL (Atlas). Used when use_inregion_mongo = false."
+  description = "MongoDB connection string for the event/audit store (Atlas managed replica set — FR3)."
   type        = string
   default     = ""
   sensitive   = true
-}
-
-variable "use_inregion_mongo" {
-  description = "When true, MONGODB_URL targets the in-region self-hosted Mongo container (built from a generated root password), not var.mongodb_url (Atlas) — FR3."
-  type        = bool
-  default     = false
 }
 
 variable "redis_url" {

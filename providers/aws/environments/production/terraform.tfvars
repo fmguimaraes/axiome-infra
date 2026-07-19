@@ -28,11 +28,15 @@ neon_compute_max_cu            = 2.0
 neon_autosuspend_seconds       = 0
 neon_history_retention_seconds = 604800 # 7 days; requires Launch+ (Scale supports up to 30d)
 
-# Atlas — M10 minimum for production multi-tenant
-atlas_org_id         = ""
+# Atlas — event/audit store, M10 minimum for production (dedicated tier: needed for
+# a real replica set + Atlas Cloud Backup; M0/M2/M5 don't offer either). Same Atlas
+# org as dev/staging (one org covers all environments — see variables.tf). Region is
+# EU_WEST_3 (Paris), matching aws_region, to preserve HDS French-region data
+# residency (NFR2) — EU_CENTRAL_1 (Frankfurt) would violate it.
+atlas_org_id         = "6a009f5d529be1fb7cad2dc1"
 atlas_cluster_tier   = "M10"
 atlas_cloud_provider = "AWS"
-atlas_region         = "EU_CENTRAL_1"
+atlas_region         = "EU_WEST_3"
 atlas_mongo_version  = "7.0"
 
 backend_image_tag    = "stable"

@@ -81,10 +81,10 @@ module "secrets" {
   # Lightsail SSM-read role only for the legacy compute path; EC2/HDS uses its own profile.
   create_lightsail_iam = var.use_legacy_stack
 
-  # Legacy stack -> Neon/Atlas; new HDS stack -> RDS + in-region Mongo + ElastiCache (FR2/FR3/FR5).
+  # Legacy stack -> Neon Postgres; new HDS stack -> RDS + ElastiCache (FR2/FR5). Mongo
+  # (event/audit store) is Atlas-managed for every stack — no in-region on-VM node (FR3).
   postgres_url        = var.use_legacy_stack ? try(module.database_neon[0].connection_string, "") : try(module.database_rds[0].connection_string, "")
-  mongodb_url         = var.use_legacy_stack ? try(module.database_atlas[0].connection_string, "") : ""
-  use_inregion_mongo  = !var.use_legacy_stack
+  mongodb_url         = try(module.database_atlas[0].connection_string, "")
   redis_url           = var.use_hds_data_stack ? try(module.cache_redis[0].redis_url, "") : ""
   publish_redis_url   = var.use_hds_data_stack
   s3_artifacts_bucket = module.storage.artifacts_bucket_name
@@ -114,11 +114,14 @@ module "database_neon" {
   history_retention_seconds = var.neon_history_retention_seconds
 }
 
-# ---------------- Database — Atlas (MongoDB) ----------------
+# ---------------- Database — Atlas (MongoDB event/audit store) ----------------
+# Managed, in-region 3-node Atlas replica set for every stack (legacy and HDS) — the
+# event-store's single point of failure was a self-hosted Mongo container on the app
+# VM with no HA and no automated backups (dossier gap G8). Atlas replaces it while
+# keeping the event-store repository interface provider-neutral (FR3/NFR3).
 
 module "database_atlas" {
   source = "./modules/database-atlas"
-  count  = var.use_legacy_stack ? 1 : 0
 
   naming_prefix  = local.naming_prefix
   environment    = var.environment

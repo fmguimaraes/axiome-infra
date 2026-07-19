@@ -95,7 +95,7 @@ Everything lives in **`/opt/axiome`**:
 
 | Path | What |
 |---|---|
-| `/opt/axiome/docker-compose.yml` | The full stack (gateway, user/org/event services, biocompute, frontend, caddy, mongo, redis, rabbitmq) |
+| `/opt/axiome/docker-compose.yml` | The full stack (gateway, user/org/event services, biocompute, frontend, caddy, redis, rabbitmq) |
 | `/opt/axiome/.env` | Runtime config + secrets, rendered from SSM at boot (mode `600`) |
 | `/opt/axiome/Caddyfile` | TLS / reverse proxy |
 
@@ -121,8 +121,12 @@ PG=$(scripts/ssm-exec.sh 'aws ssm get-parameter --region eu-west-3 \
   --query Parameter.Value --output text' | sed '/^==>/d')
 psql "$PG"
 
-# MongoDB — runs as a container on the host:
-scripts/ssm-exec.sh "docker exec axiome-mongo mongosh --quiet --eval 'db.adminCommand({ping:1})'"
+# MongoDB (event/audit store) — Atlas-managed, not a host container (FR3). Connection
+# string is in SSM:
+MONGO=$(scripts/ssm-exec.sh 'aws ssm get-parameter --region eu-west-3 \
+  --name /production/axiome-production/MONGODB_URL --with-decryption \
+  --query Parameter.Value --output text' | sed '/^==>/d')
+mongosh "$MONGO" --eval 'db.adminCommand({ping:1})'
 ```
 
 ### 5.1 Private RDS (Postgres) via SSM port-forward — connect from your laptop

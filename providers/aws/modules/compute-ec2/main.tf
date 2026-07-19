@@ -258,10 +258,11 @@ resource "aws_instance" "main" {
   user_data              = local.cloud_init
 
   # Do NOT replace the instance when cloud-init changes. This is the single live
-  # platform with in-VM state (mongo_data); a cloud-init edit (e.g. adding the
-  # CloudWatch agent) must not trigger a destroy/recreate. The new user_data applies
-  # on the next natural boot; to roll it onto the running box immediately, push the
-  # change via SSM (scripts/ssm-exec.sh) instead of rebuilding.
+  # platform with in-VM state (caddy_data TLS certs, rabbitmq_data, redis_data); a
+  # cloud-init edit (e.g. adding the CloudWatch agent) must not trigger a
+  # destroy/recreate. The new user_data applies on the next natural boot; to roll it
+  # onto the running box immediately, push the change via SSM (scripts/ssm-exec.sh)
+  # instead of rebuilding.
   user_data_replace_on_change = false
 
   # IMDSv2 required; hop limit 2 so containers on the Docker bridge network can
@@ -280,8 +281,8 @@ resource "aws_instance" "main" {
   tags = merge(var.tags, { Name = "${var.naming_prefix}-ec2" })
 
   # Pin the AMI: data.aws_ami.ubuntu uses most_recent, so each new Canonical
-  # release would otherwise force-replace this stateful VM (wiping the in-VM
-  # mongo_data volume + causing downtime). OS patching happens in-place via apt.
+  # release would otherwise force-replace this stateful VM (wiping in-VM state +
+  # causing downtime). OS patching happens in-place via apt.
   lifecycle {
     ignore_changes = [ami]
   }

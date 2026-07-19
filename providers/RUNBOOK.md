@@ -16,7 +16,7 @@ New HDS stack is gated (strangler — runs alongside the live Lightsail/Neon sta
 |---|---|---|
 | `use_hds_data_stack` | `false` | provision VPC + 3-tier SGs + RDS + ElastiCache (CMK-encrypted) |
 | `use_ec2_compute`    | `false` | run the app stack on EC2 in the VPC (Elastic IP) instead of Lightsail |
-| `use_legacy_stack`   | `true`  | keep Lightsail + Neon + Atlas. Set `false` for greenfield / after cutover (destroys/skip them; secrets repoint to RDS / in-region Mongo / ElastiCache) |
+| `use_legacy_stack`   | `true`  | keep Lightsail + Neon (Postgres). Set `false` for greenfield / after cutover (destroys/skips them; secrets repoint Postgres to RDS / ElastiCache — Mongo stays Atlas either way, see S5) |
 | `redis_num_cache_clusters` | `1` | ElastiCache nodes. `1` = single (pilot, cheapest); `2+` = Multi-AZ failover |
 | `enable_nat_gateway` (network module) | `false` | NAT for private-subnet egress. Off by default — RDS/ElastiCache need none and EC2 is in a public subnet. On adds ~$33/mo |
 
@@ -31,13 +31,14 @@ AWS list prices, eu-west-3, USD (before EUR/VAT). Greenfield production = `use_h
 | EC2 | `t3.medium` + 40 GB gp3 | ~$39 |
 | RDS Postgres | `db.t3.micro` single-AZ + 20 GB | ~$16 |
 | ElastiCache | 1× `cache.t3.micro` (`redis_num_cache_clusters=1`) | ~$14 |
+| Atlas Mongo | `M10` dedicated, 3-node replica set (`atlas_cluster_tier`) | ~$60 |
 | KMS / ECR / S3 / DynamoDB / SSM | CMK + images + near-empty buckets | ~$3 |
 | NAT Gateway | **disabled** (`enable_nat_gateway=false`) | $0 |
-| **Total** | pilot sizing | **≈ $75–85 / mo** |
+| **Total** | pilot sizing | **≈ $135–145 / mo** |
 
 - **Cost-optimized for the pilot:** NAT Gateway off (−~$33) and single-node Redis (−~$14) vs. the HA default.
 - **Scale levers:** bump `redis_num_cache_clusters=2` (Multi-AZ, +~$14), larger `rds_instance_class` / `ec2_instance_type`, set `enable_nat_gateway=true` only if a private workload needs egress.
-- Excludes data-transfer-out at scale, backups beyond free allotment, and the Microsoft 365 domain. Observability (Prometheus/Grafana/Loki) runs as containers on the EC2 → no extra AWS line item. Neon/Atlas/Lightsail are **$0** here (gated off).
+- Excludes data-transfer-out at scale, backups beyond free allotment, and the Microsoft 365 domain. Observability (Prometheus/Grafana/Loki) runs as containers on the EC2 → no extra AWS line item. Neon/Lightsail are **$0** here (gated off); Atlas (Mongo) is **not** gated off — AXI-978 moved it in-scope for every stack (see S5).
 
 ## S8 — TLS + DNS (FR7)
 
@@ -51,9 +52,15 @@ AWS list prices, eu-west-3, USD (before EUR/VAT). Greenfield production = `use_h
 - **RabbitMQ:** runs as a **container** on the compute host (cloud-init compose) — FR4. Not a managed service (no Amazon MQ).
 - **Redis:** **managed via AWS ElastiCache** (FR5) — private subnets + data SG, CMK at-rest + TLS in transit; wire the `rediss://` primary endpoint into `REDIS_URL`. OVH/Scaleway use their managed Redis behind the same `REDIS_URL` (Redis-protocol) contract. Module: `modules/cache-redis`.
 
-## S5 — Event store (FR3)
+## S5 — Event store (FR3, revised — AXI-978)
 
-- **Pilot (active):** self-hosted, in-region **MongoDB-compatible** store (container/dedicated), migrated off Atlas SaaS by `scripts/migrate-data.sh` (mongodump/restore). MongoDB compatibility is preserved (non-destructive).
+- **Active:** **MongoDB Atlas** (managed, 3-node replica set, M10+ in production), for every
+  stack (legacy and HDS). The pilot's self-hosted, in-region Mongo container on the app VM
+  (no HA, no automated backups) was the audit-store SPOF closed by this change — the `mongo`
+  compose service and `use_inregion_mongo` wiring are removed; `MONGODB_URL` always resolves
+  to Atlas (`modules/database-atlas`). `scripts/migrate-data.sh` (mongodump/restore,
+  `SOURCE_MONGO_URI`/`TARGET_MONGO_URI`) migrates the in-region volume back to Atlas —
+  same script used for the original off-Atlas cutover, direction-agnostic.
 - **Additive:** a **DynamoDB adapter** behind the event-service repository interface — optional, never the sole backend (NFR3).
 - **Remaining (backend code, axiome-back):** introduce the provider-neutral repository interface in `event-service` with shared contract tests. This is application code (TypeScript) and is the substantive open work for AXI-955.
 
