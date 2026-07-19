@@ -1,0 +1,79 @@
+# Behavior Tracking read layer (AXI-1048 / FR10 / AC4) — Metabase over the
+# deployment's own Postgres. This is the READ half of Behavior Tracking; capture
+# (front-end + ingest + `events` table) lives in axiome-front / axiome-back.
+#
+# Design: capture is uniform across cloud and on-prem; only ACCESS differs. Metabase
+# runs as one container next to the deployment DB and reads the generic
+# `organization_svc.events` table. No third-party egress, no code change to move
+# from cloud to on-prem (point a Metabase at the customer DB once an access path
+# exists — see axiome-docs/04 - architecture/Behavior-Tracking-Architecture.md §6).
+#
+# Compose overlay (alongside the base stack):
+#   docker compose -f docker-compose.yml -f analytics/docker-compose.analytics.yml up -d
+#
+# Then browse http://localhost:${METABASE_PORT:-3001} and add the deployment DB as a
+# read-only data source (see analytics/README.md). The six funnels in analytics/funnels/
+# become saved Metabase questions.
+services:
+  # One-shot: create Metabase's own application database on the shared Postgres.
+  # Metabase stores its questions/dashboards here — kept separate from the `axiome`
+  # data DB so analytics config never mingles with product data.
+  metabase-db-init:
+    image: postgres:15-alpine
+    container_name: axiome-metabase-db-init
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: postgres
+      PGUSER: ${POSTGRES_USER:-axiome}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-axiome_local_dev}
+      MB_APP_DB: ${METABASE_DB:-metabase}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        echo "Ensuring Metabase application database '$${MB_APP_DB}' exists...";
+        psql -tc "SELECT 1 FROM pg_database WHERE datname = '$${MB_APP_DB}'" \
+          | grep -q 1 || psql -c "CREATE DATABASE \"$${MB_APP_DB}\"";
+        echo "Metabase application database ready.";
+    networks:
+      - axiome-network
+
+  metabase:
+    image: metabase/metabase:v0.50.26
+    container_name: axiome-metabase
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      metabase-db-init:
+        condition: service_completed_successfully
+    environment:
+      # Metabase application store — its own Postgres DB on the shared instance.
+      MB_DB_TYPE: postgres
+      MB_DB_DBNAME: ${METABASE_DB:-metabase}
+      MB_DB_HOST: postgres
+      MB_DB_PORT: "5432"
+      MB_DB_USER: ${POSTGRES_USER:-axiome}
+      MB_DB_PASS: ${POSTGRES_PASSWORD:-axiome_local_dev}
+      # Encryption key for stored data-source credentials at rest. Inject a real
+      # secret from the secrets store in cloud/on-prem — never hard-code in prod.
+      MB_ENCRYPTION_SECRET_KEY: ${METABASE_ENCRYPTION_KEY:-local-dev-metabase-key-change-in-production}
+      JAVA_TIMEZONE: UTC
+    ports:
+      - "${METABASE_PORT:-3001}:3000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 90s
+    networks:
+      - axiome-network
+
+networks:
+  axiome-network:
+    external: true
+    name: axiome-local
