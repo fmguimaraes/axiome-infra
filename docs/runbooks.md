@@ -15,6 +15,27 @@ make plan ENV=production
 make apply ENV=production
 ```
 
+### Seed a clean environment to its known baseline
+
+`scripts/seed-environment.sh` (AXI-1001, FR4/FR5/NFR4) is the single codified
+command that brings a clean environment to a known baseline — the system rule
+pack, dataview templates, and the 5 canonical workspace roles/bootstrap admin
+user — and verifies it. It is idempotent (safe to re-run; no duplicate rows)
+and **fails closed**: any expected-vs-actual mismatch exits non-zero and the
+environment is not reported as seeded. It never touches the retrospective
+MIPP dataset — that is the separate FR6 ingestion path.
+
+```bash
+make seed                    # local docker-compose stack
+make seed-env ENV=staging    # deployed environment, via SSM (same access
+                              # model as reset-admin-password.sh)
+```
+
+Preconditions: the target environment's schema must already be migrated to
+the expected baseline (FR8/AXI-1003) — this command seeds data, not schema —
+and, for the local path, `axiome-back` must be checked out as a sibling of
+`axiome-infra` (same layout `make local-up` already assumes).
+
 ### Rotate database credentials
 
 1. Generate new password
