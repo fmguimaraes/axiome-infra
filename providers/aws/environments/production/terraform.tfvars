@@ -28,13 +28,6 @@ neon_compute_max_cu            = 2.0
 neon_autosuspend_seconds       = 0
 neon_history_retention_seconds = 604800 # 7 days; requires Launch+ (Scale supports up to 30d)
 
-# Atlas — M10 minimum for production multi-tenant
-atlas_org_id         = ""
-atlas_cluster_tier   = "M10"
-atlas_cloud_provider = "AWS"
-atlas_region         = "EU_CENTRAL_1"
-atlas_mongo_version  = "7.0"
-
 backend_image_tag    = "stable"
 biocompute_image_tag = "stable"
 frontend_image_tag   = "stable"

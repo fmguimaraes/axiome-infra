@@ -19,13 +19,6 @@ neon_compute_max_cu            = 1.0
 neon_autosuspend_seconds       = 0
 neon_history_retention_seconds = 86400 # 1 day; requires Launch+ (Free max = 21600)
 
-# Atlas — M0 if cost-constrained, M10 for production-shape validation
-atlas_org_id         = "6a009f5d529be1fb7cad2dc1"
-atlas_cluster_tier   = "M0"
-atlas_cloud_provider = "AWS"
-atlas_region         = "EU_CENTRAL_1"
-atlas_mongo_version  = "7.0"
-
 backend_image_tag    = "latest"
 biocompute_image_tag = "latest"
 frontend_image_tag   = "latest"

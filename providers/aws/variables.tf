@@ -113,37 +113,6 @@ variable "neon_history_retention_seconds" {
   default     = 21600
 }
 
-# ---------------- Atlas (MongoDB) ----------------
-
-variable "atlas_org_id" {
-  description = "MongoDB Atlas organization ID. Sourced from console; one Atlas org covers all environments."
-  type        = string
-}
-
-variable "atlas_cluster_tier" {
-  description = "Atlas cluster tier. M0 (free), M2/M5 (shared), M10+ (dedicated)."
-  type        = string
-  default     = "M0"
-}
-
-variable "atlas_cloud_provider" {
-  description = "Atlas underlying cloud provider."
-  type        = string
-  default     = "AWS"
-}
-
-variable "atlas_region" {
-  description = "Atlas region (Atlas naming, e.g., EU_CENTRAL_1 = Frankfurt)."
-  type        = string
-  default     = "EU_CENTRAL_1"
-}
-
-variable "atlas_mongo_version" {
-  description = "MongoDB major version."
-  type        = string
-  default     = "7.0"
-}
-
 # ---------------- Application image tags ----------------
 
 variable "backend_image_tag" {
@@ -288,8 +257,8 @@ variable "use_legacy_stack" {
     Keep the legacy Lightsail compute. Default true. Set false in the final cutover
     step (after the EC2/RDS/ElastiCache stack is live, data migrated with verified
     parity, DNS cut over, and sign-off recorded) to destroy Lightsail declaratively.
-    Decommissioning Neon/Atlas rides with the secrets rewire (their connection strings
-    feed the secrets module) — see providers/RUNBOOK.md.
+    Decommissioning Neon rides with the secrets rewire (its connection string feeds
+    the secrets module) — see providers/RUNBOOK.md.
   EOT
   type        = bool
   default     = true
