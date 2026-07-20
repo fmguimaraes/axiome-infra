@@ -13,8 +13,15 @@ variable "db_name" {
 }
 
 variable "username" {
-  type    = string
-  default = "axiome"
+  description = "RDS master user. Admin/migration use only — never handed to application containers (FR10/NFR2; see app_runtime_username)."
+  type        = string
+  default     = "axiome"
+}
+
+variable "app_runtime_username" {
+  description = "Least-privilege Postgres role for application runtime traffic (user-service, organization-service, bio-compute), scoped to the pilot tenant's own schemas only — no CREATE/DROP, no superuser, no cross-schema access (FR10/NFR2/AC8). Distinct from `username` (RDS master). Terraform only generates this role's password; the role itself is created by db/01_pilot_tenant_app_role.sql (no `postgresql` provider is configured in this repo — see CONTRACT.md)."
+  type        = string
+  default     = "axiome_app"
 }
 
 variable "engine_version" {
