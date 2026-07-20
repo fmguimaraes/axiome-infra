@@ -1,4 +1,4 @@
 # Managed by CI/CD pipeline — do not edit manually
 backend_image_tag    = "54dd1857"
-biocompute_image_tag = "f00f4cda"
+biocompute_image_tag = "cee18176"
 frontend_image_tag   = "b8668861"
