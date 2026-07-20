@@ -19,11 +19,22 @@ variable "aws_region" {
   default     = "eu-west-3"
 }
 
-variable "create_ecr_repositories" {
-  description = "Whether this env's apply manages the ECR repositories. ECR repos are account-level shared across envs, so exactly one env should own them. Default null = use the legacy rule (production owns)."
-  type        = bool
-  default     = null
-  nullable    = true
+variable "shared_state_bucket" {
+  description = "S3 bucket holding the dedicated shared/account-level Terraform state (ECR, etc. — see ../shared). Read-only from here via terraform_remote_state; no per-environment root ever creates these resources (FR8/AC8)."
+  type        = string
+  default     = "axiome-shared-tfstate"
+}
+
+variable "shared_state_key" {
+  description = "State object key within shared_state_bucket."
+  type        = string
+  default     = "infrastructure/terraform.tfstate"
+}
+
+variable "shared_state_region" {
+  description = "Region of shared_state_bucket."
+  type        = string
+  default     = "eu-west-3"
 }
 
 variable "domain" {

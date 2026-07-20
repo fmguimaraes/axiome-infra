@@ -59,15 +59,19 @@ module "storage" {
 }
 
 # ---------------- Registry (ECR) ----------------
-# ECR repositories are shared across environments at the AWS account level.
-# Only the production environment creates them; dev/staging reuse via data sources.
+# ECR repositories are account-shared and owned by the dedicated `../shared` state
+# (FR8/AC8) — never by a per-environment (dev/staging/production) state, so a stray
+# dev apply/destroy can no longer touch production's images. Every environment reads
+# the registry URL / pull role from that state; none of them create it.
 
-module "registry" {
-  source = "./modules/registry"
+data "terraform_remote_state" "shared" {
+  backend = "s3"
 
-  create_repositories = coalesce(var.create_ecr_repositories, var.environment == "production")
-  project_name        = var.project_name
-  tags                = local.base_tags
+  config = {
+    bucket = var.shared_state_bucket
+    key    = var.shared_state_key
+    region = var.shared_state_region
+  }
 }
 
 # ---------------- Secrets (SSM Parameter Store) ----------------
@@ -91,7 +95,7 @@ module "secrets" {
   s3_uploads_bucket   = module.storage.uploads_bucket_name
   s3_system_bucket    = module.storage.system_bucket_name
   s3_region           = var.aws_region
-  ecr_registry        = module.registry.registry_url
+  ecr_registry        = data.terraform_remote_state.shared.outputs.registry_url
   domain              = local.fqdn
   fqdn                = local.fqdn
   mailjet_api_key     = var.mailjet_api_key
@@ -178,7 +182,7 @@ module "compute_ec2" {
   app_security_group_id = module.network[0].app_security_group_id
   key_name              = var.lightsail_key_pair_name
   ssm_parameter_prefix  = module.secrets.parameter_prefix
-  ecr_registry          = module.registry.registry_url
+  ecr_registry          = data.terraform_remote_state.shared.outputs.registry_url
   fqdn                  = local.fqdn
   data_cmk_arn          = module.kms.key_arn
   backend_image_tag     = var.backend_image_tag
@@ -220,8 +224,8 @@ module "compute" {
 
   ssm_parameter_prefix = module.secrets.parameter_prefix
   ssm_iam_role_arn     = module.secrets.lightsail_iam_role_arn
-  ecr_registry         = module.registry.registry_url
-  ecr_pull_role_arn    = module.registry.pull_role_arn
+  ecr_registry         = data.terraform_remote_state.shared.outputs.registry_url
+  ecr_pull_role_arn    = data.terraform_remote_state.shared.outputs.pull_role_arn
 
   backend_image_tag    = var.backend_image_tag
   biocompute_image_tag = var.biocompute_image_tag

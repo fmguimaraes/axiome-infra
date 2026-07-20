@@ -2,10 +2,8 @@ environment  = "dev"
 project_name = "axiome"
 aws_region   = "eu-west-3"
 
-# ECR repos are account-level shared. Dev owns them since it's the first env bootstrapped.
-# When staging/production are added later, they should NOT manage the same repos —
-# leave create_ecr_repositories unset (or = false) in their tfvars.
-create_ecr_repositories = true
+# ECR repos are account-level shared, owned by the dedicated ../shared Terraform
+# state (FR8/AC8) — dev no longer creates or manages them.
 
 # Domain — DNS is managed manually at Microsoft 365 (see providers/aws/README.md §0.4).
 # After apply, retrieve lightsail_static_ip from outputs and create the matching A record.
