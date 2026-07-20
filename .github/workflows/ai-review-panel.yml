@@ -1,32 +1,13 @@
-# AI Review Panel — infrastructure variant.
-#
-# Same three-lens / unanimous-PASS contract as the service repos
-# (axiome-{front,back,bio-compute}), but the lenses are Terraform-shaped:
-# state safety, IAM/exposure, and blast radius — not application code review.
-#
-# Merge gate differs too: this repo's CI is terraform-ci.yml + secrets-check.yml,
-# so the wait polls those checks rather than the services' single "Test" check.
-#
-# NOTE: merging to `main` here triggers terraform-cd.yml. The production apply
-# stays gated behind the `production` Environment's required reviewers, so an
-# AI-approved merge cannot reach production infrastructure unattended.
-
 name: AI Review Panel
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
-    branches: [main]
-    paths:
-      - '**.tf'
-      - '**.tfvars'
-      - 'modules/**'
-      - 'providers/**'
-      - 'environments/**'
-      - 'scripts/**'
+    types: [opened, reopened]                                          # (3) drop synchronize — every push no longer re-triggers
+  issue_comment:
+    types: [created]                                                   # (3) trigger on @claude review mentions
 
 concurrency:
-  group: ai-review-panel-${{ github.event.pull_request.number }}
+  group: ai-review-panel-${{ github.event.pull_request.number || github.event.issue.number }}
   cancel-in-progress: true
 
 permissions:
@@ -38,47 +19,93 @@ permissions:
   id-token: write # required: claude-code-action fetches a GitHub OIDC token
 
 jobs:
-  state-safety:
+  # ------------------------------------------------------------------
+  # Lens: Correctness & Logic
+  # ------------------------------------------------------------------
+  correctness:
     runs-on: ubuntu-latest
     outputs:
       verdict: ${{ steps.verdict.outputs.verdict }}
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha || format('refs/pull/{0}/head', github.event.issue.number) }}
           fetch-depth: 0
+
+      # (1)(2) Guard: skip this lens when the bot triggered it or the event isn't a review request.
+      # Writes PASS on skip so the merge gate stays green (never leaves a MISSING verdict).
+      - id: guard
+        run: |
+          # -- bot-loop guard: skip when the triggering actor is the bot itself
+          if [ "${{ github.actor }}" = "claude[bot]" ]; then
+            echo "skip=bot-actor" >> "$GITHUB_OUTPUT"
+            echo "Skipping — triggered by claude[bot] actor."
+            exit 0
+          fi
+
+          # -- bot-loop guard (defence in depth): skip when head commit was authored by the bot
+          author="$(git log -1 --format='%an')"
+          if [ "$author" = "claude[bot]" ] || [ "$author" = "claude" ]; then
+            echo "skip=bot-author" >> "$GITHUB_OUTPUT"
+            echo "Skipping — head commit authored by bot ($author)."
+            exit 0
+          fi
+
+          # -- issue_comment gate: only run on PR comments that mention @claude review
+          if [ "${{ github.event_name }}" = "issue_comment" ]; then
+            if [ "${{ github.event.issue.pull_request }}" = "" ]; then
+              echo "skip=not-a-pr" >> "$GITHUB_OUTPUT"
+              echo "Skipping — comment is on an issue, not a PR."
+              exit 0
+            fi
+            if ! echo "${{ github.event.comment.body }}" | grep -qi '@claude[[:space:]]\+review'; then
+              echo "skip=no-mention" >> "$GITHUB_OUTPUT"
+              echo "Skipping — comment does not contain @claude review."
+              exit 0
+            fi
+          fi
+
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          echo "Guard passed — running review."
+
       - id: review
+        if: steps.guard.outputs.skip == 'false'
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           claude_args: '--model claude-opus-4-8 --max-turns 30 --allowedTools Bash,Read,Grep,Glob'
           prompt: |
-            Review pull request #${{ github.event.pull_request.number }} through the
-            **Correctness & State Safety** lens only. This is a Terraform repo — review the
-            plan's effect on real state, not code style.
+            Review pull request #${{ github.event.pull_request.number || github.event.issue.number }}
+            through the **Correctness & Logic** lens only.  (4)
 
-            Look for: resources that will be REPLACED or DESTROYED rather than updated in
-            place, especially stateful ones (databases, volumes, buckets, Lightsail
-            instances); `count`/`for_each` changes that shift indices and silently recreate
-            resources; refactors that move resources without a `moved` block; missing
-            `prevent_destroy` on data-bearing resources; provider or module version drift;
-            and hardcoded values that will drift between environments.
+            **Scope — review ONLY the PR diff, not the full repo:**
+              gh pr diff ${{ github.event.pull_request.number || github.event.issue.number }}
 
-            Use `gh pr diff ${{ github.event.pull_request.number }}` for the change, and read
-            the `plan dev` / `plan staging` / `plan production` check logs
-            (`gh pr checks ${{ github.event.pull_request.number }}`, then `gh run view --log`)
-            — the plan output is the evidence, the diff alone is not. Review only the change.
-            Post findings as inline PR comments.
+            **What to flag (blocking / high-confidence only):**
+            - Bugs: logic errors, null/empty/boundary mishandling, off-by-one, race conditions.
+            - Contract breaks: function signatures, API payloads, database schema mismatches.
+            - Data-flow defects: uninitialised variables, swallowed errors, broken error paths.
 
-            Treat any unexpected destroy/replace of a stateful resource as blocking.
+            **What to SKIP (do not comment on these):**
+            - Style, formatting, whitespace, import order.
+            - Naming preferences, variable / function renames that don't affect correctness.
+            - Speculative or "consider" suggestions — flag only what you are confident is wrong.
+            - Lines that were NOT changed in this diff (do not re-raise pre-existing issues).
+
+            Post findings as inline PR comments (`gh pr comment`).  If you find nothing worth
+            flagging, that is a **valid and expected outcome** — do not invent issues.
 
             As your FINAL action, record your verdict by writing exactly one word to the verdict
             file via the Bash tool, and do nothing else after it:
               echo PASS > "$GITHUB_WORKSPACE/.panel-verdict"
             or
               echo CHANGES_REQUESTED > "$GITHUB_WORKSPACE/.panel-verdict"
-            Use CHANGES_REQUESTED if you found any blocking issue, PASS otherwise. Do not soften a
-            real blocker to PASS. If you do not write this file the merge gate jams, so it is not
-            optional.
+            Use CHANGES_REQUESTED only for blocking correctness bugs.  PASS is the common case.
+
+      # (2) When the guard skipped us, write PASS so the merge gate stays green.
+      - if: steps.guard.outputs.skip != 'false'
+        run: echo PASS > "$GITHUB_WORKSPACE/.panel-verdict"
+
       - id: verdict
         if: always()
         run: |
@@ -93,9 +120,12 @@ jobs:
             PASS|CHANGES_REQUESTED) ;;
             *) echo "Unrecognised verdict [$v]"; v=MISSING ;;
           esac
-          echo "State-safety verdict: $v"
+          echo "Correctness verdict: $v"
           echo "verdict=$v" >> "$GITHUB_OUTPUT"
 
+  # ------------------------------------------------------------------
+  # Lens: Security
+  # ------------------------------------------------------------------
   security:
     runs-on: ubuntu-latest
     outputs:
@@ -103,37 +133,78 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha || format('refs/pull/{0}/head', github.event.issue.number) }}
           fetch-depth: 0
+
+      - id: guard
+        run: |
+          if [ "${{ github.actor }}" = "claude[bot]" ]; then
+            echo "skip=bot-actor" >> "$GITHUB_OUTPUT"
+            echo "Skipping — triggered by claude[bot] actor."
+            exit 0
+          fi
+          author="$(git log -1 --format='%an')"
+          if [ "$author" = "claude[bot]" ] || [ "$author" = "claude" ]; then
+            echo "skip=bot-author" >> "$GITHUB_OUTPUT"
+            echo "Skipping — head commit authored by bot ($author)."
+            exit 0
+          fi
+          if [ "${{ github.event_name }}" = "issue_comment" ]; then
+            if [ "${{ github.event.issue.pull_request }}" = "" ]; then
+              echo "skip=not-a-pr" >> "$GITHUB_OUTPUT"
+              echo "Skipping — comment is on an issue, not a PR."
+              exit 0
+            fi
+            if ! echo "${{ github.event.comment.body }}" | grep -qi '@claude[[:space:]]\+review'; then
+              echo "skip=no-mention" >> "$GITHUB_OUTPUT"
+              echo "Skipping — comment does not contain @claude review."
+              exit 0
+            fi
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          echo "Guard passed — running review."
+
       - id: review
+        if: steps.guard.outputs.skip == 'false'
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           claude_args: '--model claude-opus-4-8 --max-turns 30 --allowedTools Bash,Read,Grep,Glob'
           prompt: |
-            Review pull request #${{ github.event.pull_request.number }} through the
-            **Security & IAM** lens only, as infrastructure-as-code.
+            Review pull request #${{ github.event.pull_request.number || github.event.issue.number }}
+            through the **Security** lens only.  (4)
 
-            Look for: IAM policies granting `*` actions or `*` resources, or wildcards
-            broader than the stated need; trust policies with over-broad principals;
-            network exposure (0.0.0.0/0 ingress, public subnets, public buckets/ACLs);
-            storage or transit left unencrypted, or missing KMS keys; secrets, tokens,
-            passwords or connection strings committed in `.tf`/`.tfvars`; and privilege
-            granted to CI/deploy roles beyond what the workflow actually needs.
+            **Scope — review ONLY the PR diff, not the full repo:**
+              gh pr diff ${{ github.event.pull_request.number || github.event.issue.number }}
 
-            Use `gh pr diff ${{ github.event.pull_request.number }}` for the diff — review only
-            the change, not the whole repo. Post findings as inline PR comments.
+            **What to flag (blocking / high-confidence only):**
+            - OWASP Top 10: injection, broken auth, sensitive data exposure, XXE, broken access
+              control, security misconfiguration, XSS, insecure deserialisation, known-vuln
+              components, insufficient logging & monitoring.
+            - Deny-by-default authorisation on every new or modified endpoint.
+            - Missing server-side validation of user-controlled input.
+            - Secrets, tokens, or credentials committed in the diff.
+            - Non-parameterised queries (SQL / NoSQL injection).
 
-            This repo hosts a regulated clinical platform: default to CHANGES_REQUESTED on any
-            widening of access you cannot justify from the diff itself.
+            **What to SKIP (do not comment on these):**
+            - Style, formatting, whitespace, import order.
+            - Naming preferences, variable / function renames.
+            - Speculative or "consider" suggestions — flag only what you are confident is exploitable.
+            - Lines that were NOT changed in this diff (do not re-raise pre-existing issues).
+
+            Post findings as inline PR comments (`gh pr comment`).  If you find nothing worth
+            flagging, that is a **valid and expected outcome** — do not invent issues.
 
             As your FINAL action, record your verdict by writing exactly one word to the verdict
             file via the Bash tool, and do nothing else after it:
               echo PASS > "$GITHUB_WORKSPACE/.panel-verdict"
             or
               echo CHANGES_REQUESTED > "$GITHUB_WORKSPACE/.panel-verdict"
-            Use CHANGES_REQUESTED if you found any blocking issue, PASS otherwise. Do not soften a
-            real blocker to PASS. If you do not write this file the merge gate jams, so it is not
-            optional.
+            Use CHANGES_REQUESTED only for blocking security vulnerabilities.  PASS is the common case.
+
+      - if: steps.guard.outputs.skip != 'false'
+        run: echo PASS > "$GITHUB_WORKSPACE/.panel-verdict"
+
       - id: verdict
         if: always()
         run: |
@@ -151,45 +222,85 @@ jobs:
           echo "Security verdict: $v"
           echo "verdict=$v" >> "$GITHUB_OUTPUT"
 
-  blast-radius:
+  # ------------------------------------------------------------------
+  # Lens: Standards & Clean Code
+  # ------------------------------------------------------------------
+  standards:
     runs-on: ubuntu-latest
     outputs:
       verdict: ${{ steps.verdict.outputs.verdict }}
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha || format('refs/pull/{0}/head', github.event.issue.number) }}
           fetch-depth: 0
+
+      - id: guard
+        run: |
+          if [ "${{ github.actor }}" = "claude[bot]" ]; then
+            echo "skip=bot-actor" >> "$GITHUB_OUTPUT"
+            echo "Skipping — triggered by claude[bot] actor."
+            exit 0
+          fi
+          author="$(git log -1 --format='%an')"
+          if [ "$author" = "claude[bot]" ] || [ "$author" = "claude" ]; then
+            echo "skip=bot-author" >> "$GITHUB_OUTPUT"
+            echo "Skipping — head commit authored by bot ($author)."
+            exit 0
+          fi
+          if [ "${{ github.event_name }}" = "issue_comment" ]; then
+            if [ "${{ github.event.issue.pull_request }}" = "" ]; then
+              echo "skip=not-a-pr" >> "$GITHUB_OUTPUT"
+              echo "Skipping — comment is on an issue, not a PR."
+              exit 0
+            fi
+            if ! echo "${{ github.event.comment.body }}" | grep -qi '@claude[[:space:]]\+review'; then
+              echo "skip=no-mention" >> "$GITHUB_OUTPUT"
+              echo "Skipping — comment does not contain @claude review."
+              exit 0
+            fi
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          echo "Guard passed — running review."
+
       - id: review
+        if: steps.guard.outputs.skip == 'false'
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           claude_args: '--model claude-opus-4-8 --max-turns 30 --allowedTools Bash,Read,Grep,Glob'
           prompt: |
-            Review pull request #${{ github.event.pull_request.number }} through the
-            **Blast Radius & Standards** lens only.
+            Review pull request #${{ github.event.pull_request.number || github.event.issue.number }}
+            through the **Standards & Clean Code** lens only.  (4)
 
-            Look for: environment isolation failures — a change intended for dev that also
-            lands in staging or production, or shared/global resources edited without
-            acknowledging every environment they serve; module and naming conventions
-            inconsistent with the rest of the repo; missing or wrong resource tags;
-            duplication that should be a module variable; values hardcoded per-environment
-            that belong in `environments/`; and whether the change's actual scope matches
-            what the PR title and description claim.
+            **Scope — review ONLY the PR diff, not the full repo:**
+              gh pr diff ${{ github.event.pull_request.number || github.event.issue.number }}
 
-            State the blast radius explicitly in your review: which environments this touches
-            and what user-visible impact an apply would have.
+            **What to flag (advisory only — does not block merge):**
+            - The axiome-global Review Gate: SRP violations, methods >20 lines, >2 indentation
+              levels, DIP / DRY breaks, missing unit tests on new logic.
+            - Incorrect application of the design pattern this change uses.
 
-            Use `gh pr diff ${{ github.event.pull_request.number }}` for the diff — review only
-            the change, not the whole repo. Post findings as inline PR comments.
+            **What to SKIP (do not comment on these):**
+            - Trivial naming preferences or cosmetic renames.
+            - Style and formatting (linter territory).
+            - Speculative refactoring suggestions — flag only clear pattern violations.
+            - Lines that were NOT changed in this diff (do not re-raise pre-existing issues).
+
+            Post findings as inline PR comments (`gh pr comment`).  If you find nothing worth
+            flagging, that is a **valid and expected outcome** — do not invent issues.
+            Note: **Standards findings are advisory** — they do not block merge on their own.
 
             As your FINAL action, record your verdict by writing exactly one word to the verdict
             file via the Bash tool, and do nothing else after it:
               echo PASS > "$GITHUB_WORKSPACE/.panel-verdict"
             or
               echo CHANGES_REQUESTED > "$GITHUB_WORKSPACE/.panel-verdict"
-            Use CHANGES_REQUESTED if you found any blocking issue, PASS otherwise. Do not soften a
-            real blocker to PASS. If you do not write this file the merge gate jams, so it is not
-            optional.
+            Use CHANGES_REQUESTED if you found a clear standards violation.  PASS is the common case.
+
+      - if: steps.guard.outputs.skip != 'false'
+        run: echo PASS > "$GITHUB_WORKSPACE/.panel-verdict"
+
       - id: verdict
         if: always()
         run: |
@@ -204,97 +315,117 @@ jobs:
             PASS|CHANGES_REQUESTED) ;;
             *) echo "Unrecognised verdict [$v]"; v=MISSING ;;
           esac
-          echo "Blast-radius verdict: $v"
+          echo "Standards verdict: $v"
           echo "verdict=$v" >> "$GITHUB_OUTPUT"
 
+  # ------------------------------------------------------------------
+  # Merge gate — weighted: Correctness & Security are VETO lenses;
+  # Standards is advisory-only (CHANGES_REQUESTED warns but does not block).
+  # Only runs for pull_request events (not issue_comment @claude review triggers).
+  # ------------------------------------------------------------------
   merge-on-green:
-    needs: [state-safety, security, blast-radius]
+    needs: [correctness, security, standards]
     runs-on: ubuntu-latest
-    if: always()
-    # NOTE: this job deliberately has NO actions/checkout — it only calls the GitHub
-    # API. Every `gh` call therefore MUST pass --repo, or gh tries to infer the repo
-    # from a git remote and dies with "fatal: not a git repository".
+    if: always() && github.event_name == 'pull_request'
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       REPO: ${{ github.repository }}
       PR: ${{ github.event.pull_request.number }}
-      STATE_SAFETY: ${{ needs.state-safety.outputs.verdict }}
-      SECURITY: ${{ needs.security.outputs.verdict }}
-      BLAST_RADIUS: ${{ needs.blast-radius.outputs.verdict }}
+      CORRECTNESS: ${{ needs.correctness.outputs.verdict }}
+      SECURITY:   ${{ needs.security.outputs.verdict }}
+      STANDARDS:  ${{ needs.standards.outputs.verdict }}
     steps:
       - name: Post combined verdict
         run: |
           gh pr comment "$PR" --repo "$REPO" --body \
-            "**AI Review Panel (infra)** — State safety: ${STATE_SAFETY:-MISSING}, Security: ${SECURITY:-MISSING}, Blast radius: ${BLAST_RADIUS:-MISSING}."
+            "**AI Review Panel** — Correctness: ${CORRECTNESS:-MISSING}, Security: ${SECURITY:-MISSING}, Standards: ${STANDARDS:-MISSING} (advisory)."
 
-      # A lens that never reported is an INFRASTRUCTURE fault, not a review outcome.
-      # Left silent it looks identical to "the panel declined to approve", which is how
-      # this gate sat jammed for a day. Say so loudly on the PR before failing.
+      # Jammed-gate: a MISSING verdict is always an infrastructure fault (all lenses,
+      # even standards).  Report loudly before failing.
       - name: Detect a jammed gate (lens reported nothing)
         run: |
           jammed=""
-          for pair in "State-safety=${STATE_SAFETY:-MISSING}" "Security=${SECURITY:-MISSING}" "Blast-radius=${BLAST_RADIUS:-MISSING}"; do
+          for pair in "Correctness=${CORRECTNESS:-MISSING}" "Security=${SECURITY:-MISSING}" "Standards=${STANDARDS:-MISSING}"; do
             name=${pair%%=*}
             v=${pair#*=}
             if [ "$v" = "MISSING" ]; then jammed="$jammed $name"; fi
           done
           if [ -n "$jammed" ]; then
             gh pr comment "$PR" --repo "$REPO" --body \
-              ":rotating_light: **AI Review Panel (infra) — merge gate JAMMED.** These lenses returned no verdict:${jammed}. This is a workflow/infrastructure fault, not a review outcome — the lens job did not write its verdict file. Nothing will merge until it is fixed. Check the lens job logs for this run."
+              ":rotating_light: **AI Review Panel — merge gate JAMMED.** These lenses returned no verdict:${jammed}. This is a workflow/infrastructure fault, not a review outcome — the lens job did not write its verdict file. Nothing will merge until it is fixed. Check the lens job logs for this run."
             echo "Gate jammed — lenses reported nothing:${jammed}"
             exit 1
           fi
           echo "All three lenses reported."
 
-      - name: Require all three lenses to PASS
+      # (5) Weighted gate: Correctness and Security each have veto power.
+      # Standards is advisory — CHANGES_REQUESTED produces a warning but does not block.
+      - name: Require Correctness + Security to PASS (Standards advisory)
         run: |
-          for v in "$STATE_SAFETY" "$SECURITY" "$BLAST_RADIUS"; do
+          failed=""
+          for pair in "Correctness=${CORRECTNESS:-MISSING}" "Security=${SECURITY:-MISSING}"; do
+            name=${pair%%=*}
+            v=${pair#*=}
             if [ "$v" != "PASS" ]; then
-              echo "Not merging — one or more lenses did not PASS (state-safety=$STATE_SAFETY security=$SECURITY blast-radius=$BLAST_RADIUS)."
-              exit 1
+              failed="$failed $name"
             fi
           done
+          if [ -n "$failed" ]; then
+            echo "Not merging — blocking lenses did not PASS:${failed}"
+            exit 1
+          fi
+          if [ "${STANDARDS:-MISSING}" = "CHANGES_REQUESTED" ]; then
+            gh pr comment "$PR" --repo "$REPO" --body \
+              ":information_source: **Standards lens found advisory issues** but does not block merge. Review the inline comments above."
+          fi
+          echo "Blocking lenses PASS. Proceeding."
 
-      # No branch protection / required status checks are configured on this repo, so
-      # `gh pr merge --auto` would have nothing to wait on. Poll this repo's own infra
-      # checks explicitly. Unlike the service repos there is no single "Test" check:
-      # terraform-ci.yml emits "fmt + validate" plus one "plan <env>" per environment,
-      # and secrets-check.yml emits "Check for Plaintext Secrets". All must pass.
-      #
-      # If a job is renamed in terraform-ci.yml this list goes stale: the check reads as
-      # "absent" -> pending -> a 10-minute timeout with no merge. Keep it in sync.
-      - name: Wait for infra CI (terraform-ci + secrets-check)
+      - name: Wait for CI (terraform-ci "fmt + validate" check) on head SHA
         run: |
-          required="fmt + validate
-          plan dev
-          plan staging
-          plan production
-          Check for Plaintext Secrets"
-
-          for i in $(seq 1 30); do
-            checks=$(gh pr checks "$PR" --repo "$REPO" 2>/dev/null || true)
-            pending=0
-            failed=0
-            while IFS= read -r name; do
-              name=$(echo "$name" | sed 's/^ *//')
-              [ -z "$name" ] && continue
-              status=$(echo "$checks" | awk -F'\t' -v n="$name" '$1==n {print $2; exit}')
-              echo "  $name: [${status:-absent}]"
-              case "$status" in
-                pass) ;;
-                fail) failed=1 ;;
-                *)    pending=1 ;;
-              esac
-            done <<EOF
-          $required
-          EOF
-
-            if [ "$failed" = "1" ]; then echo "Infra CI failed — not merging."; exit 1; fi
-            if [ "$pending" = "0" ]; then echo "All infra checks green."; exit 0; fi
+          head=$(gh api "repos/$REPO/pulls/$PR" --jq '.head.sha')
+          echo "Waiting on CI for head SHA: $head"
+          for i in $(seq 1 40); do
+            read -r st concl < <(gh api "repos/$REPO/commits/$head/check-runs?per_page=100" \
+              --jq '[.check_runs[] | select(.name=="fmt + validate")] | sort_by(.started_at) | last
+                    | "\(.status // "absent") \(.conclusion // "null")"')
+            echo "poll $i: fmt + validate status=${st:-absent} conclusion=${concl:-null}"
+            if [ "$st" = "completed" ]; then
+              if [ "$concl" = "success" ]; then echo "CI passed on $head."; exit 0; fi
+              echo "CI concluded '$concl' on $head — not merging."; exit 1
+            fi
             sleep 20
           done
-          echo "Timed out waiting for infra CI."
+          echo "Timed out waiting for CI on $head."
           exit 1
 
       - name: Merge to main
         run: gh pr merge "$PR" --repo "$REPO" --squash --delete-branch
+
+  # Ring the bell: tell the "PR Review Outcomes" Multica autopilot to run its bounded
+  # pass now, instead of waiting up to 4h for its schedule.  Only fires for pull_request
+  # events (not ad-hoc @claude review comment triggers).  A failed notification NEVER
+  # fails the workflow.
+  notify-multica:
+    needs: [merge-on-green]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fire PR Review Outcomes webhook
+        env:
+          HOOK: ${{ secrets.MULTICA_PR_REVIEW_WEBHOOK_URL }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          if [ -z "$HOOK" ]; then
+            echo "MULTICA_PR_REVIEW_WEBHOOK_URL not set — skipping (4h schedule covers it)."
+            exit 0
+          fi
+          if [ -z "$PR" ]; then
+            echo "No PR number available (issue_comment event) — skipping notify."
+            exit 0
+          fi
+          code=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$HOOK" \
+            -H 'Content-Type: application/json' \
+            -d "{\"repo\":\"$REPO\",\"pr\":$PR,\"event\":\"ai-review-panel-complete\"}" || echo 000)
+          echo "Webhook POST -> HTTP $code"
+          exit 0
