@@ -34,7 +34,6 @@ provider "aws" {
 }
 
 provider "neon" {}
-provider "mongodbatlas" {}
 
 # ---------------- KMS (customer-managed key for data-at-rest) ----------------
 
@@ -85,14 +84,14 @@ module "secrets" {
   # Lightsail SSM-read role only for the legacy compute path; EC2/HDS uses its own profile.
   create_lightsail_iam = var.use_legacy_stack
 
-  # Legacy stack -> Neon/Atlas; new HDS stack -> RDS + in-region Mongo + ElastiCache (FR2/FR3/FR5).
+  # Legacy stack -> Neon; new HDS stack -> RDS + ElastiCache (FR2/FR5). Mongo (event
+  # store) is the in-region self-hosted container for every stack — Atlas has been
+  # decommissioned (FR3).
   postgres_url = var.use_legacy_stack ? try(module.database_neon[0].connection_string, "") : try(module.database_rds[0].connection_string, "")
   # Least-privilege pilot-tenant role (FR10/NFR2/AC8) — only exists on the RDS/HDS
   # path (see db/01_pilot_tenant_app_role.sql). Empty on the legacy Neon path, which
   # falls back to postgres_url (master) inside modules/secrets.
   postgres_app_url    = var.use_legacy_stack ? "" : try(module.database_rds[0].app_runtime_connection_string, "")
-  mongodb_url         = var.use_legacy_stack ? try(module.database_atlas[0].connection_string, "") : ""
-  use_inregion_mongo  = !var.use_legacy_stack
   redis_url           = var.use_hds_data_stack ? try(module.cache_redis[0].redis_url, "") : ""
   publish_redis_url   = var.use_hds_data_stack
   s3_artifacts_bucket = module.storage.artifacts_bucket_name
@@ -120,21 +119,6 @@ module "database_neon" {
   compute_max_cu            = var.neon_compute_max_cu
   autosuspend_seconds       = var.neon_autosuspend_seconds
   history_retention_seconds = var.neon_history_retention_seconds
-}
-
-# ---------------- Database — Atlas (MongoDB) ----------------
-
-module "database_atlas" {
-  source = "./modules/database-atlas"
-  count  = var.use_legacy_stack ? 1 : 0
-
-  naming_prefix  = local.naming_prefix
-  environment    = var.environment
-  org_id         = var.atlas_org_id
-  cluster_tier   = var.atlas_cluster_tier
-  cloud_provider = var.atlas_cloud_provider
-  region         = var.atlas_region
-  mongo_version  = var.atlas_mongo_version
 }
 
 # ---------------- HDS data stack (parallel stand-up) — FR1 / FR2 / NFR7 ----------------
@@ -246,7 +230,6 @@ module "compute" {
   depends_on = [
     module.secrets,
     module.database_neon,
-    module.database_atlas,
   ]
 }
 

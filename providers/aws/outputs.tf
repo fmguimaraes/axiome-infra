@@ -29,12 +29,6 @@ output "neon_connection_string" {
   sensitive   = true
 }
 
-output "atlas_connection_string" {
-  description = "Atlas MongoDB SRV connection string (sensitive). null when use_legacy_stack = false."
-  value       = try(module.database_atlas[0].connection_string, null)
-  sensitive   = true
-}
-
 output "s3_artifacts_bucket" {
   description = "S3 artifacts bucket"
   value       = module.storage.artifacts_bucket_name

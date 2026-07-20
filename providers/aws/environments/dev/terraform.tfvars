@@ -26,13 +26,6 @@ neon_compute_min_cu      = 0.25
 neon_compute_max_cu      = 0.25
 neon_autosuspend_seconds = null # Free tier rejects any value; paid plans can set 0–N
 
-# Atlas — M0 free tier
-atlas_org_id         = "6a009f5d529be1fb7cad2dc1" # Set via TF_VAR_atlas_org_id env var or override
-atlas_cluster_tier   = "M0"
-atlas_cloud_provider = "AWS"
-atlas_region         = "EU_CENTRAL_1"
-atlas_mongo_version  = "7.0"
-
 # Image tags — overridden by CI via images.tfvars
 backend_image_tag    = "latest"
 biocompute_image_tag = "latest"

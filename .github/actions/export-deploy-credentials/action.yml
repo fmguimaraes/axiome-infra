@@ -7,9 +7,6 @@ description: |
     - NEON_API_KEY (optional)
         → kislerdm/neon provider. Required only when modules using the
           neon provider are in the plan.
-    - MONGODB_ATLAS_PUBLIC_KEY / MONGODB_ATLAS_PRIVATE_KEY (optional)
-        → mongodb/mongodbatlas provider. Required only when Atlas
-          modules are in the plan.
     - TF_VAR_mailjet_api_key / TF_VAR_mailjet_secret_key (optional)
         → secrets module SSM parameters consumed by user-service
           EmailService. Empty leaves transactional email disabled.
@@ -27,14 +24,6 @@ inputs:
     required: true
   neon_api_key:
     description: "Neon API key (optional — required only if Neon resources are in the plan)"
-    required: false
-    default: ""
-  mongodb_atlas_public_key:
-    description: "MongoDB Atlas public API key (optional — required only if Atlas resources are in the plan)"
-    required: false
-    default: ""
-  mongodb_atlas_private_key:
-    description: "MongoDB Atlas private API key (optional — required only if Atlas resources are in the plan)"
     required: false
     default: ""
   mailjet_api_key:
@@ -55,8 +44,6 @@ runs:
         IN_AWS_ACCESS_KEY_ID: ${{ inputs.aws_access_key_id }}
         IN_AWS_SECRET_ACCESS_KEY: ${{ inputs.aws_secret_access_key }}
         IN_NEON_API_KEY: ${{ inputs.neon_api_key }}
-        IN_MONGODB_ATLAS_PUBLIC_KEY: ${{ inputs.mongodb_atlas_public_key }}
-        IN_MONGODB_ATLAS_PRIVATE_KEY: ${{ inputs.mongodb_atlas_private_key }}
         IN_MAILJET_API_KEY: ${{ inputs.mailjet_api_key }}
         IN_MAILJET_SECRET_KEY: ${{ inputs.mailjet_secret_key }}
       run: |
@@ -75,19 +62,6 @@ runs:
           echo "Neon API key exported."
         else
           echo "::notice::NEON_API_KEY not set — Neon resources will fail if present in plan."
-        fi
-
-        if [[ -n "${IN_MONGODB_ATLAS_PUBLIC_KEY}" && -n "${IN_MONGODB_ATLAS_PRIVATE_KEY}" ]]; then
-          {
-            echo "MONGODB_ATLAS_PUBLIC_KEY=${IN_MONGODB_ATLAS_PUBLIC_KEY}"
-            echo "MONGODB_ATLAS_PRIVATE_KEY=${IN_MONGODB_ATLAS_PRIVATE_KEY}"
-          } >> "$GITHUB_ENV"
-          echo "MongoDB Atlas keys exported."
-        elif [[ -n "${IN_MONGODB_ATLAS_PUBLIC_KEY}" || -n "${IN_MONGODB_ATLAS_PRIVATE_KEY}" ]]; then
-          echo "::error::Only one of MONGODB_ATLAS_PUBLIC_KEY / MONGODB_ATLAS_PRIVATE_KEY is set. Both are required together." >&2
-          exit 1
-        else
-          echo "::notice::MongoDB Atlas keys not set — Atlas resources will fail if present in plan."
         fi
 
         if [[ -n "${IN_MAILJET_API_KEY}" && -n "${IN_MAILJET_SECRET_KEY}" ]]; then
