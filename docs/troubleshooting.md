@@ -146,17 +146,27 @@ generated Prisma client — `node_modules/.prisma/<service>-client` — with
 `--exit-code` to confirm `IN SYNC`. Repeat per service (`organization`, `user`;
 `event` is MongoDB and unaffected).
 
-### Permanent fix (follow-up, not yet done)
+### Permanent fix — landed (AXI-1003)
 
-The deploy pipeline must converge the prod DB on every release. Either:
+`scripts/roll-service.sh` now runs `migrate_organization_schema` on every
+`SERVICE=backend` roll, before the image swap: it baselines `_prisma_migrations`
+on first run (exactly the `prisma migrate resolve --applied <each>` recipe above,
+automated), then `prisma migrate deploy`, verified by a whole-schema row-count
+parity check — fail-closed, so a drop in row count or a failed migration skips the
+image swap and leaves the old containers serving. `.github/workflows/dev-auto-promote.yml`
+binds the result into the FR14 Qualification Record
+(`scripts/generate-qualification-record.sh`) via a `MIGRATION_FACTS:` line. See the
+script's header comment for the rollback procedure.
 
-- add a `prisma migrate deploy` step **after baselining** prod (`prisma migrate
-  resolve --applied <each existing migration>` to seed `_prisma_migrations` to match
-  reality), or
-- if staying on the `db push` model, add an explicit `prisma db push` step to deploy.
+This covers `organization_svc` on whichever VM runs `roll-service.sh` (dev via the
+auto-promote workflow today; staging/production the same way, run by an operator).
+`user_svc` is not wired yet — extend `migrate_organization_schema`'s pattern
+(rename to something generic, or add a sibling function) when that becomes urgent;
+until then it still needs the manual diff procedure above.
 
-Until that lands, **every schema change will reproduce this class of outage** and
-must be hand-applied via the diff procedure above.
+The hand-applied diff procedure above remains the fallback for a migration that
+fails the automated path (e.g. a genuinely destructive change needing a backfill
+plan first) or for `user_svc`.
 
 ---
 

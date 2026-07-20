@@ -91,7 +91,29 @@ jobs:
         run: |
           ssh -o StrictHostKeyChecking=accept-new "${DEV_USER}@${DEV_HOST}" \
             "KEY='${KEY}' IMAGE_TAG='${IMAGE_TAG}' SERVICE='${SERVICE}' bash -s" \
-            < scripts/roll-service.sh
+            < scripts/roll-service.sh \
+            | tee roll-output.log
+
+      - name: Emit Qualification Record
+        env:
+          IMAGE_TAG: ${{ github.event.client_payload.image_tag }}
+        run: |
+          # organization-service migrations (SERVICE=backend) print a MIGRATION_FACTS
+          # line (FR8/FR9, AXI-1003) — bind it into the FR14 fail-closed Qualification
+          # Record (MIPP-Hosting-Environment.md). Absent for biocompute/frontend rolls,
+          # which touch no schema — nothing to qualify then. The generator is
+          # fail-closed: a non-zero exit here fails this job too.
+          if ! grep -q '^MIGRATION_FACTS:' roll-output.log; then
+            echo "No MIGRATION_FACTS line (non-schema roll) — nothing to qualify."
+            exit 0
+          fi
+          FACTS="$(grep '^MIGRATION_FACTS:' roll-output.log | tail -1)"
+          SCHEMA_VERSION="$(echo "${FACTS}" | grep -oP 'SCHEMA_VERSION=\K\S+')"
+          PRE_COUNTS="$(echo "${FACTS}" | grep -oP 'PRE_COUNTS=\K\S+')"
+          POST_COUNTS="$(echo "${FACTS}" | grep -oP 'POST_COUNTS=\K\S+')"
+          SCHEMA_VERSION="${SCHEMA_VERSION}" PRE_COUNTS="${PRE_COUNTS}" POST_COUNTS="${POST_COUNTS}" \
+            IMAGE_TAG="${IMAGE_TAG}" GATEWAY_URL="https://${DEV_HOST}" \
+            bash scripts/generate-qualification-record.sh aws dev
 
       - name: Smoke test
         env:
