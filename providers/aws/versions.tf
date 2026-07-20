@@ -10,10 +10,6 @@ terraform {
       source  = "kislerdm/neon"
       version = "~> 0.6"
     }
-    mongodbatlas = {
-      source  = "mongodb/mongodbatlas"
-      version = "~> 1.18"
-    }
     random = {
       source  = "hashicorp/random"
       version = "~> 3.6"

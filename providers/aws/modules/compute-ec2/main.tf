@@ -5,6 +5,16 @@
 data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
 
+# Mongo backup script (FR1/FR2), uploaded declaratively so cloud-init can fetch it
+# without inlining it into user_data (hard-capped at 16KB — see cloud-init/init.sh.tftpl
+# step 12). Encrypted at rest by the system bucket's default SSE-KMS (no override needed).
+resource "aws_s3_object" "mongo_backup_script" {
+  bucket      = "${var.naming_prefix}-system"
+  key         = "scripts/mongo-backup.sh"
+  source      = "${path.module}/../../scripts/mongo-backup.sh"
+  source_hash = filemd5("${path.module}/../../scripts/mongo-backup.sh")
+}
+
 data "aws_ami" "ubuntu" {
   most_recent = true
   owners      = ["099720109477"] # Canonical
@@ -265,6 +275,10 @@ resource "aws_vpc_security_group_egress_rule" "all" {
 }
 
 resource "aws_instance" "main" {
+  # cloud-init (below) fetches the mongo-backup script from S3 at boot — it must
+  # already exist for a greenfield / rebuild-from-IaC create (FR4).
+  depends_on = [aws_s3_object.mongo_backup_script]
+
   ami                    = data.aws_ami.ubuntu.id
   instance_type          = var.instance_type
   subnet_id              = var.subnet_id

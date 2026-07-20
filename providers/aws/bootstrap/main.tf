@@ -27,9 +27,9 @@ terraform {
 }
 
 variable "environments" {
-  description = "Environments to provision state backends for."
+  description = "Environments to provision state backends for. \"shared\" holds account-shared resources (e.g. ECR) owned by no single per-environment state (FR8/AC8)."
   type        = set(string)
-  default     = ["dev", "staging", "production"]
+  default     = ["dev", "staging", "production", "shared"]
 }
 
 variable "aws_region" {

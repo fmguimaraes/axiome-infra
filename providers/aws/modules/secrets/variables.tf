@@ -7,21 +7,16 @@ variable "environment" {
 }
 
 variable "postgres_url" {
-  type      = string
-  sensitive = true
-}
-
-variable "mongodb_url" {
-  description = "External Mongo URL (Atlas). Used when use_inregion_mongo = false."
+  description = "Master/admin Postgres connection string. Retained as a fallback for the legacy Neon path (no scoped runtime role exists there); superseded by postgres_app_url whenever that is set (FR10/NFR2)."
   type        = string
-  default     = ""
   sensitive   = true
 }
 
-variable "use_inregion_mongo" {
-  description = "When true, MONGODB_URL targets the in-region self-hosted Mongo container (built from a generated root password), not var.mongodb_url (Atlas) — FR3."
-  type        = bool
-  default     = false
+variable "postgres_app_url" {
+  description = "Least-privilege pilot-tenant Postgres connection string (module.database_rds.app_runtime_connection_string) — what DATABASE_URL / USER_DATABASE_URL / ORGANIZATION_DATABASE_URL actually publish when set (FR10/NFR2/AC8). Empty falls back to postgres_url (master) — only expected on the legacy Neon path, which predates the pilot-tenant role."
+  type        = string
+  default     = ""
+  sensitive   = true
 }
 
 variable "redis_url" {

@@ -153,7 +153,20 @@ aws ecr get-login-password --region ${aws_region} \
 CRON_EOF
 chmod +x /etc/cron.hourly/ecr-relogin
 
-# 12. Logrotate for docker stdout
+# 12. Daily Mongo backup (FR1/FR2/NFR1/NFR4) -> S3 system bucket backups/mongo/
+# (CMK-encrypted, bucket default SSE-KMS). Script content is managed declaratively
+# via aws_s3_object (modules/compute-ec2), not inlined here (user_data is 16KB-capped).
+# Restore procedure: docs/restore-procedures.md.
+mkdir -p /opt/axiome/scripts
+aws s3 cp "s3://${project_name}-system/scripts/mongo-backup.sh" /opt/axiome/scripts/mongo-backup.sh
+chmod 700 /opt/axiome/scripts/mongo-backup.sh
+
+cat > /etc/cron.d/mongo-backup <<'CRON_EOF'
+0 2 * * * root /opt/axiome/scripts/mongo-backup.sh
+CRON_EOF
+chmod 644 /etc/cron.d/mongo-backup
+
+# 13. Logrotate for docker stdout
 cat > /etc/logrotate.d/docker-containers <<'ROT_EOF'
 /var/lib/docker/containers/*/*.log {
     rotate 7

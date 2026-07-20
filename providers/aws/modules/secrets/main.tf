@@ -16,8 +16,8 @@ resource "random_password" "rabbitmq" {
   special = false
 }
 
-# Root password for the in-region self-hosted Mongo container (FR3). Always
-# generated so the container can start; only used by the app when use_inregion_mongo.
+# Root password for the in-region self-hosted Mongo container (FR3) — the sole
+# event-store backend now that Atlas has been decommissioned.
 resource "random_password" "mongo" {
   length  = 32
   special = false
@@ -27,17 +27,25 @@ locals {
   inregion_mongodb_url = "mongodb://axiome:${random_password.mongo.result}@mongo:27017/axiome?authSource=admin"
 }
 
+locals {
+  # Least-privilege pilot-tenant role when available (HDS/RDS stack — FR10/NFR2);
+  # falls back to the master URL only on the legacy Neon path, which has no scoped
+  # runtime role. App containers should never receive master credentials on the
+  # RDS path — see modules/database-rds `app_runtime_connection_string`.
+  runtime_postgres_url = coalesce(var.postgres_app_url != "" ? var.postgres_app_url : null, var.postgres_url)
+}
+
 resource "aws_ssm_parameter" "database_url" {
   name  = "${local.prefix}/DATABASE_URL"
   type  = "SecureString"
-  value = var.postgres_url
+  value = local.runtime_postgres_url
   tags  = var.tags
 }
 
 resource "aws_ssm_parameter" "mongodb_url" {
   name  = "${local.prefix}/MONGODB_URL"
   type  = "SecureString"
-  value = var.use_inregion_mongo ? local.inregion_mongodb_url : var.mongodb_url
+  value = local.inregion_mongodb_url
   tags  = var.tags
 }
 
@@ -108,25 +116,27 @@ resource "aws_ssm_parameter" "jwt_secret" {
   tags  = var.tags
 }
 
-# Per-service Postgres URLs. Phase 1: shared Neon database, isolated via per-service
-# Postgres schemas so `prisma db push` from one service can't drop another's tables.
-# Each schema must be created (CREATE SCHEMA <name>) before Prisma migrates against it.
-# Phase 2: split into per-service Neon projects when traffic justifies it.
+# Per-service Postgres URLs, isolated via per-service Postgres schemas (`?schema=`)
+# so one service's Prisma client can't touch another's tables. On the RDS/HDS path
+# these also carry the least-privilege pilot-tenant role (local.runtime_postgres_url
+# — FR10/NFR2), not the master user; on the legacy Neon path they still carry the
+# master user (no scoped role exists there). Each schema must be created
+# (CREATE SCHEMA <name>) before Prisma migrates against it.
 locals {
-  separator = strcontains(var.postgres_url, "?") ? "&" : "?"
+  separator = strcontains(local.runtime_postgres_url, "?") ? "&" : "?"
 }
 
 resource "aws_ssm_parameter" "user_database_url" {
   name  = "${local.prefix}/USER_DATABASE_URL"
   type  = "SecureString"
-  value = "${var.postgres_url}${local.separator}schema=user_svc"
+  value = "${local.runtime_postgres_url}${local.separator}schema=user_svc"
   tags  = var.tags
 }
 
 resource "aws_ssm_parameter" "organization_database_url" {
   name  = "${local.prefix}/ORGANIZATION_DATABASE_URL"
   type  = "SecureString"
-  value = "${var.postgres_url}${local.separator}schema=organization_svc"
+  value = "${local.runtime_postgres_url}${local.separator}schema=organization_svc"
   tags  = var.tags
 }
 

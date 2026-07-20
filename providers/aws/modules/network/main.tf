@@ -137,7 +137,7 @@ resource "aws_vpc_security_group_egress_rule" "app_all" {
 }
 
 # --- Data SG: data/broker/cache ports reachable ONLY from the app SG. ---
-# No 0.0.0.0/0 ingress here — closes the current Atlas open-access gap (NFR7).
+# No 0.0.0.0/0 ingress here — closes the open-access gap the old Atlas cluster had (NFR7).
 resource "aws_security_group" "data" {
   name        = "${var.naming_prefix}-data"
   description = "Data tier (Postgres, Mongo, Redis, RabbitMQ) - private only"

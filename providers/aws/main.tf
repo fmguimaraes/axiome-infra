@@ -34,7 +34,6 @@ provider "aws" {
 }
 
 provider "neon" {}
-provider "mongodbatlas" {}
 
 # ---------------- KMS (customer-managed key for data-at-rest) ----------------
 
@@ -59,15 +58,19 @@ module "storage" {
 }
 
 # ---------------- Registry (ECR) ----------------
-# ECR repositories are shared across environments at the AWS account level.
-# Only the production environment creates them; dev/staging reuse via data sources.
+# ECR repositories are account-shared and owned by the dedicated `../shared` state
+# (FR8/AC8) — never by a per-environment (dev/staging/production) state, so a stray
+# dev apply/destroy can no longer touch production's images. Every environment reads
+# the registry URL / pull role from that state; none of them create it.
 
-module "registry" {
-  source = "./modules/registry"
+data "terraform_remote_state" "shared" {
+  backend = "s3"
 
-  create_repositories = coalesce(var.create_ecr_repositories, var.environment == "production")
-  project_name        = var.project_name
-  tags                = local.base_tags
+  config = {
+    bucket = var.shared_state_bucket
+    key    = var.shared_state_key
+    region = var.shared_state_region
+  }
 }
 
 # ---------------- Secrets (SSM Parameter Store) ----------------
@@ -81,17 +84,21 @@ module "secrets" {
   # Lightsail SSM-read role only for the legacy compute path; EC2/HDS uses its own profile.
   create_lightsail_iam = var.use_legacy_stack
 
-  # Legacy stack -> Neon/Atlas; new HDS stack -> RDS + in-region Mongo + ElastiCache (FR2/FR3/FR5).
-  postgres_url        = var.use_legacy_stack ? try(module.database_neon[0].connection_string, "") : try(module.database_rds[0].connection_string, "")
-  mongodb_url         = var.use_legacy_stack ? try(module.database_atlas[0].connection_string, "") : ""
-  use_inregion_mongo  = !var.use_legacy_stack
+  # Legacy stack -> Neon; new HDS stack -> RDS + ElastiCache (FR2/FR5). Mongo (event
+  # store) is the in-region self-hosted container for every stack — Atlas has been
+  # decommissioned (FR3).
+  postgres_url = var.use_legacy_stack ? try(module.database_neon[0].connection_string, "") : try(module.database_rds[0].connection_string, "")
+  # Least-privilege pilot-tenant role (FR10/NFR2/AC8) — only exists on the RDS/HDS
+  # path (see db/01_pilot_tenant_app_role.sql). Empty on the legacy Neon path, which
+  # falls back to postgres_url (master) inside modules/secrets.
+  postgres_app_url    = var.use_legacy_stack ? "" : try(module.database_rds[0].app_runtime_connection_string, "")
   redis_url           = var.use_hds_data_stack ? try(module.cache_redis[0].redis_url, "") : ""
   publish_redis_url   = var.use_hds_data_stack
   s3_artifacts_bucket = module.storage.artifacts_bucket_name
   s3_uploads_bucket   = module.storage.uploads_bucket_name
   s3_system_bucket    = module.storage.system_bucket_name
   s3_region           = var.aws_region
-  ecr_registry        = module.registry.registry_url
+  ecr_registry        = data.terraform_remote_state.shared.outputs.registry_url
   domain              = local.fqdn
   fqdn                = local.fqdn
   mailjet_api_key     = var.mailjet_api_key
@@ -112,21 +119,6 @@ module "database_neon" {
   compute_max_cu            = var.neon_compute_max_cu
   autosuspend_seconds       = var.neon_autosuspend_seconds
   history_retention_seconds = var.neon_history_retention_seconds
-}
-
-# ---------------- Database — Atlas (MongoDB) ----------------
-
-module "database_atlas" {
-  source = "./modules/database-atlas"
-  count  = var.use_legacy_stack ? 1 : 0
-
-  naming_prefix  = local.naming_prefix
-  environment    = var.environment
-  org_id         = var.atlas_org_id
-  cluster_tier   = var.atlas_cluster_tier
-  cloud_provider = var.atlas_cloud_provider
-  region         = var.atlas_region
-  mongo_version  = var.atlas_mongo_version
 }
 
 # ---------------- HDS data stack (parallel stand-up) — FR1 / FR2 / NFR7 ----------------
@@ -155,6 +147,7 @@ module "database_rds" {
   instance_class         = var.rds_instance_class
   allocated_storage      = var.rds_allocated_storage
   multi_az               = var.rds_multi_az
+  backup_retention_days  = var.rds_backup_retention_days
   tags                   = local.base_tags
 }
 
@@ -177,7 +170,7 @@ module "compute_ec2" {
   app_security_group_id = module.network[0].app_security_group_id
   key_name              = var.lightsail_key_pair_name
   ssm_parameter_prefix  = module.secrets.parameter_prefix
-  ecr_registry          = module.registry.registry_url
+  ecr_registry          = data.terraform_remote_state.shared.outputs.registry_url
   fqdn                  = local.fqdn
   data_cmk_arn          = module.kms.key_arn
   backend_image_tag     = var.backend_image_tag
@@ -192,13 +185,14 @@ module "cache_redis" {
   source = "./modules/cache-redis"
   count  = var.use_hds_data_stack ? 1 : 0
 
-  naming_prefix          = local.naming_prefix
-  environment            = var.environment
-  subnet_ids             = module.network[0].private_subnet_ids
-  vpc_security_group_ids = [module.network[0].data_security_group_id]
-  kms_key_arn            = module.kms.key_arn
-  num_cache_clusters     = var.redis_num_cache_clusters
-  tags                   = local.base_tags
+  naming_prefix           = local.naming_prefix
+  environment             = var.environment
+  subnet_ids              = module.network[0].private_subnet_ids
+  vpc_security_group_ids  = [module.network[0].data_security_group_id]
+  kms_key_arn             = module.kms.key_arn
+  num_cache_clusters      = var.redis_num_cache_clusters
+  snapshot_retention_days = var.redis_snapshot_retention_days
+  tags                    = local.base_tags
 }
 
 # ---------------- Compute (Lightsail) ----------------
@@ -218,8 +212,8 @@ module "compute" {
 
   ssm_parameter_prefix = module.secrets.parameter_prefix
   ssm_iam_role_arn     = module.secrets.lightsail_iam_role_arn
-  ecr_registry         = module.registry.registry_url
-  ecr_pull_role_arn    = module.registry.pull_role_arn
+  ecr_registry         = data.terraform_remote_state.shared.outputs.registry_url
+  ecr_pull_role_arn    = data.terraform_remote_state.shared.outputs.pull_role_arn
 
   backend_image_tag    = var.backend_image_tag
   biocompute_image_tag = var.biocompute_image_tag
@@ -236,7 +230,6 @@ module "compute" {
   depends_on = [
     module.secrets,
     module.database_neon,
-    module.database_atlas,
   ]
 }
 

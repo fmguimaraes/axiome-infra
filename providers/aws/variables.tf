@@ -19,11 +19,22 @@ variable "aws_region" {
   default     = "eu-west-3"
 }
 
-variable "create_ecr_repositories" {
-  description = "Whether this env's apply manages the ECR repositories. ECR repos are account-level shared across envs, so exactly one env should own them. Default null = use the legacy rule (production owns)."
-  type        = bool
-  default     = null
-  nullable    = true
+variable "shared_state_bucket" {
+  description = "S3 bucket holding the dedicated shared/account-level Terraform state (ECR, etc. — see ../shared). Read-only from here via terraform_remote_state; no per-environment root ever creates these resources (FR8/AC8)."
+  type        = string
+  default     = "axiome-shared-tfstate"
+}
+
+variable "shared_state_key" {
+  description = "State object key within shared_state_bucket."
+  type        = string
+  default     = "infrastructure/terraform.tfstate"
+}
+
+variable "shared_state_region" {
+  description = "Region of shared_state_bucket."
+  type        = string
+  default     = "eu-west-3"
 }
 
 variable "domain" {
@@ -100,37 +111,6 @@ variable "neon_history_retention_seconds" {
   description = "PITR / branch history retention. Free tier max is 21600 (6h). Launch up to 7d, Scale up to 30d."
   type        = number
   default     = 21600
-}
-
-# ---------------- Atlas (MongoDB) ----------------
-
-variable "atlas_org_id" {
-  description = "MongoDB Atlas organization ID. Sourced from console; one Atlas org covers all environments."
-  type        = string
-}
-
-variable "atlas_cluster_tier" {
-  description = "Atlas cluster tier. M0 (free), M2/M5 (shared), M10+ (dedicated)."
-  type        = string
-  default     = "M0"
-}
-
-variable "atlas_cloud_provider" {
-  description = "Atlas underlying cloud provider."
-  type        = string
-  default     = "AWS"
-}
-
-variable "atlas_region" {
-  description = "Atlas region (Atlas naming, e.g., EU_CENTRAL_1 = Frankfurt)."
-  type        = string
-  default     = "EU_CENTRAL_1"
-}
-
-variable "atlas_mongo_version" {
-  description = "MongoDB major version."
-  type        = string
-  default     = "7.0"
 }
 
 # ---------------- Application image tags ----------------
@@ -243,6 +223,18 @@ variable "rds_multi_az" {
   default = false
 }
 
+variable "rds_backup_retention_days" {
+  description = "RDS automated-backup / PITR retention in days (FR1/NFR1). 0 disables backups — never set to 0 in production."
+  type        = number
+  default     = 7
+}
+
+variable "redis_snapshot_retention_days" {
+  description = "ElastiCache automated daily snapshot retention in days (FR1/NFR1). 0 disables backups."
+  type        = number
+  default     = 7
+}
+
 variable "use_ec2_compute" {
   description = "When true (requires use_hds_data_stack), run the app stack on EC2 in the VPC instead of Lightsail (FR1). Exposes an Elastic IP for the Microsoft 365 DNS record. Default false."
   type        = bool
@@ -265,8 +257,8 @@ variable "use_legacy_stack" {
     Keep the legacy Lightsail compute. Default true. Set false in the final cutover
     step (after the EC2/RDS/ElastiCache stack is live, data migrated with verified
     parity, DNS cut over, and sign-off recorded) to destroy Lightsail declaratively.
-    Decommissioning Neon/Atlas rides with the secrets rewire (their connection strings
-    feed the secrets module) — see providers/RUNBOOK.md.
+    Decommissioning Neon rides with the secrets rewire (its connection string feeds
+    the secrets module) — see providers/RUNBOOK.md.
   EOT
   type        = bool
   default     = true

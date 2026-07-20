@@ -1,6 +1,6 @@
 # AWS Provider — Bootstrap Guide
 
-Complete Day-0 bootstrap for the AWS provider variant: Lightsail compute + Neon Postgres + Atlas MongoDB + S3 + ECR. DNS is managed manually in Microsoft 365 (see §0.4); Route 53 is **not** used in the default setup.
+Complete Day-0 bootstrap for the AWS provider variant: Lightsail compute + Neon Postgres + in-region MongoDB + S3 + ECR. DNS is managed manually in Microsoft 365 (see §0.4); Route 53 is **not** used in the default setup.
 
 This guide is run **once per AWS account, then once per environment**. Subsequent operations use the Makefile targets.
 
@@ -12,7 +12,7 @@ This guide is run **once per AWS account, then once per environment**. Subsequen
 |---|---|---|
 | Compute | AWS Lightsail (single VM, x86; 2 GB `small_3_0` for dev/staging, 4 GB `medium_3_0` for prod — eu-west-3 has no ARM bundles) running docker-compose | ~$12–24/mo |
 | Postgres | Neon (free for dev, Launch+ for staging/prod) | $0–$19/mo |
-| MongoDB | Atlas (M0 free for dev, M10+ for prod) | $0–$60/mo |
+| MongoDB | Self-hosted container on the same VM (in-region, daily `mongodump` → S3 — see [restore-procedures.md](docs/restore-procedures.md)) | included in compute |
 | Object storage | S3 (3 buckets per env: artifacts, uploads, system) | <$1/mo |
 | Container registry | ECR (account-shared across envs) | <$1/mo |
 | TLS / Reverse proxy | Caddy + Let's Encrypt (on the VM) | $0 |
@@ -28,7 +28,7 @@ Retention defaults to 30 days (`compute-ec2` `log_retention_days`). Streams:
 `<instance-id>/containers`, `<instance-id>/axiome-init`, `<instance-id>/docker-prune`.
 Query in **CloudWatch → Logs Insights**. The legacy Lightsail path has no CloudWatch sink.
 
-**Three environments**: `dev`, `staging`, `production` — each is one Lightsail VM, one Neon project, one Atlas cluster, three S3 buckets, one A record at Microsoft 365. They share one ECR registry at the AWS-account level. DNS is managed manually in Microsoft 365 (see §0.4); no shared Route 53 zone.
+**Three environments**: `dev`, `staging`, `production` — each is one Lightsail VM (running its own in-region Mongo container), one Neon project, three S3 buckets, one A record at Microsoft 365. They share one ECR registry at the AWS-account level. DNS is managed manually in Microsoft 365 (see §0.4); no shared Route 53 zone.
 
 ---
 
@@ -128,9 +128,9 @@ If the Microsoft 365 DNS configuration is wiped or the domain is moved between M
 3. If the domain itself was moved, also re-verify ownership / re-enable email forwarding / etc. from Microsoft 365's domain page.
 4. Wait for propagation, then re-run the verification curls in [§1.9](#19-verify).
 
-**No data is at risk during DNS recovery** — Postgres lives in Neon, MongoDB in Atlas, blobs in S3. Only the public name → IP mapping is being restored.
+**No data is at risk during DNS recovery** — Postgres lives in Neon, blobs in S3, and MongoDB's docker volume survives on the running VM (backed up nightly to S3 regardless — see [restore-procedures.md](docs/restore-procedures.md)). Only the public name → IP mapping is being restored.
 
-### 0.5. Create Neon and Atlas accounts (one-time)
+### 0.5. Create a Neon account (one-time)
 
 #### Neon
 
@@ -142,20 +142,8 @@ If the Microsoft 365 DNS configuration is wiped or the domain is moved between M
 export NEON_API_KEY="<your-neon-api-key>"
 ```
 
-#### MongoDB Atlas
-
-1. Sign up at https://cloud.mongodb.com
-2. Create an organization (one Atlas org spans all environments).
-3. Generate API keys at **Organization → Access Manager → API keys**.
-4. Required role: **Organization Project Creator**.
-5. Save **Public Key** (acts as username) and **Private Key**.
-6. Note the **Organization ID** (Settings → General → Organization ID).
-
-```bash
-export MONGODB_ATLAS_PUBLIC_KEY="<public-key>"
-export MONGODB_ATLAS_PRIVATE_KEY="<private-key>"
-export TF_VAR_atlas_org_id="<organization-id>"
-```
+MongoDB needs no account setup — it runs as an in-region container on the same
+VM (`modules/secrets` generates its root password; no external service).
 
 #### Mailjet (transactional email)
 
@@ -194,24 +182,24 @@ Repeat for each of `dev`, `staging`, `production`.
 
 ### 1.1. Create the Terraform state bucket and lock table
 
-The bootstrap module runs with **local state** to create the S3 + DynamoDB infrastructure that the main stack depends on.
+The bootstrap module runs with **local state** to create the S3 + DynamoDB infrastructure that the main stack depends on. It provisions one bucket + lock table per entry in `var.environments` (default: `dev`, `staging`, `production`, `shared`) in a single `for_each`-keyed apply — re-applying is idempotent and never touches another environment's bucket.
 
 ```bash
 cd providers/aws/bootstrap
 
 terraform init
 
-# For dev
-terraform apply -var=environment=dev
+# Creates/reconciles all of var.environments (idempotent — safe to re-run)
+terraform apply
 
-# For staging
-terraform apply -var=environment=staging
-
-# For production
-terraform apply -var=environment=production
+# To bootstrap just one new entry without touching the others already applied
+# (e.g. adding "shared" to an account that already has dev/staging/production):
+terraform apply -var='environments=["shared"]'
 ```
 
-After each apply, the output `backend_hcl` shows the contents of the corresponding `environments/<env>/backend.hcl` file. These files are pre-populated in this repo, but verify they match your bootstrap output.
+After apply, the outputs `state_buckets` / `lock_tables` show the bucket/table per environment — they should match the corresponding `environments/<env>/backend.hcl` file. These files are pre-populated in this repo, but verify they match your bootstrap output.
+
+`shared` holds account-shared resources (today: ECR — see §1.4a) owned by no single per-environment state, so a stray dev/staging apply or destroy can never touch them (FR8/AC8).
 
 The bootstrap state is local (`bootstrap/terraform.tfstate`). Back it up to your password manager or a private S3 bucket. Losing it is recoverable (resources can be re-imported), but inconvenient.
 
@@ -224,11 +212,10 @@ domain    = "axiomebio.com"   # Your base domain registered at Microsoft 365
 subdomain = "dev"                   # dev → dev.axiomebio.com
                                     # staging → staging.axiomebio.com
                                     # production → "" (apex)
-atlas_org_id = "<your-atlas-org-id>"  # From 0.5
 # use_route53 = false               # default; leave unset for Microsoft 365 DNS
 ```
 
-Sensitive values (`atlas_org_id` is benign; the API keys are sensitive) flow through environment variables — never commit them.
+Sensitive values (the Neon API key) flow through environment variables — never commit them.
 
 After `make apply` completes, retrieve the Lightsail static IP and add the matching A record(s) in the Microsoft 365 DNS panel — see [§0.4.1](#041-required-dns-records-recovery-reference) for the table and [§0.4.3](#043-how-to-configure-in-hostinger) for the click-path.
 
@@ -249,17 +236,29 @@ make init ENV=dev
 make plan ENV=dev
 ```
 
-Expected resources for dev (~30):
+Expected resources for dev (~26):
 - 1 Lightsail instance + 1 static IP
 - 3 S3 buckets (versioning, encryption, public access block)
-- 3 ECR repositories (production env only — dev/staging skip)
 - 1 IAM user (Lightsail runtime) + access key + policy
 - 1 IAM role (SSM) + policy
-- 1 IAM role (ECR pull) + policy
 - ~8 SSM parameters
 - 1 Neon project + branch + role + database
-- 1 Atlas project + cluster + DB user + IP allowlist
+- *(MongoDB: no separate resource — runs as a container on the Lightsail VM, provisioned by cloud-init)*
 - *(DNS: configured manually in Microsoft 365 after apply — see §0.4)*
+
+### 1.4a. One-time: apply the shared registry state
+
+ECR repositories are account-shared across dev/staging/production and live in
+their own `../shared` root/state (FR8/AC8), not in any per-environment apply.
+Run this **once per AWS account**, before the first `make apply` for any
+environment (every environment's plan reads the registry URL / pull role from
+this state via `terraform_remote_state`):
+
+```bash
+cd providers/aws/shared
+terraform init -backend-config=../environments/shared/backend.hcl
+terraform apply -var-file=../environments/shared/terraform.tfvars
+```
 
 ### 1.5. Apply
 
@@ -270,7 +269,6 @@ make apply ENV=dev
 Estimated duration: **3–8 minutes**.
 - Lightsail instance: ~2 min
 - Neon project: ~30 sec
-- Atlas cluster: ~3 min (M0); ~7 min (M10)
 - S3 / ECR / IAM / SSM: <30 sec total
 
 The Lightsail VM begins running cloud-init when it boots. Cloud-init takes another **~3–5 minutes** to install Docker, fetch images from ECR, and start the stack.
@@ -302,7 +300,7 @@ docker build -t $REGISTRY/axiome/frontend:latest .
 docker push $REGISTRY/axiome/frontend:latest
 ```
 
-**Note:** ECR repositories are only created by the `production` environment apply. If you bootstrap `dev` first, run `make apply ENV=production` (or temporarily flip `create_repositories = true` for the first env) — the bootstrap order is documented separately.
+**Note:** ECR repositories are created once by `../shared` (§1.4a), not by any per-environment apply — every environment just reads the registry URL via remote state.
 
 ### 1.7. Trigger the VM to pull updated images
 
@@ -332,7 +330,7 @@ cd ../axiome-back
 DATABASE_URL="$DATABASE_URL" npx prisma db push --schema apps/organization-service/src/prisma/schema.prisma
 ```
 
-For Atlas, MongoDB collections are created lazily on first write; no migration step required initially. Indexes should be created idempotently in app startup or a one-shot script.
+For the in-region Mongo container, collections are created lazily on first write; no migration step required initially. Indexes should be created idempotently in app startup or a one-shot script.
 
 ### 1.9. Verify
 
@@ -354,7 +352,7 @@ If TLS issuance fails, check Caddy logs: `ssh ubuntu@<ip> 'sudo docker compose -
 
 - AWS Cost Explorer → confirm tags `Project=axiome`, `Environment=dev` are applied
 - Neon dashboard → confirm project usage shows free tier
-- Atlas dashboard → confirm cluster is M0 (or expected tier)
+- `ssh ubuntu@<ip> 'sudo docker compose -f /opt/axiome/docker-compose.yml ps mongo'` → confirm the Mongo container is healthy
 
 ---
 
@@ -373,7 +371,7 @@ make apply ENV=dev
 # Verify (§1.9)
 ```
 
-Expected cost: **~$12–13/month** (Lightsail + S3/SSM/ECR overhead; Neon and Atlas free).
+Expected cost: **~$12–13/month** (Lightsail, which also hosts Mongo, + S3/SSM/ECR overhead; Neon free).
 
 ### Staging
 
@@ -385,7 +383,7 @@ make apply ENV=staging
 # Same image push + migrations
 ```
 
-Expected cost: **~$12/month** if Neon/Atlas stay free; **~$30–40/month** with Neon Launch tier for production-shape testing.
+Expected cost: **~$12/month** if Neon stays free; **~$30–40/month** with Neon Launch tier for production-shape testing.
 
 ### Production
 
@@ -397,7 +395,7 @@ make apply ENV=production
 # Image push uses :stable tag — promote from staging :latest after validation
 ```
 
-Expected cost: **~$12/month** (Lightsail) + **~$60/month** (Atlas M10) + **~$19/month** (Neon Launch) = **~$91/month** for the production data path with managed-DB SLAs.
+Expected cost: **~$12/month** (Lightsail, hosting Mongo) + **~$19/month** (Neon Launch) = **~$31/month** for the production data path.
 
 ---
 
@@ -433,10 +431,12 @@ The replace causes a new key to be generated and re-injected via cloud-init. **C
 ```bash
 make destroy ENV=dev
 make apply ENV=dev
+# Restore Mongo from the latest S3 backup (see docs/restore-procedures.md) —
+# destroying the VM destroys its docker volume, and Mongo data lives there.
 # Push images, run migrations, verify
 ```
 
-State (Postgres data, Mongo data, S3 objects) is unaffected because it lives in Neon/Atlas/S3, not on the VM. Total elapsed: **~10–15 min** including image push.
+Postgres data and S3 objects are unaffected because they live in Neon/S3, not on the VM. **Mongo data does NOT survive this** — it lives on the VM's docker volume and must be restored from the latest `mongodump` backup in the `system` S3 bucket (`backups/mongo/`, see [restore-procedures.md](docs/restore-procedures.md)) after the new VM boots. Total elapsed: **~10–15 min** including image push, plus Mongo restore time.
 
 **Run this drill quarterly per [graduation-criteria.md](../../docs/graduation-criteria.md) §5.5.**
 
@@ -480,7 +480,7 @@ also come from the portable Prometheus stack (no CloudWatch agent runs there).
 make destroy ENV=dev
 ```
 
-⚠️ This deletes the Lightsail VM, S3 buckets (with versioned data), Neon project, Atlas cluster, and all SSM parameters. Backups should be taken first if any data matters.
+⚠️ This deletes the Lightsail VM (and its Mongo docker volume — take a fresh `mongodump` first if the automatic nightly backup isn't recent enough), S3 buckets (with versioned data), Neon project, and all SSM parameters. Backups should be taken first if any data matters.
 
 ---
 
@@ -493,7 +493,7 @@ make destroy ENV=dev
 | Caddy fails to fetch cert | DNS not propagated to Lightsail IP | Wait for DNS TTL; check `dig <fqdn>` |
 | `docker pull` fails on VM | ECR token expired (12h) | `/etc/cron.hourly/ecr-relogin` runs hourly; re-run manually if needed |
 | Neon connection refused | Neon free tier autosuspend | First request takes ~1–2s to wake; subsequent requests fast |
-| Atlas connection timeout | IP allowlist | Atlas allows `0.0.0.0/0` in this stack; tighten for production via `mongodbatlas_project_ip_access_list` |
+| Mongo connection refused | Container not up yet / crashed | `ssh ubuntu@<ip> 'sudo docker compose -f /opt/axiome/docker-compose.yml logs mongo'` |
 | OOM kills | Lightsail bundle too small (2 GB on small_3_0 is tight for 4 services) | Upgrade bundle (`medium_3_0` → 4 GB, `large_3_0` → 8 GB) or tighten container `mem_limit` in docker-compose |
 | Apply fails on `aws_iam_access_key` | Race condition (rare) | Re-run `terraform apply` |
 
