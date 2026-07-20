@@ -1,3 +1,8 @@
+output "replication_group_id" {
+  description = "ElastiCache replication group ID — used to scope CloudWatch alarms (FR12)."
+  value       = aws_elasticache_replication_group.this.replication_group_id
+}
+
 output "primary_endpoint" {
   value = aws_elasticache_replication_group.this.primary_endpoint_address
 }

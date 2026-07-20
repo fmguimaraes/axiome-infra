@@ -444,6 +444,36 @@ Postgres data and S3 objects are unaffected because they live in Neon/S3, not on
 
 Update `lightsail_bundle_id` in tfvars (e.g., `medium_3_0` for 4 GB / 2 vCPU at $24/mo, or `large_3_0` for 8 GB / 2 vCPU at $44/mo in eu-west-3) and run `make apply`. Lightsail rebuilds the instance — **expect ~2 min downtime** and re-run cloud-init from scratch. Run `aws lightsail get-bundles --region <region>` to see what's available before changing.
 
+### Alarms (FR12 / AC12)
+
+`module.alerting` (`modules/alerting`) wires actionable alarms for whatever this env
+actually has (empty ID inputs skip the corresponding alarm — safe to leave wired
+unconditionally across dev/staging/production):
+
+| Signal | Alarm | Source |
+|---|---|---|
+| Disk capacity | `<prefix>-ec2-disk-used-percent` | `amazon-cloudwatch-agent` `disk_used_percent` (EC2/HDS path only — see cloud-init step 13) |
+| Host health | `<prefix>-ec2-status-check-failed` | EC2 `StatusCheckFailed` |
+| RDS storage | `<prefix>-rds-free-storage-low` | RDS `FreeStorageSpace` |
+| RDS backup success/failure | `<prefix>-rds-backup-events` | `aws_db_event_subscription` on the RDS `backup` event category |
+| ElastiCache | `<prefix>-redis-engine-cpu-high` | ElastiCache `EngineCPUUtilization` |
+| TLS-cert expiry (`use_cloudfront_edge` envs) | `<prefix>-acm-cert-expiring` | EventBridge `ACM Certificate Approaching Expiration` (us-east-1) |
+
+All alarms notify `module.alerting`'s SNS topic (`alerts_sns_topic_arn` output).
+Subscribe it to an email (`TF_VAR_alert_email`, sourced from a per-env secret — never
+hard-coded in tfvars) or another protocol (Slack/PagerDuty/Opsgenie's SNS integration)
+after apply.
+
+**Production terminates TLS via Caddy/Let's Encrypt, not CloudFront/ACM** (see §S8 in
+`providers/RUNBOOK.md`), so it has no ACM cert to alarm on here — TLS-cert-expiry
+coverage for that path comes from the portable Prometheus/Alertmanager stack's
+`blackbox_exporter` probe instead (`observability/alerts.yml` `TLSCertExpiringSoon`),
+which also covers container/service health and disk capacity for non-EC2/Lightsail
+compute. See `observability/README.md` § Alarms.
+
+Container/service-health and disk-capacity alarms for the **legacy Lightsail path**
+also come from the portable Prometheus stack (no CloudWatch agent runs there).
+
 ### Tear down
 
 ```bash

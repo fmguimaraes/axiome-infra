@@ -179,10 +179,12 @@ cat > /etc/logrotate.d/docker-containers <<'ROT_EOF'
 ROT_EOF
 
 %{ if cloudwatch_log_group != "" ~}
-# 14. CloudWatch Logs agent (FR9 / NFR8). Tails the json-file container logs and host
-# bootstrap logs into ${cloudwatch_log_group} (in-region, CMK-encrypted). The json-file
-# driver is kept so `docker compose logs` still works — the agent only reads the files.
-# Uses the [default] creds in /root/.aws (runtime IAM user, granted scoped logs perms).
+# 13. CloudWatch agent (FR9 / NFR8, FR12 / AC12). Tails the json-file container logs and
+# host bootstrap logs into ${cloudwatch_log_group} (in-region, CMK-encrypted). The
+# json-file driver is kept so `docker compose logs` still works — the agent only reads
+# the files. Also publishes root-volume disk_used_percent to the CWAgent namespace,
+# consumed by the disk-capacity alarm (providers/aws/modules/alerting). Authenticates
+# as the instance role via IMDS (-m ec2), scoped to this one log group + namespace.
 CW_ARCH=$(dpkg --print-architecture)
 curl -fsSL "https://amazoncloudwatch-agent.s3.amazonaws.com/ubuntu/$${CW_ARCH}/latest/amazon-cloudwatch-agent.deb" \
     -o /tmp/amazon-cloudwatch-agent.deb
@@ -190,11 +192,47 @@ dpkg -i -E /tmp/amazon-cloudwatch-agent.deb
 rm -f /tmp/amazon-cloudwatch-agent.deb
 
 cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<'CWCFG_EOF'
-{"agent":{"run_as_user":"root"},"logs":{"logs_collected":{"files":{"collect_list":[
-{"file_path":"/var/lib/docker/containers/*/*.log","log_group_name":"${cloudwatch_log_group}","log_stream_name":"{instance_id}/containers","retention_in_days":-1},
-{"file_path":"/var/log/axiome-init.log","log_group_name":"${cloudwatch_log_group}","log_stream_name":"{instance_id}/axiome-init","retention_in_days":-1},
-{"file_path":"/var/log/docker-prune.log","log_group_name":"${cloudwatch_log_group}","log_stream_name":"{instance_id}/docker-prune","retention_in_days":-1}
-]}}}}
+{
+  "agent": { "run_as_user": "root" },
+  "logs": {
+    "logs_collected": {
+      "files": {
+        "collect_list": [
+          {
+            "file_path": "/var/lib/docker/containers/*/*.log",
+            "log_group_name": "${cloudwatch_log_group}",
+            "log_stream_name": "{instance_id}/containers",
+            "retention_in_days": -1
+          },
+          {
+            "file_path": "/var/log/axiome-init.log",
+            "log_group_name": "${cloudwatch_log_group}",
+            "log_stream_name": "{instance_id}/axiome-init",
+            "retention_in_days": -1
+          },
+          {
+            "file_path": "/var/log/docker-prune.log",
+            "log_group_name": "${cloudwatch_log_group}",
+            "log_stream_name": "{instance_id}/docker-prune",
+            "retention_in_days": -1
+          }
+        ]
+      }
+    }
+  },
+  "metrics": {
+    "namespace": "CWAgent",
+    "append_dimensions": { "InstanceId": "$${aws:InstanceId}" },
+    "metrics_collected": {
+      "disk": {
+        "resources": ["/"],
+        "measurement": ["used_percent"],
+        "metrics_collection_interval": 300,
+        "drop_device": true
+      }
+    }
+  }
+}
 CWCFG_EOF
 
 /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \

@@ -266,3 +266,29 @@ module "edge" {
   aws_region = var.aws_region
   tags       = local.base_tags
 }
+
+# ---------------- Alerting (FR12 / AC12) ----------------
+# Actionable alarms for whatever resources this env actually has — no-ops (empty
+# string) skip the corresponding alarm inside the module, so this is safe to leave
+# wired unconditionally across dev/staging/production.
+
+module "alerting" {
+  source = "./modules/alerting"
+
+  providers = {
+    aws           = aws
+    aws.us_east_1 = aws.us_east_1
+  }
+
+  naming_prefix = local.naming_prefix
+  environment   = var.environment
+  tags          = local.base_tags
+  kms_key_arn   = module.kms.key_arn
+
+  alert_email                = var.alert_email
+  disk_threshold_percent     = var.alert_disk_threshold_percent
+  ec2_instance_id            = try(module.compute_ec2[0].instance_id, "")
+  rds_instance_id            = try(module.database_rds[0].instance_id, "")
+  redis_replication_group_id = try(module.cache_redis[0].replication_group_id, "")
+  acm_certificate_arn        = try(module.edge[0].acm_certificate_arn, "")
+}

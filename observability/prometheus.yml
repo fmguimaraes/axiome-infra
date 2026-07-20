@@ -1,8 +1,18 @@
-# Prometheus scrape config (FR9). Scrapes the app services' /metrics endpoints on
-# the compose network. Extend targets as services expose metrics.
+# Prometheus scrape config (FR9) + alerting rules (FR12 / AC12). Scrapes the app
+# services' /metrics endpoints on the compose network. Extend targets as services
+# expose metrics. Alarms fire to Alertmanager, which forwards to the on-call webhook
+# (see alertmanager.yml.tpl).
 global:
   scrape_interval: 30s
   evaluation_interval: 30s
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+rule_files:
+  - /etc/prometheus/alerts.yml
 
 scrape_configs:
   - job_name: prometheus
@@ -18,3 +28,30 @@ scrape_configs:
           - "event-service:3003"
           - "organization-service:3004"
           - "biocompute:8000"
+
+  # Host disk/CPU/mem (FR12 — disk capacity).
+  - job_name: node-exporter
+    static_configs:
+      - targets: ["node-exporter:9100"]
+
+  # Per-container health/restarts (FR12 — container/service health).
+  - job_name: cadvisor
+    static_configs:
+      - targets: ["cadvisor:8080"]
+
+  # HTTPS reachability + TLS-cert expiry (FR12 — TLS-cert expiry). Add one target per
+  # public FQDN this environment serves.
+  - job_name: blackbox-https
+    metrics_path: /probe
+    params:
+      module: [https_2xx]
+    static_configs:
+      - targets:
+          - "https://platform.axiomebio.com"
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115

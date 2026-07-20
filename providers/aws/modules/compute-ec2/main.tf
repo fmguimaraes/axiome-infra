@@ -178,6 +178,22 @@ resource "aws_cloudwatch_log_group" "ec2" {
 # The amazon-cloudwatch-agent authenticates as the INSTANCE ROLE (via IMDS), not the
 # runtime IAM user in /root/.aws/credentials — so the log-shipping grant must live on
 # the instance profile role, scoped to the single in-region log group it writes to.
+resource "aws_iam_role_policy" "cloudwatch_metrics" {
+  role = aws_iam_role.ssm.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid      = "CWAgentPutMetricData"
+      Effect   = "Allow"
+      Action   = "cloudwatch:PutMetricData"
+      Resource = "*" # PutMetricData has no resource-level permissions; scope by namespace instead
+      Condition = {
+        StringEquals = { "cloudwatch:namespace" = "CWAgent" }
+      }
+    }]
+  })
+}
+
 resource "aws_iam_role_policy" "cloudwatch_logs" {
   role = aws_iam_role.ssm.id
   policy = jsonencode({
