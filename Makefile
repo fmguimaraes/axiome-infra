@@ -2,6 +2,7 @@
         local-up local-up-fg local-down local-restart \
         local-logs local-tail local-ps local-stats \
         local-shell local-exec local-debug local-health \
+        seed seed-env \
         fmt validate help
 
 ENV ?= dev
@@ -90,6 +91,18 @@ local-debug:
 	PYTHONUNBUFFERED=1 \
 	$(COMPOSE) up $(SERVICE)
 
+# Seed a clean environment to its known baseline (AXI-1001, FR4/FR5/NFR4):
+# reference data, system rule packs, bootstrap roles/users. Idempotent —
+# safe to re-run. Fails closed (non-zero exit) on any expected-vs-actual
+# mismatch; see scripts/seed-environment.sh for the verification summary.
+#   make seed                    seed the local docker-compose stack
+#   make seed-env ENV=staging    seed a deployed environment via SSM
+seed:
+	scripts/seed-environment.sh --local
+
+seed-env:
+	scripts/seed-environment.sh -e $(ENV)
+
 # Utilities
 fmt:
 	terraform fmt -recursive
@@ -114,3 +127,7 @@ help:
 	@echo "  make local-shell SERVICE=backend         open a shell in a container"
 	@echo "  make local-exec SERVICE=backend CMD=\"...\"  run a one-off command"
 	@echo "  make local-debug [SERVICE=x]             foreground + verbose log levels"
+	@echo ""
+	@echo "Environment seeding:"
+	@echo "  make seed                        seed the local stack to its known baseline"
+	@echo "  make seed-env ENV=staging        seed a deployed environment via SSM"
