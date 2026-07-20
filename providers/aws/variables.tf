@@ -243,6 +243,18 @@ variable "rds_multi_az" {
   default = false
 }
 
+variable "rds_backup_retention_days" {
+  description = "RDS automated-backup / PITR retention in days (FR1/NFR1). 0 disables backups — never set to 0 in production."
+  type        = number
+  default     = 7
+}
+
+variable "redis_snapshot_retention_days" {
+  description = "ElastiCache automated daily snapshot retention in days (FR1/NFR1). 0 disables backups."
+  type        = number
+  default     = 7
+}
+
 variable "use_ec2_compute" {
   description = "When true (requires use_hds_data_stack), run the app stack on EC2 in the VPC instead of Lightsail (FR1). Exposes an Elastic IP for the Microsoft 365 DNS record. Default false."
   type        = bool

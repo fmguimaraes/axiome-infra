@@ -29,5 +29,10 @@ resource "aws_elasticache_replication_group" "this" {
   automatic_failover_enabled = var.num_cache_clusters > 1
   multi_az_enabled           = var.num_cache_clusters > 1
 
+  # Automated, CMK-encrypted daily snapshots (FR1/NFR1/NFR4) — the ElastiCache gap
+  # in the AC1 backup matrix (RDS PITR + S3 versioning already covered).
+  snapshot_retention_limit = var.snapshot_retention_days
+  snapshot_window          = var.snapshot_window
+
   tags = var.tags
 }

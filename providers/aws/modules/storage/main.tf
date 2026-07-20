@@ -34,6 +34,13 @@ resource "aws_s3_bucket" "uploads" {
   tags   = merge(var.tags, { Purpose = "uploads" })
 }
 
+resource "aws_s3_bucket_versioning" "uploads" {
+  bucket = aws_s3_bucket.uploads.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
 resource "aws_s3_bucket_public_access_block" "uploads" {
   bucket                  = aws_s3_bucket.uploads.id
   block_public_acls       = true
@@ -75,6 +82,13 @@ resource "aws_s3_bucket" "system" {
   tags   = merge(var.tags, { Purpose = "system" })
 }
 
+resource "aws_s3_bucket_versioning" "system" {
+  bucket = aws_s3_bucket.system.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
 resource "aws_s3_bucket_public_access_block" "system" {
   bucket                  = aws_s3_bucket.system.id
   block_public_acls       = true
@@ -107,6 +121,12 @@ resource "aws_s3_bucket_lifecycle_configuration" "system" {
 
     expiration {
       days = var.environment == "production" ? 90 : 30
+    }
+
+    # Versioning is enabled on this bucket (above); without this, superseded backup
+    # versions left by the expiration rule would accumulate forever.
+    noncurrent_version_expiration {
+      noncurrent_days = var.environment == "production" ? 90 : 30
     }
   }
 }
