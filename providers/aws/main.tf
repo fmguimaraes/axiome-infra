@@ -155,6 +155,7 @@ module "database_rds" {
   instance_class         = var.rds_instance_class
   allocated_storage      = var.rds_allocated_storage
   multi_az               = var.rds_multi_az
+  backup_retention_days  = var.rds_backup_retention_days
   tags                   = local.base_tags
 }
 
@@ -192,13 +193,14 @@ module "cache_redis" {
   source = "./modules/cache-redis"
   count  = var.use_hds_data_stack ? 1 : 0
 
-  naming_prefix          = local.naming_prefix
-  environment            = var.environment
-  subnet_ids             = module.network[0].private_subnet_ids
-  vpc_security_group_ids = [module.network[0].data_security_group_id]
-  kms_key_arn            = module.kms.key_arn
-  num_cache_clusters     = var.redis_num_cache_clusters
-  tags                   = local.base_tags
+  naming_prefix           = local.naming_prefix
+  environment             = var.environment
+  subnet_ids              = module.network[0].private_subnet_ids
+  vpc_security_group_ids  = [module.network[0].data_security_group_id]
+  kms_key_arn             = module.kms.key_arn
+  num_cache_clusters      = var.redis_num_cache_clusters
+  snapshot_retention_days = var.redis_snapshot_retention_days
+  tags                    = local.base_tags
 }
 
 # ---------------- Compute (Lightsail) ----------------

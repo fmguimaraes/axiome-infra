@@ -43,6 +43,18 @@ variable "kms_key_arn" {
   type        = string
 }
 
+variable "snapshot_retention_days" {
+  description = "Automated daily ElastiCache snapshot retention (FR1/NFR1). 0 disables backups."
+  type        = number
+  default     = 7
+}
+
+variable "snapshot_window" {
+  description = "Daily UTC window for the automated snapshot (FR1), outside business hours."
+  type        = string
+  default     = "03:00-04:00"
+}
+
 variable "tags" {
   type    = map(string)
   default = {}
