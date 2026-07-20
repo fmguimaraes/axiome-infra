@@ -41,7 +41,7 @@ jobs:
   state-safety:
     runs-on: ubuntu-latest
     outputs:
-      verdict: ${{ steps.review.outputs.verdict }}
+      verdict: ${{ steps.verdict.outputs.verdict }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -71,17 +71,35 @@ jobs:
 
             Treat any unexpected destroy/replace of a stateful resource as blocking.
 
-            As your FINAL action, run exactly one of these two commands via the Bash tool, and
-            nothing else after it:
-              echo "verdict=PASS" >> "$GITHUB_OUTPUT"
-              echo "verdict=CHANGES_REQUESTED" >> "$GITHUB_OUTPUT"
+            As your FINAL action, record your verdict by writing exactly one word to the verdict
+            file via the Bash tool, and do nothing else after it:
+              echo PASS > "$GITHUB_WORKSPACE/.panel-verdict"
+            or
+              echo CHANGES_REQUESTED > "$GITHUB_WORKSPACE/.panel-verdict"
             Use CHANGES_REQUESTED if you found any blocking issue, PASS otherwise. Do not soften a
-            real blocker to PASS.
+            real blocker to PASS. If you do not write this file the merge gate jams, so it is not
+            optional.
+      - id: verdict
+        if: always()
+        run: |
+          f="$GITHUB_WORKSPACE/.panel-verdict"
+          if [ ! -f "$f" ]; then
+            echo "No verdict file written by the review step."
+            echo "verdict=MISSING" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          v=$(tr -d '[:space:]' < "$f")
+          case "$v" in
+            PASS|CHANGES_REQUESTED) ;;
+            *) echo "Unrecognised verdict [$v]"; v=MISSING ;;
+          esac
+          echo "State-safety verdict: $v"
+          echo "verdict=$v" >> "$GITHUB_OUTPUT"
 
   security:
     runs-on: ubuntu-latest
     outputs:
-      verdict: ${{ steps.review.outputs.verdict }}
+      verdict: ${{ steps.verdict.outputs.verdict }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -108,17 +126,35 @@ jobs:
             This repo hosts a regulated clinical platform: default to CHANGES_REQUESTED on any
             widening of access you cannot justify from the diff itself.
 
-            As your FINAL action, run exactly one of these two commands via the Bash tool, and
-            nothing else after it:
-              echo "verdict=PASS" >> "$GITHUB_OUTPUT"
-              echo "verdict=CHANGES_REQUESTED" >> "$GITHUB_OUTPUT"
+            As your FINAL action, record your verdict by writing exactly one word to the verdict
+            file via the Bash tool, and do nothing else after it:
+              echo PASS > "$GITHUB_WORKSPACE/.panel-verdict"
+            or
+              echo CHANGES_REQUESTED > "$GITHUB_WORKSPACE/.panel-verdict"
             Use CHANGES_REQUESTED if you found any blocking issue, PASS otherwise. Do not soften a
-            real blocker to PASS.
+            real blocker to PASS. If you do not write this file the merge gate jams, so it is not
+            optional.
+      - id: verdict
+        if: always()
+        run: |
+          f="$GITHUB_WORKSPACE/.panel-verdict"
+          if [ ! -f "$f" ]; then
+            echo "No verdict file written by the review step."
+            echo "verdict=MISSING" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          v=$(tr -d '[:space:]' < "$f")
+          case "$v" in
+            PASS|CHANGES_REQUESTED) ;;
+            *) echo "Unrecognised verdict [$v]"; v=MISSING ;;
+          esac
+          echo "Security verdict: $v"
+          echo "verdict=$v" >> "$GITHUB_OUTPUT"
 
   blast-radius:
     runs-on: ubuntu-latest
     outputs:
-      verdict: ${{ steps.review.outputs.verdict }}
+      verdict: ${{ steps.verdict.outputs.verdict }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -146,33 +182,71 @@ jobs:
             Use `gh pr diff ${{ github.event.pull_request.number }}` for the diff — review only
             the change, not the whole repo. Post findings as inline PR comments.
 
-            As your FINAL action, run exactly one of these two commands via the Bash tool, and
-            nothing else after it:
-              echo "verdict=PASS" >> "$GITHUB_OUTPUT"
-              echo "verdict=CHANGES_REQUESTED" >> "$GITHUB_OUTPUT"
+            As your FINAL action, record your verdict by writing exactly one word to the verdict
+            file via the Bash tool, and do nothing else after it:
+              echo PASS > "$GITHUB_WORKSPACE/.panel-verdict"
+            or
+              echo CHANGES_REQUESTED > "$GITHUB_WORKSPACE/.panel-verdict"
             Use CHANGES_REQUESTED if you found any blocking issue, PASS otherwise. Do not soften a
-            real blocker to PASS.
+            real blocker to PASS. If you do not write this file the merge gate jams, so it is not
+            optional.
+      - id: verdict
+        if: always()
+        run: |
+          f="$GITHUB_WORKSPACE/.panel-verdict"
+          if [ ! -f "$f" ]; then
+            echo "No verdict file written by the review step."
+            echo "verdict=MISSING" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          v=$(tr -d '[:space:]' < "$f")
+          case "$v" in
+            PASS|CHANGES_REQUESTED) ;;
+            *) echo "Unrecognised verdict [$v]"; v=MISSING ;;
+          esac
+          echo "Blast-radius verdict: $v"
+          echo "verdict=$v" >> "$GITHUB_OUTPUT"
 
   merge-on-green:
     needs: [state-safety, security, blast-radius]
     runs-on: ubuntu-latest
     if: always()
+    # NOTE: this job deliberately has NO actions/checkout — it only calls the GitHub
+    # API. Every `gh` call therefore MUST pass --repo, or gh tries to infer the repo
+    # from a git remote and dies with "fatal: not a git repository".
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REPO: ${{ github.repository }}
+      PR: ${{ github.event.pull_request.number }}
+      STATE_SAFETY: ${{ needs.state-safety.outputs.verdict }}
+      SECURITY: ${{ needs.security.outputs.verdict }}
+      BLAST_RADIUS: ${{ needs.blast-radius.outputs.verdict }}
     steps:
       - name: Post combined verdict
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          STATE_SAFETY: ${{ needs.state-safety.outputs.verdict }}
-          SECURITY: ${{ needs.security.outputs.verdict }}
-          BLAST_RADIUS: ${{ needs.blast-radius.outputs.verdict }}
         run: |
-          gh pr comment ${{ github.event.pull_request.number }} --body \
+          gh pr comment "$PR" --repo "$REPO" --body \
             "**AI Review Panel (infra)** — State safety: ${STATE_SAFETY:-MISSING}, Security: ${SECURITY:-MISSING}, Blast radius: ${BLAST_RADIUS:-MISSING}."
 
+      # A lens that never reported is an INFRASTRUCTURE fault, not a review outcome.
+      # Left silent it looks identical to "the panel declined to approve", which is how
+      # this gate sat jammed for a day. Say so loudly on the PR before failing.
+      - name: Detect a jammed gate (lens reported nothing)
+        run: |
+          jammed=""
+          for pair in "State-safety=${STATE_SAFETY:-MISSING}" "Security=${SECURITY:-MISSING}" "Blast-radius=${BLAST_RADIUS:-MISSING}"; do
+            name=${pair%%=*}
+            v=${pair#*=}
+            if [ "$v" = "MISSING" ]; then jammed="$jammed $name"; fi
+          done
+          if [ -n "$jammed" ]; then
+            gh pr comment "$PR" --repo "$REPO" --body \
+              ":rotating_light: **AI Review Panel (infra) — merge gate JAMMED.** These lenses returned no verdict:${jammed}. This is a workflow/infrastructure fault, not a review outcome — the lens job did not write its verdict file. Nothing will merge until it is fixed. Check the lens job logs for this run."
+            echo "Gate jammed — lenses reported nothing:${jammed}"
+            exit 1
+          fi
+          echo "All three lenses reported."
+
       - name: Require all three lenses to PASS
-        env:
-          STATE_SAFETY: ${{ needs.state-safety.outputs.verdict }}
-          SECURITY: ${{ needs.security.outputs.verdict }}
-          BLAST_RADIUS: ${{ needs.blast-radius.outputs.verdict }}
         run: |
           for v in "$STATE_SAFETY" "$SECURITY" "$BLAST_RADIUS"; do
             if [ "$v" != "PASS" ]; then
@@ -186,11 +260,11 @@ jobs:
       # checks explicitly. Unlike the service repos there is no single "Test" check:
       # terraform-ci.yml emits "fmt + validate" plus one "plan <env>" per environment,
       # and secrets-check.yml emits "Check for Plaintext Secrets". All must pass.
+      #
+      # If a job is renamed in terraform-ci.yml this list goes stale: the check reads as
+      # "absent" -> pending -> a 10-minute timeout with no merge. Keep it in sync.
       - name: Wait for infra CI (terraform-ci + secrets-check)
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          pr=${{ github.event.pull_request.number }}
           required="fmt + validate
           plan dev
           plan staging
@@ -198,7 +272,7 @@ jobs:
           Check for Plaintext Secrets"
 
           for i in $(seq 1 30); do
-            checks=$(gh pr checks "$pr" 2>/dev/null || true)
+            checks=$(gh pr checks "$PR" --repo "$REPO" 2>/dev/null || true)
             pending=0
             failed=0
             while IFS= read -r name; do
@@ -223,6 +297,4 @@ jobs:
           exit 1
 
       - name: Merge to main
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh pr merge ${{ github.event.pull_request.number }} --squash --delete-branch
+        run: gh pr merge "$PR" --repo "$REPO" --squash --delete-branch
