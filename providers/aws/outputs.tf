@@ -20,7 +20,7 @@ output "lightsail_instance_name" {
 
 output "ecr_registry_url" {
   description = "ECR registry URL (account-shared)"
-  value       = module.registry.registry_url
+  value       = data.terraform_remote_state.shared.outputs.registry_url
 }
 
 output "neon_connection_string" {

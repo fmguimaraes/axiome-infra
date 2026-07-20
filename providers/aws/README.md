@@ -194,24 +194,24 @@ Repeat for each of `dev`, `staging`, `production`.
 
 ### 1.1. Create the Terraform state bucket and lock table
 
-The bootstrap module runs with **local state** to create the S3 + DynamoDB infrastructure that the main stack depends on.
+The bootstrap module runs with **local state** to create the S3 + DynamoDB infrastructure that the main stack depends on. It provisions one bucket + lock table per entry in `var.environments` (default: `dev`, `staging`, `production`, `shared`) in a single `for_each`-keyed apply — re-applying is idempotent and never touches another environment's bucket.
 
 ```bash
 cd providers/aws/bootstrap
 
 terraform init
 
-# For dev
-terraform apply -var=environment=dev
+# Creates/reconciles all of var.environments (idempotent — safe to re-run)
+terraform apply
 
-# For staging
-terraform apply -var=environment=staging
-
-# For production
-terraform apply -var=environment=production
+# To bootstrap just one new entry without touching the others already applied
+# (e.g. adding "shared" to an account that already has dev/staging/production):
+terraform apply -var='environments=["shared"]'
 ```
 
-After each apply, the output `backend_hcl` shows the contents of the corresponding `environments/<env>/backend.hcl` file. These files are pre-populated in this repo, but verify they match your bootstrap output.
+After apply, the outputs `state_buckets` / `lock_tables` show the bucket/table per environment — they should match the corresponding `environments/<env>/backend.hcl` file. These files are pre-populated in this repo, but verify they match your bootstrap output.
+
+`shared` holds account-shared resources (today: ECR — see §1.4a) owned by no single per-environment state, so a stray dev/staging apply or destroy can never touch them (FR8/AC8).
 
 The bootstrap state is local (`bootstrap/terraform.tfstate`). Back it up to your password manager or a private S3 bucket. Losing it is recoverable (resources can be re-imported), but inconvenient.
 
@@ -249,17 +249,29 @@ make init ENV=dev
 make plan ENV=dev
 ```
 
-Expected resources for dev (~30):
+Expected resources for dev (~26):
 - 1 Lightsail instance + 1 static IP
 - 3 S3 buckets (versioning, encryption, public access block)
-- 3 ECR repositories (production env only — dev/staging skip)
 - 1 IAM user (Lightsail runtime) + access key + policy
 - 1 IAM role (SSM) + policy
-- 1 IAM role (ECR pull) + policy
 - ~8 SSM parameters
 - 1 Neon project + branch + role + database
 - 1 Atlas project + cluster + DB user + IP allowlist
 - *(DNS: configured manually in Microsoft 365 after apply — see §0.4)*
+
+### 1.4a. One-time: apply the shared registry state
+
+ECR repositories are account-shared across dev/staging/production and live in
+their own `../shared` root/state (FR8/AC8), not in any per-environment apply.
+Run this **once per AWS account**, before the first `make apply` for any
+environment (every environment's plan reads the registry URL / pull role from
+this state via `terraform_remote_state`):
+
+```bash
+cd providers/aws/shared
+terraform init -backend-config=../environments/shared/backend.hcl
+terraform apply -var-file=../environments/shared/terraform.tfvars
+```
 
 ### 1.5. Apply
 
@@ -302,7 +314,7 @@ docker build -t $REGISTRY/axiome/frontend:latest .
 docker push $REGISTRY/axiome/frontend:latest
 ```
 
-**Note:** ECR repositories are only created by the `production` environment apply. If you bootstrap `dev` first, run `make apply ENV=production` (or temporarily flip `create_repositories = true` for the first env) — the bootstrap order is documented separately.
+**Note:** ECR repositories are created once by `../shared` (§1.4a), not by any per-environment apply — every environment just reads the registry URL via remote state.
 
 ### 1.7. Trigger the VM to pull updated images
 
