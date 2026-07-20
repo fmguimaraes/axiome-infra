@@ -1,0 +1,228 @@
+# AI Review Panel — infrastructure variant.
+#
+# Same three-lens / unanimous-PASS contract as the service repos
+# (axiome-{front,back,bio-compute}), but the lenses are Terraform-shaped:
+# state safety, IAM/exposure, and blast radius — not application code review.
+#
+# Merge gate differs too: this repo's CI is terraform-ci.yml + secrets-check.yml,
+# so the wait polls those checks rather than the services' single "Test" check.
+#
+# NOTE: merging to `main` here triggers terraform-cd.yml. The production apply
+# stays gated behind the `production` Environment's required reviewers, so an
+# AI-approved merge cannot reach production infrastructure unattended.
+
+name: AI Review Panel
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [main]
+    paths:
+      - '**.tf'
+      - '**.tfvars'
+      - 'modules/**'
+      - 'providers/**'
+      - 'environments/**'
+      - 'scripts/**'
+
+concurrency:
+  group: ai-review-panel-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  checks: read
+  statuses: read
+  id-token: write # required: claude-code-action fetches a GitHub OIDC token
+
+jobs:
+  state-safety:
+    runs-on: ubuntu-latest
+    outputs:
+      verdict: ${{ steps.review.outputs.verdict }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: review
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: '--model claude-opus-4-8 --max-turns 30 --allowedTools Bash,Read,Grep,Glob'
+          prompt: |
+            Review pull request #${{ github.event.pull_request.number }} through the
+            **Correctness & State Safety** lens only. This is a Terraform repo — review the
+            plan's effect on real state, not code style.
+
+            Look for: resources that will be REPLACED or DESTROYED rather than updated in
+            place, especially stateful ones (databases, volumes, buckets, Lightsail
+            instances); `count`/`for_each` changes that shift indices and silently recreate
+            resources; refactors that move resources without a `moved` block; missing
+            `prevent_destroy` on data-bearing resources; provider or module version drift;
+            and hardcoded values that will drift between environments.
+
+            Use `gh pr diff ${{ github.event.pull_request.number }}` for the change, and read
+            the `plan dev` / `plan staging` / `plan production` check logs
+            (`gh pr checks ${{ github.event.pull_request.number }}`, then `gh run view --log`)
+            — the plan output is the evidence, the diff alone is not. Review only the change.
+            Post findings as inline PR comments.
+
+            Treat any unexpected destroy/replace of a stateful resource as blocking.
+
+            As your FINAL action, run exactly one of these two commands via the Bash tool, and
+            nothing else after it:
+              echo "verdict=PASS" >> "$GITHUB_OUTPUT"
+              echo "verdict=CHANGES_REQUESTED" >> "$GITHUB_OUTPUT"
+            Use CHANGES_REQUESTED if you found any blocking issue, PASS otherwise. Do not soften a
+            real blocker to PASS.
+
+  security:
+    runs-on: ubuntu-latest
+    outputs:
+      verdict: ${{ steps.review.outputs.verdict }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: review
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: '--model claude-opus-4-8 --max-turns 30 --allowedTools Bash,Read,Grep,Glob'
+          prompt: |
+            Review pull request #${{ github.event.pull_request.number }} through the
+            **Security & IAM** lens only, as infrastructure-as-code.
+
+            Look for: IAM policies granting `*` actions or `*` resources, or wildcards
+            broader than the stated need; trust policies with over-broad principals;
+            network exposure (0.0.0.0/0 ingress, public subnets, public buckets/ACLs);
+            storage or transit left unencrypted, or missing KMS keys; secrets, tokens,
+            passwords or connection strings committed in `.tf`/`.tfvars`; and privilege
+            granted to CI/deploy roles beyond what the workflow actually needs.
+
+            Use `gh pr diff ${{ github.event.pull_request.number }}` for the diff — review only
+            the change, not the whole repo. Post findings as inline PR comments.
+
+            This repo hosts a regulated clinical platform: default to CHANGES_REQUESTED on any
+            widening of access you cannot justify from the diff itself.
+
+            As your FINAL action, run exactly one of these two commands via the Bash tool, and
+            nothing else after it:
+              echo "verdict=PASS" >> "$GITHUB_OUTPUT"
+              echo "verdict=CHANGES_REQUESTED" >> "$GITHUB_OUTPUT"
+            Use CHANGES_REQUESTED if you found any blocking issue, PASS otherwise. Do not soften a
+            real blocker to PASS.
+
+  blast-radius:
+    runs-on: ubuntu-latest
+    outputs:
+      verdict: ${{ steps.review.outputs.verdict }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: review
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: '--model claude-opus-4-8 --max-turns 30 --allowedTools Bash,Read,Grep,Glob'
+          prompt: |
+            Review pull request #${{ github.event.pull_request.number }} through the
+            **Blast Radius & Standards** lens only.
+
+            Look for: environment isolation failures — a change intended for dev that also
+            lands in staging or production, or shared/global resources edited without
+            acknowledging every environment they serve; module and naming conventions
+            inconsistent with the rest of the repo; missing or wrong resource tags;
+            duplication that should be a module variable; values hardcoded per-environment
+            that belong in `environments/`; and whether the change's actual scope matches
+            what the PR title and description claim.
+
+            State the blast radius explicitly in your review: which environments this touches
+            and what user-visible impact an apply would have.
+
+            Use `gh pr diff ${{ github.event.pull_request.number }}` for the diff — review only
+            the change, not the whole repo. Post findings as inline PR comments.
+
+            As your FINAL action, run exactly one of these two commands via the Bash tool, and
+            nothing else after it:
+              echo "verdict=PASS" >> "$GITHUB_OUTPUT"
+              echo "verdict=CHANGES_REQUESTED" >> "$GITHUB_OUTPUT"
+            Use CHANGES_REQUESTED if you found any blocking issue, PASS otherwise. Do not soften a
+            real blocker to PASS.
+
+  merge-on-green:
+    needs: [state-safety, security, blast-radius]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Post combined verdict
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          STATE_SAFETY: ${{ needs.state-safety.outputs.verdict }}
+          SECURITY: ${{ needs.security.outputs.verdict }}
+          BLAST_RADIUS: ${{ needs.blast-radius.outputs.verdict }}
+        run: |
+          gh pr comment ${{ github.event.pull_request.number }} --body \
+            "**AI Review Panel (infra)** — State safety: ${STATE_SAFETY:-MISSING}, Security: ${SECURITY:-MISSING}, Blast radius: ${BLAST_RADIUS:-MISSING}."
+
+      - name: Require all three lenses to PASS
+        env:
+          STATE_SAFETY: ${{ needs.state-safety.outputs.verdict }}
+          SECURITY: ${{ needs.security.outputs.verdict }}
+          BLAST_RADIUS: ${{ needs.blast-radius.outputs.verdict }}
+        run: |
+          for v in "$STATE_SAFETY" "$SECURITY" "$BLAST_RADIUS"; do
+            if [ "$v" != "PASS" ]; then
+              echo "Not merging — one or more lenses did not PASS (state-safety=$STATE_SAFETY security=$SECURITY blast-radius=$BLAST_RADIUS)."
+              exit 1
+            fi
+          done
+
+      # No branch protection / required status checks are configured on this repo, so
+      # `gh pr merge --auto` would have nothing to wait on. Poll this repo's own infra
+      # checks explicitly. Unlike the service repos there is no single "Test" check:
+      # terraform-ci.yml emits "fmt + validate" plus one "plan <env>" per environment,
+      # and secrets-check.yml emits "Check for Plaintext Secrets". All must pass.
+      - name: Wait for infra CI (terraform-ci + secrets-check)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          pr=${{ github.event.pull_request.number }}
+          required="fmt + validate
+          plan dev
+          plan staging
+          plan production
+          Check for Plaintext Secrets"
+
+          for i in $(seq 1 30); do
+            checks=$(gh pr checks "$pr" 2>/dev/null || true)
+            pending=0
+            failed=0
+            while IFS= read -r name; do
+              name=$(echo "$name" | sed 's/^ *//')
+              [ -z "$name" ] && continue
+              status=$(echo "$checks" | awk -F'\t' -v n="$name" '$1==n {print $2; exit}')
+              echo "  $name: [${status:-absent}]"
+              case "$status" in
+                pass) ;;
+                fail) failed=1 ;;
+                *)    pending=1 ;;
+              esac
+            done <<EOF
+          $required
+          EOF
+
+            if [ "$failed" = "1" ]; then echo "Infra CI failed — not merging."; exit 1; fi
+            if [ "$pending" = "0" ]; then echo "All infra checks green."; exit 0; fi
+            sleep 20
+          done
+          echo "Timed out waiting for infra CI."
+          exit 1
+
+      - name: Merge to main
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh pr merge ${{ github.event.pull_request.number }} --squash --delete-branch
