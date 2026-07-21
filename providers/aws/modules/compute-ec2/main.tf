@@ -275,9 +275,17 @@ resource "aws_instance" "main" {
   root_block_device {
     volume_size = var.root_volume_size_gb
     encrypted   = true
+
+    tags = merge(var.tags, {
+      Name       = "${var.naming_prefix}-ec2-root"
+      DlmPolicy  = "daily-root"
+    })
   }
 
-  tags = merge(var.tags, { Name = "${var.naming_prefix}-ec2" })
+  tags = merge(var.tags, {
+    Name      = "${var.naming_prefix}-ec2"
+    DlmPolicy = "daily-root"
+  })
 
   # Pin the AMI: data.aws_ami.ubuntu uses most_recent, so each new Canonical
   # release would otherwise force-replace this stateful VM (wiping the in-VM

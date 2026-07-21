@@ -187,6 +187,21 @@ module "compute_ec2" {
   tags                  = local.base_tags
 }
 
+# ---------------- Compute DR (EBS snapshots) — FR4 / NFR4 / AC4 ----------------
+# DLM lifecycle policy for automated, CMK-encrypted EBS snapshots of the EC2
+# root volume. Gated behind the same toggles as compute_ec2 (the target).
+# See: axiome-docs/reports/infra/FR4-Rebuild-Drill.md for the drill runbook.
+
+module "compute_dr" {
+  source = "./modules/compute-dr"
+  count  = (var.use_ec2_compute && var.use_hds_data_stack) ? 1 : 0
+
+  naming_prefix = local.naming_prefix
+  environment   = var.environment
+  data_cmk_arn  = module.kms.key_arn
+  tags          = local.base_tags
+}
+
 # Managed Redis (ElastiCache) — FR5. Private subnets + data SG; CMK-encrypted.
 module "cache_redis" {
   source = "./modules/cache-redis"

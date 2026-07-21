@@ -57,6 +57,13 @@ output "ssm_parameter_prefix" {
 
 # ---------------- HDS data stack outputs (use_hds_data_stack / use_ec2_compute) ----------------
 
+# ---------------- Compute DR (FR4) ----------------
+
+output "dlm_policy_id" {
+  description = "DLM lifecycle policy ID for EC2 root-volume snapshots (FR4). null until use_ec2_compute = true."
+  value       = try(module.compute_dr[0].policy_id, null)
+}
+
 output "ec2_public_ip" {
   description = "Elastic IP of the EC2 compute. Point the Microsoft 365 A record (platform.axiomebio.com) at this (FR7). null until use_ec2_compute = true."
   value       = try(module.compute_ec2[0].public_ip, null)
