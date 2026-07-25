@@ -8,6 +8,13 @@ set -euo pipefail
 # Optional env: SOURCE_REPO, SOURCE_MESSAGE — when both are set, the commit
 #   message becomes "<repo>-<original commit subject>" instead of the opaque
 #   "ci(<env>): update <service> to <sha>" form, so infra history is readable.
+# Optional env: IMAGE_DIGEST — the immutable "sha256:<64 hex>" digest of the
+#   pushed image. When set, the manifest records "<tag>@<digest>" instead of the
+#   bare mutable tag, so what runs in production is content-addressable and
+#   verifiable (AXI-980 / FR5 / AC5). Every consumer references the image as
+#   "<registry>/<repo>:${*_IMAGE_TAG}"; a "tag@sha256:..." reference pulls by
+#   digest (Docker/OCI verifies the content) while the tag stays readable in the
+#   promotion record. Left unset (e.g. manual runs), behaviour is unchanged.
 #
 # Writes to providers/${PROVIDER}/environments/${ENVIRONMENT}/images.tfvars.
 
@@ -15,6 +22,18 @@ SERVICE="${1:?Usage: $0 <service> <environment> <image_tag>}"
 ENVIRONMENT="${2:?Missing environment}"
 IMAGE_TAG="${3:?Missing image_tag}"
 : "${PROVIDER:?PROVIDER env var required (aws | scaleway | onprem)}"
+
+# When CI resolves the immutable digest, pin it alongside the human-readable tag.
+# "<tag>@sha256:..." is a valid reference that pulls by digest; the promotion
+# record then carries the exact content that was scanned and built.
+IMAGE_REF="${IMAGE_TAG}"
+if [[ -n "${IMAGE_DIGEST:-}" ]]; then
+    if [[ ! "${IMAGE_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+        echo "ERROR: IMAGE_DIGEST is set but malformed (expected 'sha256:<64 hex>', got '${IMAGE_DIGEST}')"
+        exit 1
+    fi
+    IMAGE_REF="${IMAGE_TAG}@${IMAGE_DIGEST}"
+fi
 
 case "${PROVIDER}" in
   aws|scaleway|onprem) ;;
@@ -43,13 +62,13 @@ if [[ ! -f "$TFVARS_FILE" ]]; then
     exit 1
 fi
 
-echo "=== Updating ${SERVICE} in ${ENVIRONMENT} (PROVIDER=${PROVIDER}): ${TF_KEY} -> ${IMAGE_TAG} ==="
+echo "=== Updating ${SERVICE} in ${ENVIRONMENT} (PROVIDER=${PROVIDER}): ${TF_KEY} -> ${IMAGE_REF} ==="
 
 # Pad the key so the `=` aligns the way `terraform fmt` expects; otherwise the
 # infra CI `terraform fmt -check` fails on every promote. Width = length of the
 # longest key (biocompute_image_tag, 20 chars); all keys are always present, so
 # this column is stable.
-NEW_LINE="$(printf '%-20s = "%s"' "${TF_KEY}" "${IMAGE_TAG}")"
+NEW_LINE="$(printf '%-20s = "%s"' "${TF_KEY}" "${IMAGE_REF}")"
 sed -i "s|^${TF_KEY}[[:space:]].*|${NEW_LINE}|" "$TFVARS_FILE"
 
 cd "$REPO_ROOT"
@@ -60,13 +79,13 @@ git config user.email "ci-bot@axiome.dev"
 git add "${TFVARS_REL}"
 
 if git diff --cached --quiet; then
-    echo "No changes to commit (${SERVICE} already at ${IMAGE_TAG})."
+    echo "No changes to commit (${SERVICE} already at ${IMAGE_REF})."
     exit 0
 fi
 
 # Prefer a human-readable "<repo>-<original commit subject>" message when the
 # triggering service passes its repo + commit message; fall back otherwise.
-COMMIT_MSG="ci(${ENVIRONMENT}): update ${SERVICE} to ${IMAGE_TAG}"
+COMMIT_MSG="ci(${ENVIRONMENT}): update ${SERVICE} to ${IMAGE_REF}"
 if [[ -n "${SOURCE_REPO:-}" && -n "${SOURCE_MESSAGE:-}" ]]; then
     SOURCE_SUBJECT="${SOURCE_MESSAGE%%$'\n'*}"
     COMMIT_MSG="${SOURCE_REPO}-${SOURCE_SUBJECT}"
