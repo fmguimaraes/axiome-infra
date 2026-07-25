@@ -2,12 +2,15 @@ name: AI Review Panel
 
 on:
   pull_request:
-    types: [opened, reopened]                                          # (3) drop synchronize — every push no longer re-triggers
+    types: [opened, reopened, synchronize]                             # synchronize re-review lets the rework loop close
   issue_comment:
     types: [created]                                                   # (3) trigger on @claude review mentions
 
 concurrency:
-  group: ai-review-panel-${{ github.event.pull_request.number || github.event.issue.number }}
+  # Scope by event type so an issue_comment (or the panel's own comment) can't cancel
+  # an in-progress pull_request review run — that self-cancellation left PRs without a
+  # verdict and blocked merges.
+  group: ai-review-panel-${{ github.event_name }}-${{ github.event.pull_request.number || github.event.issue.number }}
   cancel-in-progress: true
 
 permissions:
