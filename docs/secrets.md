@@ -101,6 +101,74 @@ different AWS accounts.
 5. Document the rotation date in the team log; CI keys deserve an
    expiry rhythm.
 
+### Rotating `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` (flagged, FR10/AXI-983)
+
+Rotate-then-cutover, never delete-then-create — the old key stays valid until
+you explicitly deactivate it, so there is no window where CI/CD or the runtime
+IAM user (`aws_iam_user.runtime` in `modules/compute-ec2`) has no working
+credential:
+
+1. Create a **second** access key for the same IAM user/user (`aws iam
+   create-access-key`) — AWS allows two active keys per user.
+2. Paste the new key pair into every GitHub repo/environment secret listed in
+   the table above (service repos + `axiome-infra`).
+3. Trigger one build/deploy per repo and confirm it succeeds with the new key.
+4. Only then, deactivate (not delete) the old key: `aws iam
+   update-access-key --status Inactive`. Watch for a day, then delete it.
+5. Record the rotation date + reason below.
+
+### Rotating `JWT_SECRET` (flagged, FR10/AXI-983)
+
+`JWT_SECRET` (Terraform `random_password.jwt_secret` in
+`providers/aws/modules/secrets/main.tf`, written to SSM
+`/{env}/{naming_prefix}/JWT_SECRET`) signs every session token for
+`user-service`, `gateway`, and `organization-service`. **Rotating it
+invalidates every currently-issued token — every logged-in user is signed
+out.** This is a real, user-visible production event, not a silent rotation:
+
+1. Schedule a maintenance window / announce the forced logout.
+2. `terraform taint random_password.jwt_secret` (or `terraform apply
+   -replace=module.secrets.random_password.jwt_secret`) against the target
+   environment, then `terraform apply` — this regenerates the value and
+   updates the SSM `SecureString` in place.
+3. Recreate every service that reads `JWT_SECRET` (`user-service`, `gateway`,
+   `organization-service`) so they pick up the new value from `.env` on next
+   boot — a rolling recreate, not a scale-to-zero, to avoid a full outage.
+4. Confirm login works post-rotation (`scripts/platform-debug.sh health`, then
+   a real login); expect every previously-issued token to now 401.
+5. Record the rotation date + reason below.
+
+### Rotating the Jira and Supabase tokens (flagged, FR10/AXI-983)
+
+Neither credential lives in this repo's Terraform or CI config — they are
+held outside `axiome-infra`/`axiome-back` (issue-tracker integration token,
+and the credential for the legacy Supabase project behind
+`axiome-back/supabase/` — see `supabase/seed_admin_user.sql`, a pre-migration
+artifact kept for reference, not part of the live deploy). Rotate at the
+source (Jira API-token admin page; Supabase project → Settings → API) and
+update wherever each is consumed (CI secret store / password manager); there
+is nothing in this repo to change. Record the rotation date + reason below —
+this repo's log is the one auditable place both rotations get documented even
+though the values live elsewhere.
+
+### Restoring the `secrets` repository read-guard (FR10/AXI-983)
+
+The dossier's gap notes "the `secrets` read-guard is lifted" — i.e. read
+access to the org's separate credentials-vault repository is currently wider
+than intended. That repository is **not** one of this workspace's submodules
+and isn't checked out here, so it can't be inspected or fixed from this
+codebase. Restoring it is a GitHub org/repo-admin action (collaborator/team
+read access, or branch protection) taken directly in that repository's
+Settings — an infra owner with org-admin rights needs to review its current
+collaborator list against the intended access list and tighten it back down.
+Record the date + who performed it below once done.
+
+### Rotation log
+
+| Date | Credential | Performed by | Notes |
+|---|---|---|---|
+| _(add an entry each time one of the above is rotated)_ | | | |
+
 ## Verifying a secret before re-running CI
 
 Quick local probe for a freshly-pasted PAT:
