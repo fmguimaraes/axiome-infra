@@ -20,3 +20,8 @@ Thumbs.db
 .vscode/
 *.swp
 *.swo
+
+# Local dev-stack overrides — machine-local worktree paths, never shared.
+# See docker-compose.override.yml.example.
+docker-compose.override.yml
+docker-compose.*.override.yml

@@ -30,6 +30,13 @@ make local-up
 make local-down
 ```
 
+To develop against a git worktree instead of the primary checkout (`backend`,
+`frontend`, `biocompute`), copy `docker-compose.override.yml.example` to
+`docker-compose.override.yml` (gitignored, machine-local) and point it at the
+worktree path — `make local-*` merges it in automatically. Recreate the
+affected containers to pick up a new mount (`make local-down && make
+local-up`; `make local-restart` alone does not re-read `volumes:`).
+
 ## Cloud Environments
 
 ```bash

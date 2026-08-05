@@ -21,9 +21,16 @@ destroy:
 	terraform destroy -var-file=environments/$(ENV)/terraform.tfvars
 
 # Local development
-DOCKER_COMPOSE := $(shell docker compose version >/dev/null 2>&1 && echo "docker compose" || echo "docker-compose")
-COMPOSE_FILE   := docker-compose.yml
-COMPOSE        := $(DOCKER_COMPOSE) -f $(COMPOSE_FILE)
+#
+# docker-compose.override.yml (or docker-compose.*.override.yml, gitignored,
+# machine-local) is auto-merged when present: point a service's `volumes:` at
+# a `_worktrees/<repo>-<branch>` checkout instead of the primary checkout to
+# develop against worktree content in the dockerized stack. See
+# docker-compose.override.yml.example.
+DOCKER_COMPOSE  := $(shell docker compose version >/dev/null 2>&1 && echo "docker compose" || echo "docker-compose")
+COMPOSE_FILE    := docker-compose.yml
+COMPOSE_OVERRIDE := $(wildcard docker-compose.override.yml)
+COMPOSE         := $(DOCKER_COMPOSE) -f $(COMPOSE_FILE) $(if $(COMPOSE_OVERRIDE),-f $(COMPOSE_OVERRIDE))
 
 # Optional args:
 #   SERVICE=<name>   limit a target to one service (backend, biocompute, frontend, postgres, ...)

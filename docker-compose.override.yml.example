@@ -1,0 +1,20 @@
+# Copy to docker-compose.override.yml (gitignored, machine-local) to point the
+# dockerized dev stack at a worktree instead of the primary checkout, so
+# `make local-up` serves your in-progress branch. Auto-merged by every `make
+# local-*` target once present — no flag needed.
+#
+# Path is relative to this file's directory (axiome-infra/).
+services:
+  backend:
+    volumes:
+      - ../../_worktrees/axiome-back-<branch>:/app
+      - backend_node_modules:/app/node_modules
+
+  frontend:
+    volumes:
+      - ../../_worktrees/axiome-front-<branch>:/app
+      - frontend_node_modules:/app/node_modules
+
+  biocompute:
+    volumes:
+      - ../../_worktrees/axiome-bio-compute-<branch>:/app
