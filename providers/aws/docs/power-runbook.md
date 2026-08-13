@@ -61,13 +61,20 @@ deleted outside Terraform; a CD apply mid-window recreates it empty (data loss)
 and drifts state. After `up`, `terraform plan` should show **no changes** (same
 id/config → re-adopted). Don't un-gate CD until that plan is clean.
 
-## Audit log — `reports/`
+## Reports — `reports/`
 
-Every `down`/`up` appends one row to `reports/power-operations.md` (UTC
-timestamp, env, resource, change, IAM actor), committed to git as the versioned
-record. Change reports (tooling additions) live alongside as
-`reports/YYYY-MM-DD-<slug>.md`. `REPORTS_DIR` resolves to the repo root of the
-checkout running the script (via `git rev-parse`); override with `REPORTS_DIR=`.
+Every `down`/`up` writes **two** things automatically (`status` writes nothing):
+
+1. **A per-run report** `reports/YYYY-MM-DD-HHMMSS-<env>-<op>.md` — self-contained:
+   actor, region, before-state, actions taken (with snapshot ids / time-to-up),
+   after-state, and any reminders. One file per operation.
+2. **One index row** appended to `reports/power-operations.md` — a quick-scan
+   trail (UTC timestamp, env, resource, change, IAM actor) across all runs.
+
+Both are produced by `scripts/_power_lib.sh` (sourced by both scripts).
+`REPORTS_DIR` resolves to the repo root of the checkout running the script (via
+`git rev-parse`); override with `REPORTS_DIR=`. Reports are written to the working
+tree — committing them is a separate step (not auto-committed).
 
 ## terraform-cd interaction
 

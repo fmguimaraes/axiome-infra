@@ -36,22 +36,10 @@ RG_ID="${PROJECT}-${ENV}-redis"
 STATE_KEY="power-data/redis-state.env"
 STATE_S3="s3://${SYSTEM_BUCKET}/${STATE_KEY}"
 
-# Reports live at the repo root of whatever checkout/worktree this script runs
-# from, so the audit log is versioned alongside the code that produced it.
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || echo "${SCRIPT_DIR}/../../..")"
-REPORTS_DIR="${REPORTS_DIR:-${REPO_ROOT}/reports}"
-
-# --- versioned audit log (one appended entry per change) -----------------------
-log_event() { # <resource> <change>
-  mkdir -p "$REPORTS_DIR"
-  local ts who
-  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  who="$(aws sts get-caller-identity --query Arn --output text 2>/dev/null || echo unknown)"
-  printf '| %s | %s | %s | %s | %s |\n' "$ts" "$ENV" "$1" "$2" "$who" \
-    >> "${REPORTS_DIR}/power-operations.md"
-  echo "  logged: $1 — $2"
-}
+# Shared reporting/audit helpers. Reports land at the repo root of whatever
+# checkout/worktree this runs from, versioned alongside the code.
+# shellcheck source=_power_lib.sh
+. "$(cd "$(dirname "$0")" && pwd)/_power_lib.sh"
 
 rds_state()   { aws rds describe-db-instances --region "$REGION" --db-instance-identifier "$RDS_ID" \
                   --query 'DBInstances[0].DBInstanceStatus' --output text 2>/dev/null || echo absent; }
@@ -99,12 +87,19 @@ case "$ACTION" in
 
   down)
     echo "== ${ENV} data-tier DOWN =="
+    report_init "$ENV" "data-down"
+    report_section "Before"
+    report_line "RDS ${RDS_ID}: $(rds_state)"
+    report_line "Redis ${RG_ID}: $(redis_state)"
+    report_section "Actions"
     # 1) RDS: stop (never delete — deletion_protection on prod)
     if [ "$(rds_state)" = "available" ]; then
       aws rds stop-db-instance --region "$REGION" --db-instance-identifier "$RDS_ID" >/dev/null
-      log_event "RDS ${RDS_ID}" "available -> stopping (AWS auto-restarts after 7d)"
+      log_event "$ENV" "RDS ${RDS_ID}" "available -> stopping (AWS auto-restarts after 7d)"
+      report_line "RDS ${RDS_ID}: stop requested (auto-restarts after 7d)."
     else
       echo "  RDS not 'available' (state: $(rds_state)) — skipping stop"
+      report_line "RDS ${RDS_ID}: skipped (state $(rds_state))."
     fi
     # 2) ElastiCache: capture config -> final snapshot -> delete
     if [ "$(redis_state)" = "available" ]; then
@@ -112,21 +107,36 @@ case "$ACTION" in
       echo "  config saved to ${STATE_S3}; taking final snapshot ${SNAP} and deleting RG..."
       aws elasticache delete-replication-group --region "$REGION" \
         --replication-group-id "$RG_ID" --final-snapshot-identifier "$SNAP" >/dev/null
-      log_event "Redis ${RG_ID}" "snapshot ${SNAP} taken, replication group deleting"
+      log_event "$ENV" "Redis ${RG_ID}" "snapshot ${SNAP} taken, replication group deleting"
+      report_line "Redis ${RG_ID}: config -> ${STATE_S3}; final snapshot ${SNAP}; RG deleting."
     else
       echo "  Redis not 'available' (state: $(redis_state)) — skipping snapshot/delete"
+      report_line "Redis ${RG_ID}: skipped (state $(redis_state))."
     fi
+    report_section "After"
+    report_line "RDS ${RDS_ID}: $(rds_state)"
+    report_line "Redis ${RG_ID}: $(redis_state)"
+    report_line "**Reminder:** keep terraform-cd gated until 'up'."
+    report_finish
     echo "done. REMINDER: keep terraform-cd gated until you run 'up'."
     ;;
 
   up)
     echo "== ${ENV} data-tier UP =="
+    report_init "$ENV" "data-up"
+    report_section "Before"
+    report_line "RDS ${RDS_ID}: $(rds_state)"
+    report_line "Redis ${RG_ID}: $(redis_state)"
+    report_section "Actions"
     # 1) RDS: start if stopped (no-op if AWS already auto-restarted it)
     case "$(rds_state)" in
       stopped) aws rds start-db-instance --region "$REGION" --db-instance-identifier "$RDS_ID" >/dev/null
-               log_event "RDS ${RDS_ID}" "stopped -> starting" ;;
-      available) echo "  RDS already available — skipping start" ;;
-      *) echo "  RDS state: $(rds_state) — not starting" ;;
+               log_event "$ENV" "RDS ${RDS_ID}" "stopped -> starting"
+               report_line "RDS ${RDS_ID}: start requested." ;;
+      available) echo "  RDS already available — skipping start"
+               report_line "RDS ${RDS_ID}: already available (skipped)." ;;
+      *) echo "  RDS state: $(rds_state) — not starting"
+               report_line "RDS ${RDS_ID}: not started (state $(rds_state))." ;;
     esac
     # 2) ElastiCache: recreate from snapshot + captured config
     if [ "$(redis_state)" = "absent" ]; then
@@ -146,13 +156,20 @@ case "$ACTION" in
         --port 6379 --snapshot-retention-limit 0 --snapshot-window "$WINDOW" \
         --at-rest-encryption-enabled --kms-key-id "$KMS" \
         --transit-encryption-enabled --transit-encryption-mode required >/dev/null
-      log_event "Redis ${RG_ID}" "recreating from snapshot ${SNAPSHOT_NAME}"
+      log_event "$ENV" "Redis ${RG_ID}" "recreating from snapshot ${SNAPSHOT_NAME}"
+      report_line "Redis ${RG_ID}: recreating from snapshot ${SNAPSHOT_NAME}."
     else
       echo "  Redis state: $(redis_state) — not recreating"
+      report_line "Redis ${RG_ID}: not recreated (state $(redis_state))."
     fi
     echo "waiting for RDS available + Redis available..."
     aws rds wait db-instance-available --region "$REGION" --db-instance-identifier "$RDS_ID" || true
     aws elasticache wait replication-group-available --region "$REGION" --replication-group-id "$RG_ID" || true
+    report_section "After"
+    report_line "RDS ${RDS_ID}: $(rds_state)"
+    report_line "Redis ${RG_ID}: $(redis_state)"
+    report_line "**Next:** re-enable terraform-cd (a plan should show NO changes)."
+    report_finish
     echo "data tier UP. Now re-enable terraform-cd (a plan should show NO changes)."
     ;;
 

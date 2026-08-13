@@ -26,21 +26,10 @@ case "$ENV" in dev|staging|production) ;; *) usage ;; esac
 PROJECT="${AXIOME_PROJECT:-axiome}"
 REGION="${AWS_REGION:-eu-west-3}"
 
-# Reports live at the repo root of whatever checkout/worktree this script runs
-# from, so the audit log is versioned alongside the code that produced it.
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || echo "${SCRIPT_DIR}/../../..")"
-REPORTS_DIR="${REPORTS_DIR:-${REPO_ROOT}/reports}"
-
-# versioned audit log — one appended entry per change
-log_event() { # <resource> <change>
-  mkdir -p "$REPORTS_DIR"
-  local ts who
-  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  who="$(aws sts get-caller-identity --query Arn --output text 2>/dev/null || echo unknown)"
-  printf '| %s | %s | %s | %s | %s |\n' "$ts" "$ENV" "$1" "$2" "$who" \
-    >> "${REPORTS_DIR}/power-operations.md"
-}
+# Shared reporting/audit helpers. Reports land at the repo root of whatever
+# checkout/worktree this runs from, versioned alongside the code.
+# shellcheck source=_power_lib.sh
+. "$(cd "$(dirname "$0")" && pwd)/_power_lib.sh"
 
 # Readiness endpoint = the app's liveness probe, reached through the public edge
 # (CloudFront -> Caddy -> gateway). 200 means the stack is actually serving, not
@@ -80,14 +69,22 @@ case "$ACTION" in
     ;;
 
   down)
+    report_init "$ENV" "compute-down"
+    report_section "Before"; report_line "EC2 ${IID}: $(state)"
     echo "stopping compute ${IID} (${ENV}) — RDS / ElastiCache / S3 / state untouched"
     aws ec2 stop-instances --region "$REGION" --instance-ids "$IID" >/dev/null
     aws ec2 wait instance-stopped --region "$REGION" --instance-ids "$IID"
-    log_event "EC2 ${IID}" "compute stopped"
+    log_event "$ENV" "EC2 ${IID}" "compute stopped"
+    report_section "Actions"
+    report_line "Stopped EC2 ${IID}. RDS / ElastiCache / S3 / state deliberately untouched."
+    report_section "After"; report_line "EC2 ${IID}: $(state)"
+    report_finish
     echo "stopped."
     ;;
 
   up)
+    report_init "$ENV" "compute-up"
+    report_section "Before"; report_line "EC2 ${IID}: $(state)"
     start_epoch="$(date +%s)"
     echo "starting compute ${IID} (${ENV})"
     aws ec2 start-instances --region "$REGION" --instance-ids "$IID" >/dev/null
@@ -96,13 +93,20 @@ case "$ACTION" in
     deadline=$(( start_epoch + 600 ))
     until curl -fsS -o /dev/null --max-time 5 "$HEALTH_URL"; do
       [ "$(date +%s)" -lt "$deadline" ] || {
+        report_section "Actions"; report_line "Started EC2 ${IID} but app NOT READY after 10m."
+        report_finish
         echo "NOT READY after 10m — check the box: ssm-exec.sh ${ENV} 'docker compose -f /opt/axiome/docker-compose.yml ps'" >&2
         exit 1
       }
       sleep 5
     done
     ttu=$(( $(date +%s) - start_epoch ))
-    log_event "EC2 ${IID}" "compute started, time-to-up ${ttu}s"
+    log_event "$ENV" "EC2 ${IID}" "compute started, time-to-up ${ttu}s"
+    report_section "Actions"
+    report_line "Started EC2 ${IID}; app served ${HEALTH_URL} (HTTP 200)."
+    report_line "**time-to-up: ${ttu}s**"
+    report_section "After"; report_line "EC2 ${IID}: $(state)"
+    report_finish
     echo "READY. time-to-up: ${ttu}s"
     ;;
 
