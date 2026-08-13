@@ -1,0 +1,87 @@
+# Runbook — Power controls (`power.sh` + `power-data.sh`)
+
+Cut the AWS bill on the low-traffic HDS environment without clicking the console.
+Two scripts, two risk profiles. Both write a versioned audit row per change to
+the repo-root `reports/power-operations.md` of the checkout they run from.
+
+Invoke via Make (from `providers/aws/`, `ENV` defaults to `dev`):
+
+```bash
+make power-status ENV=production   # EC2 state
+make power-down   ENV=production   # stop compute for the night
+make power-up     ENV=production   # start compute; prints time-to-up
+make data-status  ENV=production   # RDS + Redis state
+make data-down    ENV=production   # long-idle park (destructive for Redis)
+make data-up      ENV=production   # restore data tier
+```
+
+Or call the scripts directly: `scripts/power.sh <env> <up|down|status>`.
+
+## Compute — daily (`power.sh`)
+
+Stops/starts **only** the EC2 box; never RDS/ElastiCache/S3/state. The EBS root
+volume (Mongo/Rabbit/local-Redis docker volumes) survives a stop, so no data
+moves. On boot the enabled `axiome.service` systemd unit runs `docker compose up
+-d` against images already on EBS — no ECR pull.
+
+### Time-to-up — the commercial number
+
+`up` blocks until `https://<fqdn>/api/v1/health/live` returns 200 (through
+CloudFront → Caddy → gateway) and prints elapsed seconds; the value is also
+logged to `reports/`.
+
+- **Estimated ~2–4 min.** Instance start ~30–60 s, then gateway waits on RabbitMQ
+  healthy (`start_period` 90 s) before it serves — so cold-start won't beat ~90 s.
+- **Measured (fill in on first real run):**
+  - `YYYY-MM-DD  production  up  ____ s`
+
+> **Live window from ~25 Aug.** Emmanuel needs the platform live from ~25/08. If
+> a demo or the *convention d'accueil* lands, cold-start latency is a commercial
+> variable: bring compute up **before** a scheduled demo (it's ~2–4 min, not
+> instant), and don't leave prod down overnight in this window unless someone can
+> run `power-up` first.
+
+## Data tier — long idle only (`power-data.sh`)
+
+Separate script, separate risk. Use **only** for a multi-day park, never daily.
+
+- **RDS** → `stop` / `start`. Never deleted (deletion_protection on prod).
+  ⚠ **AWS auto-restarts a stopped RDS after 7 days.** For a ≥10-day window,
+  re-run `data-down` around day 6, or accept ~3 days of restarted billing.
+- **ElastiCache** → snapshot → delete → restore (cannot be stopped). `down` saves
+  the live config to `s3://axiome-<env>-system/power-data/redis-state.env` and
+  takes a final snapshot before deleting; `up` recreates from both. There are
+  **no automatic backups** (`SnapshotRetentionLimit=0`), so that final snapshot is
+  the only copy.
+
+**Order at `up`:** data tier up **and healthy first**, then `power-up` the compute.
+
+**‼ terraform-cd must be gated for the whole Redis down→up window.** The RG is
+deleted outside Terraform; a CD apply mid-window recreates it empty (data loss)
+and drifts state. After `up`, `terraform plan` should show **no changes** (same
+id/config → re-adopted). Don't un-gate CD until that plan is clean.
+
+## Audit log — `reports/`
+
+Every `down`/`up` appends one row to `reports/power-operations.md` (UTC
+timestamp, env, resource, change, IAM actor), committed to git as the versioned
+record. Change reports (tooling additions) live alongside as
+`reports/YYYY-MM-DD-<slug>.md`. `REPORTS_DIR` resolves to the repo root of the
+checkout running the script (via `git rev-parse`); override with `REPORTS_DIR=`.
+
+## terraform-cd interaction
+
+- **Compute:** safe without gating CD — the AWS provider doesn't manage instance
+  power state, so `apply` over a stopped instance is a no-op.
+- **Data tier:** gate CD (see above). Deleting the ElastiCache RG is a real
+  resource deletion that `apply` would otherwise revert.
+
+## Troubleshooting
+
+- **`power-up` never READY:** instance running but stack not serving. On the box:
+  `ssm-exec.sh <env> 'docker compose -f /opt/axiome/docker-compose.yml ps'`,
+  `journalctl -u axiome.service`.
+- **"expected exactly one instance":** a deploy is mid-replace (two VMs). Re-run.
+- **`data-up` Redis recreate fails:** confirm the final snapshot exists
+  (`aws elasticache describe-snapshots`) and the state file is present at
+  `s3://axiome-<env>-system/power-data/redis-state.env`.

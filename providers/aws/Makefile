@@ -1,4 +1,5 @@
-.PHONY: bootstrap init plan apply destroy fmt validate output ssh
+.PHONY: bootstrap init plan apply destroy fmt validate output ssh \
+        power-status power-up power-down data-status data-down data-up
 
 ENV ?= dev
 
@@ -41,3 +42,21 @@ fmt:
 
 validate:
 	terraform validate
+
+# --- Cost power controls (ENV=production required for prod) --------------------
+# Compute on/off (safe, daily). Never touches storage. See docs/power-runbook.md.
+power-status:
+	@scripts/power.sh $(ENV) status
+power-up:
+	@scripts/power.sh $(ENV) up
+power-down:
+	@scripts/power.sh $(ENV) down
+
+# Data-tier park (long idle only; destructive for ElastiCache). Gate terraform-cd
+# for the whole down->up window. See docs/power-runbook.md.
+data-status:
+	@scripts/power-data.sh $(ENV) status
+data-down:
+	@scripts/power-data.sh $(ENV) down
+data-up:
+	@scripts/power-data.sh $(ENV) up
