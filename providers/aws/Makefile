@@ -1,5 +1,6 @@
 .PHONY: bootstrap init plan apply destroy fmt validate output ssh \
-        power-status power-up power-down data-status data-down data-up
+        power-status power-up power-down data-status data-down data-up \
+        down up status
 
 ENV ?= dev
 
@@ -60,3 +61,17 @@ data-down:
 	@scripts/power-data.sh $(ENV) down
 data-up:
 	@scripts/power-data.sh $(ENV) up
+
+# --- Whole deployment (compute + data tier) in one call -----------------------
+# down: stop the app first, then park the data tier (RDS stop + Redis snapshot/delete).
+# up:   bring the data tier back first, then start the app on a warm DB/Redis.
+# ‼ `down`/`up` touch the data tier — gate terraform-cd for the whole window.
+down:
+	@scripts/power.sh $(ENV) down
+	@scripts/power-data.sh $(ENV) down
+up:
+	@scripts/power-data.sh $(ENV) up
+	@scripts/power.sh $(ENV) up
+status:
+	@scripts/power.sh $(ENV) status
+	@scripts/power-data.sh $(ENV) status
