@@ -73,8 +73,12 @@ Every `down`/`up` writes **two** things automatically (`status` writes nothing):
 
 Both are produced by `scripts/_power_lib.sh` (sourced by both scripts).
 `REPORTS_DIR` resolves to the repo root of the checkout running the script (via
-`git rev-parse`); override with `REPORTS_DIR=`. Reports are written to the working
-tree — committing them is a separate step (not auto-committed).
+`git rev-parse`); override with `REPORTS_DIR=`.
+
+**Auto-commit:** after writing, the script commits *just* the per-run report and
+the index row to the current branch (pathspec-scoped, so unrelated staged work is
+never swept in). Commit message: `reports: <env> <op> — <report-basename>`. Opt
+out with `POWER_NO_COMMIT=1`; it silently skips if the checkout isn't a git repo.
 
 ## terraform-cd interaction
 

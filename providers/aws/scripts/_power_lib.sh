@@ -7,7 +7,7 @@
 #     -> one self-contained markdown report file per run
 
 _pl_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(git -C "$_pl_dir" rev-parse --show-toplevel 2>/dev/null || echo "${_pl_dir}/../../..")"
+REPO_ROOT="${REPO_ROOT:-$(git -C "$_pl_dir" rev-parse --show-toplevel 2>/dev/null || echo "${_pl_dir}/../../..")}"
 REPORTS_DIR="${REPORTS_DIR:-${REPO_ROOT}/reports}"
 
 _actor() { aws sts get-caller-identity --query Arn --output text 2>/dev/null || echo unknown; }
@@ -24,6 +24,7 @@ log_event() { # <env> <resource> <change>
 # report_init <env> <op-label>   e.g. report_init production compute-down
 report_init() {
   mkdir -p "$REPORTS_DIR"
+  _REPORT_ENV="$1"; _REPORT_OP="$2"
   _REPORT_BUF="$(mktemp)"
   _REPORT_FILE="${REPORTS_DIR}/$(date -u +%Y-%m-%d-%H%M%S)-${1}-${2}.md"
   {
@@ -40,4 +41,25 @@ report_line()    { printf -- '- %s\n' "$1" >> "$_REPORT_BUF"; }
 report_finish() {
   mv "$_REPORT_BUF" "$_REPORT_FILE"
   echo "  report: ${_REPORT_FILE}"
+  _report_autocommit
+}
+
+# Auto-commit the per-run report + index row to the current branch. Scoped to
+# just those two paths (pathspec), so it never sweeps up unrelated staged work.
+# Opt out with POWER_NO_COMMIT=1; silently skips if REPO_ROOT isn't a git repo.
+_report_autocommit() {
+  [ "${POWER_NO_COMMIT:-0}" = "1" ] && { echo "  (auto-commit off: POWER_NO_COMMIT=1)"; return 0; }
+  git -C "$REPO_ROOT" rev-parse --git-dir >/dev/null 2>&1 || { echo "  (auto-commit skipped: not a git repo)"; return 0; }
+  local idx="${REPORTS_DIR}/power-operations.md" paths=()
+  [ -f "$_REPORT_FILE" ] && paths+=("$_REPORT_FILE")
+  [ -f "$idx" ] && paths+=("$idx")
+  [ "${#paths[@]}" -gt 0 ] || { echo "  (auto-commit: nothing to commit)"; return 0; }
+  git -C "$REPO_ROOT" add -- "${paths[@]}"
+  if git -C "$REPO_ROOT" diff --cached --quiet -- "${paths[@]}"; then
+    echo "  (auto-commit: nothing to commit)"; return 0
+  fi
+  git -C "$REPO_ROOT" commit -q \
+    -m "reports: ${_REPORT_ENV} ${_REPORT_OP} — $(basename "$_REPORT_FILE" .md)" \
+    -- "${paths[@]}" \
+    && echo "  committed report to $(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD)"
 }
