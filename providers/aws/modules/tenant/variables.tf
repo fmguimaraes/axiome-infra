@@ -23,6 +23,13 @@ variable "kms_key_arn" {
     ARN of the CMK that encrypts this tenant's bucket at rest (NFR2/AC1). The
     per-tenant IAM role is granted GenerateDataKey/Decrypt on ONLY this key.
     Empty falls back to SSE-S3 (AES256) and no KMS grant — dev/local only.
+
+    This module does NOT create the key — it encrypts with whatever ARN it is
+    handed. The caller decides whether that is a genuinely per-tenant CMK or the
+    shared platform CMK: pass a per-tenant key ARN (root var.tenant_kms_key_arns)
+    to realize NFR2's per-tenant-key posture; otherwise the shared platform CMK is
+    used and bucket-scoped isolation still holds. Per-tenant CMK *creation* is
+    FR18/Phase-2 (AXI-1292).
   EOT
   type        = string
   default     = ""

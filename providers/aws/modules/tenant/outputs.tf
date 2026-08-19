@@ -27,3 +27,13 @@ output "residency" {
   description = "Recorded data-residency region for this tenant (NFR1); empty = provider region."
   value       = var.residency
 }
+
+output "kms_key_ref" {
+  description = <<-EOT
+    ARN of the CMK this tenant's bucket is encrypted with — the registry
+    `kms_key_ref` (FR2/FR5, a REFERENCE, never key material). Empty when the bucket
+    uses SSE-S3 (dev/local). A per-tenant key ARN here means NFR2's per-tenant-key
+    posture is realized for this tenant; the shared platform CMK otherwise.
+  EOT
+  value       = var.kms_key_arn
+}

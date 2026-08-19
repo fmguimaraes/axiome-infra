@@ -69,9 +69,19 @@ module "tenant" {
   source   = "./modules/tenant"
   for_each = { for t in var.tenants : t.tenant_id => t }
 
-  naming_prefix        = local.naming_prefix
-  tenant_id            = each.value.tenant_id
-  kms_key_arn          = module.kms.key_arn
+  naming_prefix = local.naming_prefix
+  tenant_id     = each.value.tenant_id
+
+  # AXI-1297 · FR5/NFR2 — per-tenant data-key REFERENCE seam. A per-tenant CMK ARN
+  # supplied in var.tenant_kms_key_arns (keyed by tenant_id) realizes NFR2's
+  # per-tenant-key posture; absent one, the tenant bucket falls back to the SHARED
+  # platform CMK (module.kms.key_arn) — bucket-scoped S3 isolation still holds, but
+  # the key is not yet tenant-unique.
+  # TODO(FR18/AXI-1292 — Phase 2): create a real per-tenant CMK inside modules/tenant
+  # (aws_kms_key + alias, rotation enabled) so every tenant added to var.tenants gets
+  # a tenant-unique key by construction, and drop this shared-CMK fallback. Key
+  # *creation* is deliberately out of Phase-1/AXI-1297 scope (references only).
+  kms_key_arn          = try(var.tenant_kms_key_arns[each.key], module.kms.key_arn)
   residency            = try(each.value.residency, "")
   cors_allowed_origins = ["https://${local.fqdn}"]
 

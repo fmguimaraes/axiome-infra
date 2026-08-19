@@ -36,6 +36,20 @@ variable "tenants" {
   default = []
 }
 
+variable "tenant_kms_key_arns" {
+  description = <<-EOT
+    AXI-1297 · FR5/NFR2 — optional map tenant_id -> per-tenant CMK ARN. When a
+    tenant_id is present here, that per-tenant key encrypts the tenant's bucket
+    (NFR2 per-tenant-key posture) and the registry `kms_key_ref` records its ARN;
+    a tenant absent here falls back to the shared platform CMK (bucket-scoped
+    isolation still holds). This is the REFERENCE seam only — the key itself is
+    created elsewhere. Per-tenant CMK *creation* inside modules/tenant is
+    FR18/Phase-2 (AXI-1292); once that lands this variable becomes redundant.
+  EOT
+  type        = map(string)
+  default     = {}
+}
+
 variable "shared_state_bucket" {
   description = "S3 bucket holding the dedicated shared/account-level Terraform state (ECR, etc. — see ../shared). Read-only from here via terraform_remote_state; no per-environment root ever creates these resources (FR8/AC8)."
   type        = string

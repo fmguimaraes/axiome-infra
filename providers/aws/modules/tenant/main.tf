@@ -46,10 +46,15 @@ resource "aws_s3_bucket_public_access_block" "tenant" {
   restrict_public_buckets = true
 }
 
-# SSE-KMS with the per-tenant CMK (NFR2/AC1). All object classes — raw uploads,
-# canonical Parquet, derived tables, and rendered-charts/ — live under this one
-# bucket, so every object class is encrypted with the tenant's key and sits inside
-# the tenant boundary (FR10 — closes DEF-3, the rendered-charts/ leak).
+# SSE-KMS with the CMK referenced by var.kms_key_arn (NFR2/AC1). All object
+# classes — raw uploads, canonical Parquet, derived tables, and rendered-charts/ —
+# live under this one bucket, so every object class is encrypted with that key and
+# sits inside the tenant boundary (FR10 — closes DEF-3, the rendered-charts/ leak).
+# NOTE (AXI-1297): whether this is a genuinely PER-TENANT CMK or the shared
+# platform CMK is decided by the caller (providers/aws/main.tf) via what it passes
+# for kms_key_arn — this module encrypts with whatever key ARN it is handed and
+# does not create one. Per-tenant CMK *creation* is FR18/Phase-2 (AXI-1292); see
+# variables.tf `kms_key_arn` and the root module wiring.
 resource "aws_s3_bucket_server_side_encryption_configuration" "tenant" {
   bucket = aws_s3_bucket.tenant.id
   rule {

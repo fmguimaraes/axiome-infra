@@ -60,6 +60,11 @@ output "tenant_credential_refs" {
   value       = { for id, m in module.tenant : id => m.role_arn }
 }
 
+output "tenant_kms_key_refs" {
+  description = "Map tenant_id -> CMK ARN encrypting that tenant's bucket (registry `kms_key_ref`, FR2/FR5 — a reference, never key material). Per-tenant key when supplied via var.tenant_kms_key_arns, else the shared platform CMK (FR18/Phase-2 makes it per-tenant by construction)."
+  value       = { for id, m in module.tenant : id => m.kms_key_ref }
+}
+
 output "ssm_parameter_prefix" {
   description = "SSM Parameter Store prefix where runtime config is stored"
   value       = module.secrets.parameter_prefix
