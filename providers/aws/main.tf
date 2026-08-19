@@ -57,6 +57,32 @@ module "storage" {
   tags                 = local.base_tags
 }
 
+# ---------------- Tenant storage isolation (FR10/FR11/NFR1 · AC1/AC6) ----------------
+# Bucket-per-tenant + a per-tenant IAM role scoped to only that bucket + KMS key.
+# One module instance per tenant (Factory over the tenant set). The bucket name and
+# role ARN are the Tenant Registry's `bucket_ref` / `credential_ref` (FR2); the role
+# is what AXI-1299 assumes for per-job, tenant-scoped credentials (FR12). Default is
+# an empty tenant set — the MIPP pilot tenant is added when Phase 2's registry /
+# migration (FR14/FR17, Design A) is ready to point the app at the new bucket; the
+# reusable mechanism (this module + the removed all-tenant grant) ships in Phase 1.
+module "tenant" {
+  source   = "./modules/tenant"
+  for_each = { for t in var.tenants : t.tenant_id => t }
+
+  naming_prefix        = local.naming_prefix
+  tenant_id            = each.value.tenant_id
+  kms_key_arn          = module.kms.key_arn
+  residency            = try(each.value.residency, "")
+  cors_allowed_origins = ["https://${local.fqdn}"]
+
+  # The compute host assumes each tenant role for per-job STS creds (AXI-1299).
+  # Empty until the EC2 stack exists (dev/staging scaffold-only) → module falls
+  # back to the account root, governed by the caller's IAM policy.
+  assume_role_principal_arns = compact([try(module.compute_ec2[0].instance_role_arn, "")])
+
+  tags = local.base_tags
+}
+
 # ---------------- Registry (ECR) ----------------
 # ECR repositories are account-shared and owned by the dedicated `../shared` state
 # (FR8/AC8) — never by a per-environment (dev/staging/production) state, so a stray
@@ -173,11 +199,14 @@ module "compute_ec2" {
   ecr_registry          = data.terraform_remote_state.shared.outputs.registry_url
   fqdn                  = local.fqdn
   data_cmk_arn          = module.kms.key_arn
-  backend_image_tag     = var.backend_image_tag
-  biocompute_image_tag  = var.biocompute_image_tag
-  frontend_image_tag    = var.frontend_image_tag
-  use_ssm_image_tags    = var.use_ssm_image_tags
-  tags                  = local.base_tags
+  # Named shared platform buckets only — removes the former `${naming_prefix}-*`
+  # wildcard S3 grant so the host can never reach a per-tenant bucket (FR11/AC6).
+  platform_bucket_arns = module.storage.all_bucket_arns
+  backend_image_tag    = var.backend_image_tag
+  biocompute_image_tag = var.biocompute_image_tag
+  frontend_image_tag   = var.frontend_image_tag
+  use_ssm_image_tags   = var.use_ssm_image_tags
+  tags                 = local.base_tags
 }
 
 # Managed Redis (ElastiCache) — FR5. Private subnets + data SG; CMK-encrypted.

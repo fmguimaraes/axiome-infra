@@ -19,6 +19,23 @@ variable "aws_region" {
   default     = "eu-west-3"
 }
 
+variable "tenants" {
+  description = <<-EOT
+    Tenants to provision a per-tenant bucket + IAM role for (FR10/FR11 via
+    modules/tenant). Each object: `tenant_id` (Tenant Registry tenant_id, FR2 —
+    lowercase S3-safe) and optional `residency` (region, NFR1; empty = provider
+    region). Default empty: Phase 1 ships the mechanism and removes the shared
+    all-tenant grant, while the MIPP pilot tenant
+    (`f371ce3f-86ca-40de-9242-5b2aeed7d068`) is added here when Phase 2's registry
+    / migration is ready to repoint the app at its dedicated bucket (Design A).
+  EOT
+  type = list(object({
+    tenant_id = string
+    residency = optional(string, "")
+  }))
+  default = []
+}
+
 variable "shared_state_bucket" {
   description = "S3 bucket holding the dedicated shared/account-level Terraform state (ECR, etc. — see ../shared). Read-only from here via terraform_remote_state; no per-environment root ever creates these resources (FR8/AC8)."
   type        = string

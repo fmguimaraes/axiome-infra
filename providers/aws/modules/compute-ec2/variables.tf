@@ -90,6 +90,17 @@ variable "data_cmk_arn" {
   default     = ""
 }
 
+variable "platform_bucket_arns" {
+  description = <<-EOT
+    Explicit ARN list of the shared platform buckets (artifacts, uploads, system)
+    and their /* object ARNs, wired from module.storage.all_bucket_arns. This
+    REPLACES the former `$${naming_prefix}-*` wildcard S3 grant (FR11/AC6): the
+    host runtime user and instance-profile role are scoped to exactly these named
+    buckets and can no longer reach any `$${naming_prefix}-tenant-*` bucket.
+  EOT
+  type        = list(string)
+}
+
 variable "tags" {
   type    = map(string)
   default = {}

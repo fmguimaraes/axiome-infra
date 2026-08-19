@@ -44,6 +44,22 @@ output "s3_system_bucket" {
   value       = module.storage.system_bucket_name
 }
 
+# ---------------- Per-tenant storage (FR10/FR11 · AC6) ----------------
+# Registry pointers (FR2) for every provisioned tenant, keyed by tenant_id. Phase 2
+# (Design A, FR19) writes these onto the registry row; Phase 1 exposes them so the
+# app / registry can be populated against a known contract. Empty until var.tenants
+# is populated (Phase 2 pilot cutover).
+
+output "tenant_bucket_refs" {
+  description = "Map tenant_id -> per-tenant bucket name (registry `bucket_ref`, FR2)."
+  value       = { for id, m in module.tenant : id => m.bucket_name }
+}
+
+output "tenant_credential_refs" {
+  description = "Map tenant_id -> per-tenant IAM role ARN (registry `credential_ref`, FR2; assumed by AXI-1299 for per-job creds)."
+  value       = { for id, m in module.tenant : id => m.role_arn }
+}
+
 output "ssm_parameter_prefix" {
   description = "SSM Parameter Store prefix where runtime config is stored"
   value       = module.secrets.parameter_prefix

@@ -55,9 +55,14 @@ resource "aws_iam_user_policy" "runtime" {
         Resource = "*"
       },
       {
+        # Scoped to the named shared platform buckets only (artifacts, uploads,
+        # system). The former `${var.naming_prefix}-*` wildcard — the shared
+        # all-tenant grant (FR11, DEF-1) — is REMOVED: this host credential can no
+        # longer reach any `${var.naming_prefix}-tenant-*` bucket. Per-tenant data
+        # is reachable only by assuming that tenant's role (modules/tenant, FR12).
         Effect   = "Allow"
         Action   = ["s3:ListBucket", "s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
-        Resource = ["arn:aws:s3:::${var.naming_prefix}-*", "arn:aws:s3:::${var.naming_prefix}-*/*"]
+        Resource = var.platform_bucket_arns
       },
     ]
   })
@@ -94,10 +99,15 @@ resource "aws_iam_role_policy" "s3" {
     Version = "2012-10-17"
     Statement = concat(
       [{
+        # Named shared platform buckets only — the `${var.naming_prefix}-*`
+        # wildcard (the shared all-tenant grant, FR11/AC6) is REMOVED. The instance
+        # profile can no longer reach a `${var.naming_prefix}-tenant-*` bucket; a
+        # job reaches its tenant's data only by assuming the per-tenant role
+        # (modules/tenant), which AXI-1299 wires as per-job STS credentials (FR12).
         Sid      = "S3ObjectAccess"
         Effect   = "Allow"
         Action   = ["s3:ListBucket", "s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
-        Resource = ["arn:aws:s3:::${var.naming_prefix}-*", "arn:aws:s3:::${var.naming_prefix}-*/*"]
+        Resource = var.platform_bucket_arns
       }],
       # The platform buckets are SSE-KMS encrypted with the data CMK, so writing an
       # object requires the caller (this role, via IMDS) to generate a data key and

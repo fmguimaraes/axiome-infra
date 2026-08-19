@@ -7,6 +7,11 @@ output "instance_id" {
   value = aws_instance.main.id
 }
 
+output "instance_role_arn" {
+  description = "ARN of the EC2 instance-profile role. The principal AXI-1299 uses to assume a per-tenant role (modules/tenant) for per-job, tenant-scoped STS credentials (FR12)."
+  value       = aws_iam_role.ssm.arn
+}
+
 output "security_group_id" {
   value = aws_security_group.instance.id
 }
