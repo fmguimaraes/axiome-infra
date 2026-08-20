@@ -9,3 +9,4 @@ scripts' `log_event`; do not edit past rows.
 | 2026-08-13T00:00:00Z | production | EC2 i-0fce8b81eab806118 | compute stopped (test run; instance was already stopped) | arn:aws:iam::225201317100:user/axiome-terraform |
 | 2026-08-20T08:37:09Z | production | RDS axiome-production-pg | stopped -> starting | arn:aws:iam::225201317100:user/axiome-terraform |
 | 2026-08-20T08:39:42Z | production | Redis axiome-production-redis | recreating from snapshot axiome-production-redis-final-20260813-0939 | arn:aws:iam::225201317100:user/axiome-terraform |
+| 2026-08-20T09:02:56Z | production | EC2 i-0fce8b81eab806118 | compute started, public health poll skipped, time-to-running 2s | arn:aws:iam::225201317100:user/axiome-terraform |
