@@ -1,6 +1,6 @@
 .PHONY: bootstrap init plan apply destroy fmt validate output ssh \
         power-status power-up power-down data-status data-down data-up \
-        down up status
+        down up status turn-on
 
 ENV ?= dev
 
@@ -75,3 +75,12 @@ up:
 status:
 	@scripts/power.sh $(ENV) status
 	@scripts/power-data.sh $(ENV) status
+
+# --- Validated one-call TURN-ON (preflight + safety gate + report) ------------
+# Safer superset of `up`: read-only preflight that ABORTS if the Redis snapshot /
+# state file is missing, an explicit YES gate, then data-up -> power-up, a
+# consolidated turn-on report, and the post-verify (terraform plan) reminder.
+# Preflight / dry-run:  make turn-on ENV=production
+# Execute:              make turn-on ENV=production YES=1
+turn-on:
+	@scripts/power-up-all.sh $(ENV) $(if $(YES),--yes,)

@@ -17,6 +17,49 @@ make data-up      ENV=production   # restore data tier
 
 Or call the scripts directly: `scripts/power.sh <env> <up|down|status>`.
 
+## One-call TURN-ON (validated) — `power-up-all.sh` / `make turn-on`
+
+Bring a fully-parked environment **all the way back in one call**, in the correct
+order, with preflight safety. This is the validated superset of the bare `make up`
+(which just chains `data-up` + `power-up` with no checks).
+
+```bash
+# 1) Preflight / dry-run — read-only; makes NO changes. Prints AWS identity, the
+#    live state of EC2/RDS/Redis, and verifies the Redis restore inputs exist.
+make turn-on ENV=production
+#    (equivalently: scripts/power-up-all.sh production)
+
+# 2) Execute — same preflight, then data-up (RDS start + Redis restore, wait
+#    healthy) -> power-up (EC2 start, health-gated, prints time-to-up).
+make turn-on ENV=production YES=1
+#    (equivalently: scripts/power-up-all.sh production --yes)
+```
+
+**What the turn-on validates (why this is also the turn-on *test*):**
+
+1. **AWS access** — aborts if `sts get-caller-identity` fails.
+2. **Restore inputs present** — when Redis is `absent`, it aborts *before any
+   mutation* unless both the `redis-state.env` (`s3://<sys-bucket>/power-data/`)
+   **and** the referenced final snapshot (`SnapshotStatus=available`) exist. That
+   snapshot is the only copy of the Redis data — no snapshot, no run.
+3. **Ordering** — data tier is brought up and waited-healthy **first**, then
+   compute, so the app never starts against a cold DB/Redis.
+4. **App readiness** — `power-up` blocks on `https://<fqdn>/api/v1/health/live`
+   returning 200 through the public edge (CloudFront → Caddy → gateway) and records
+   **time-to-up**. A stack that starts but never serves fails the run (non-zero).
+5. **State re-adoption** — the run ends by telling you to confirm
+   `terraform plan` shows **no changes** (Redis recreated with the same id/config)
+   **before** un-gating terraform-cd.
+
+**Safety gate:** the mutating path requires an explicit `YES=1` / `--yes` (or
+`POWER_CONFIRM=1`); without it the command is a safe dry-run. Reports are written
+and auto-committed exactly like the single-tier scripts (a consolidated
+`…-turn-on.md` per run, plus the index row).
+
+**‼ Keep terraform-cd gated for the whole run** (Redis is recreated outside
+Terraform). Production `apply` is already manual (GitHub Environment approval) — do
+not approve an apply until the post-run `terraform plan` is clean.
+
 ## Compute — daily (`power.sh`)
 
 Stops/starts **only** the EC2 box; never RDS/ElastiCache/S3/state. The EBS root
