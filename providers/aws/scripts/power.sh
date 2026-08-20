@@ -89,6 +89,20 @@ case "$ACTION" in
     echo "starting compute ${IID} (${ENV})"
     aws ec2 start-instances --region "$REGION" --instance-ids "$IID" >/dev/null
     aws ec2 wait instance-running --region "$REGION" --instance-ids "$IID"
+    # Pre-launch escape hatch: when the public FQDN has no DNS yet, the public
+    # health poll can never pass. Callers that validate readiness another way
+    # (e.g. power-up-all.sh via on-box SSM) set this to skip the public poll.
+    if [ "${AXIOME_SKIP_PUBLIC_HEALTH:-0}" = "1" ]; then
+      ttr=$(( $(date +%s) - start_epoch ))
+      log_event "$ENV" "EC2 ${IID}" "compute started, public health poll skipped, time-to-running ${ttr}s"
+      report_section "Actions"
+      report_line "Started EC2 ${IID}; public health poll SKIPPED (AXIOME_SKIP_PUBLIC_HEALTH=1)."
+      report_line "**time-to-running: ${ttr}s**"
+      report_section "After"; report_line "EC2 ${IID}: $(state)"
+      report_finish
+      echo "RUNNING (public health poll skipped). time-to-running: ${ttr}s"
+      exit 0
+    fi
     echo "instance running; polling ${HEALTH_URL} for app readiness (timeout 10m)..."
     deadline=$(( start_epoch + 600 ))
     until curl -fsS -o /dev/null --max-time 5 "$HEALTH_URL"; do

@@ -50,6 +50,12 @@ REGION="${AWS_REGION:-eu-west-3}"
 SYSTEM_BUCKET="${AXIOME_SYSTEM_BUCKET:-${PROJECT}-${ENV}-system}"
 RG_ID="${PROJECT}-${ENV}-redis"
 STATE_S3="s3://${SYSTEM_BUCKET}/power-data/redis-state.env"
+case "$ENV" in
+  production) FQDN="platform.axiomebio.com" ;;
+  staging)    FQDN="staging.axiomebio.com" ;;
+  dev)        FQDN="dev.axiomebio.com" ;;
+esac
+HEALTH_PATH="/api/v1/health/live"
 
 # Shared reporting/audit helpers (report_*, log_event, REPORTS_DIR).
 # shellcheck source=_power_lib.sh
@@ -60,6 +66,21 @@ redis_state() { aws elasticache describe-replication-groups --region "$REGION" \
   --output text 2>/dev/null || echo absent; }
 
 die() { echo "ABORT: $*" >&2; exit 1; }
+
+# On-box readiness: curl the app's liveness through the local edge with the real
+# host SNI (--resolve), via SSM. Works even when the public FQDN has no DNS yet
+# (pre-launch). Returns 0 on HTTP 200. Retries to cover container warm-up.
+onbox_ready() {
+  local ssm="${REPO_ROOT}/scripts/ssm-exec.sh" i out
+  [ -x "$ssm" ] || { echo "  (ssm-exec.sh not found at ${ssm}; cannot on-box verify)"; return 1; }
+  for i in 1 2 3 4 5 6 7 8; do
+    out="$("$ssm" -e "$ENV" -t 40 \
+      "curl -fsS -k -o /dev/null -w 'ONBOX_HTTP=%{http_code}' --max-time 8 --resolve ${FQDN}:443:127.0.0.1 https://${FQDN}${HEALTH_PATH}" 2>/dev/null || true)"
+    case "$out" in *ONBOX_HTTP=200*) return 0 ;; esac
+    echo "  on-box health not ready yet (try ${i}/8); waiting 15s..."; sleep 15
+  done
+  return 1
+}
 
 # --- preflight (read-only; must pass before any mutation) ---------------------
 snapshot_name_from_state() {
@@ -112,9 +133,24 @@ echo "== [1/2] DATA tier up (RDS start + Redis restore) =="
 report_line "Data tier: data-up completed (RDS started; Redis restored if it was absent)."
 
 echo
-echo "== [2/2] COMPUTE up (EC2 start + health gate) =="
-"${HERE}/power.sh" "$ENV" up
-report_line "Compute: power-up completed (EC2 started; public health probe returned 200)."
+echo "== [2/2] COMPUTE up + readiness =="
+if getent hosts "$FQDN" >/dev/null 2>&1; then
+  echo "  ${FQDN} resolves publicly -> using power.sh public health gate"
+  "${HERE}/power.sh" "$ENV" up
+  report_line "Compute: EC2 up; public health gate passed (HTTP 200 via ${FQDN})."
+else
+  echo "  ${FQDN} does NOT resolve (pre-launch / no public DNS yet) -> start + ON-BOX readiness"
+  AXIOME_SKIP_PUBLIC_HEALTH=1 "${HERE}/power.sh" "$ENV" up
+  echo "  verifying app health ON-BOX (edge via SNI, over SSM)..."
+  if onbox_ready; then
+    report_line "Compute: EC2 up; app serves ${HEALTH_PATH} = HTTP 200 ON-BOX (edge via SNI)."
+    report_line "Public FQDN ${FQDN} not yet resolvable (pre-launch DNS) — public gate intentionally skipped."
+  else
+    report_line "Compute: EC2 up but app NOT healthy on-box — investigate (ssm-exec.sh ${ENV} 'docker compose -f /opt/axiome/docker-compose.yml ps')."
+    report_finish
+    die "compute up but app not healthy on-box."
+  fi
+fi
 
 report_section "Next (before un-gating terraform-cd)"
 report_line "Run: cd providers/aws && scripts/deploy.sh ${ENV} --plan-only  # expect NO changes (Redis re-adopted by id/config)"
