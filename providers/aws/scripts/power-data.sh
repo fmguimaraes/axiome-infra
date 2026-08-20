@@ -143,12 +143,16 @@ case "$ACTION" in
       aws s3 cp "$STATE_S3" /tmp/redis-state.env --region "$REGION" >/dev/null
       # shellcheck disable=SC1091
       . /tmp/redis-state.env
-      echo "  recreating ${RG_ID} from ${SNAPSHOT_NAME}..."
+      # ElastiCache create-replication-group rejects a patch version (e.g.
+      # "7.1.0" -> InvalidParameterValue); it wants major.minor ("7.1").
+      # Normalize a captured X.Y.Z down to X.Y; leave X.Y untouched.
+      EV_CREATE="$(printf '%s' "$ENGINE_VERSION" | sed -E 's/^([0-9]+\.[0-9]+)\.[0-9]+$/\1/')"
+      echo "  recreating ${RG_ID} from ${SNAPSHOT_NAME} (engine ${EV_CREATE})..."
       aws elasticache create-replication-group --region "$REGION" \
         --replication-group-id "$RG_ID" \
         --replication-group-description "$DESC" \
         --snapshot-name "$SNAPSHOT_NAME" \
-        --engine redis --engine-version "$ENGINE_VERSION" \
+        --engine redis --engine-version "$EV_CREATE" \
         --cache-node-type "$NODE" --num-cache-clusters 1 \
         --cache-subnet-group-name "$SUBNET_GROUP" \
         --security-group-ids $SG_IDS \
