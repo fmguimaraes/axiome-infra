@@ -2,7 +2,7 @@
         local-up local-up-fg local-down local-restart \
         local-logs local-tail local-ps local-stats \
         local-shell local-exec local-debug local-health \
-        analytics-up analytics-down analytics-logs analytics-ps analytics-role \
+        analytics-up analytics-down analytics-logs analytics-ps analytics-role analytics-test \
         seed seed-env \
         fmt validate help
 
@@ -138,6 +138,13 @@ analytics-role:
 	$(COMPOSE) exec -T postgres psql -U $${POSTGRES_USER:-axiome} -d $${POSTGRES_DB:-axiome} \
 		< analytics/funnels/00_metabase_readonly_role.sql
 
+# End-to-end test of the read layer: Metabase health, the read-only role, its
+# least-privilege enforcement, and all six funnel queries against seeded events
+# (seeded rows are removed on exit). Set MB_USER/MB_PASSWORD to also round-trip
+# through Metabase's own /api/dataset. Requires the base stack + analytics-role.
+analytics-test:
+	analytics/test/e2e-analytics.sh
+
 # Seed a clean environment to its known baseline (AXI-1001, FR4/FR5/NFR4):
 # reference data, system rule packs, bootstrap roles/users. Idempotent —
 # safe to re-run. Fails closed (non-zero exit) on any expected-vs-actual
@@ -179,6 +186,7 @@ help:
 	@echo "  make analytics-up                start Metabase overlay (http://localhost:3001)"
 	@echo "  make analytics-role              create/refresh the read-only metabase_ro DB role"
 	@echo "  make analytics-down              stop and remove only the Metabase containers"
+	@echo "  make analytics-test              e2e-test the read layer (funnels + read-only role)"
 	@echo "  make analytics-logs [TAIL=500]   follow Metabase logs"
 	@echo "  make analytics-ps                list Metabase containers"
 	@echo ""
