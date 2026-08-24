@@ -16,7 +16,7 @@ WITH actor_steps AS (
     MIN(ts_server) FILTER (WHERE event = 'interpretation_viewed')    AS s4,
     MIN(ts_server) FILTER (WHERE event = 'interpretation_approved')  AS s5,
     MIN(ts_server) FILTER (WHERE event = 'interpretation_published') AS s6
-  FROM organization_svc.events
+  FROM organization_svc.analytics_events
   WHERE actor_role = 'analyst'
     AND COALESCE(anonymous_id, user_id) IS NOT NULL
     [[ AND ts_server >= {{start_date}} ]]

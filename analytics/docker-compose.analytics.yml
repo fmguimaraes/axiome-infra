@@ -4,7 +4,7 @@
 #
 # Design: capture is uniform across cloud and on-prem; only ACCESS differs. Metabase
 # runs as one container next to the deployment DB and reads the generic
-# `organization_svc.events` table. No third-party egress, no code change to move
+# `organization_svc.analytics_events` table. No third-party egress, no code change to move
 # from cloud to on-prem (point a Metabase at the customer DB once an access path
 # exists — see axiome-docs/04 - architecture/Behavior-Tracking-Architecture.md §6).
 #

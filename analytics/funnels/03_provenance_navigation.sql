@@ -5,7 +5,7 @@ WITH actor_steps AS (
     COALESCE(anonymous_id, user_id) AS actor,
     MIN(ts_server) FILTER (WHERE event = 'provenance_opened')      AS s1,
     MIN(ts_server) FILTER (WHERE event = 'provenance_node_opened') AS s2
-  FROM organization_svc.events
+  FROM organization_svc.analytics_events
   WHERE actor_role = 'analyst'
     AND COALESCE(anonymous_id, user_id) IS NOT NULL
     [[ AND ts_server >= {{start_date}} ]]

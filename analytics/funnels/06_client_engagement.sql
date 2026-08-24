@@ -13,7 +13,7 @@ WITH actor_steps AS (
     MIN(ts_server) FILTER (WHERE event = 'export_created')    AS s3,
     MIN(ts_server) FILTER (WHERE event = 'export_downloaded') AS s4,
     MIN(ts_server) FILTER (WHERE event = 'comment_added')     AS s5
-  FROM organization_svc.events
+  FROM organization_svc.analytics_events
   WHERE actor_role = 'client'
     AND COALESCE(anonymous_id, user_id) IS NOT NULL
     [[ AND ts_server >= {{start_date}} ]]

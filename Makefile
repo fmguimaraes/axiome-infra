@@ -2,6 +2,7 @@
         local-up local-up-fg local-down local-restart \
         local-logs local-tail local-ps local-stats \
         local-shell local-exec local-debug local-health \
+        analytics-up analytics-down analytics-logs analytics-ps analytics-role \
         seed seed-env \
         fmt validate help
 
@@ -31,6 +32,13 @@ DOCKER_COMPOSE  := $(shell docker compose version >/dev/null 2>&1 && echo "docke
 COMPOSE_FILE    := docker-compose.yml
 COMPOSE_OVERRIDE := $(wildcard docker-compose.override.yml)
 COMPOSE         := $(DOCKER_COMPOSE) -f $(COMPOSE_FILE) $(if $(COMPOSE_OVERRIDE),-f $(COMPOSE_OVERRIDE))
+
+# Behavior Tracking read layer (Metabase over the deployment DB — AXI-1048).
+# Overlay on the base stack; shares the axiome-local network + Postgres. The base
+# stack must be up first (`make local-up`) since the network is created there.
+ANALYTICS_FILE    := analytics/docker-compose.analytics.yml
+ANALYTICS_COMPOSE := $(COMPOSE) -f $(ANALYTICS_FILE)
+METABASE_SERVICES := metabase-db-init metabase
 
 # Optional args:
 #   SERVICE=<name>   limit a target to one service (backend, biocompute, frontend, postgres, ...)
@@ -98,6 +106,38 @@ local-debug:
 	PYTHONUNBUFFERED=1 \
 	$(COMPOSE) up $(SERVICE)
 
+# Behavior Tracking / Metabase read layer (AXI-1048) --------------------------
+#
+# Metabase runs as an overlay next to the base stack, reading the deployment's
+# own Postgres. Bring the base stack up first (`make local-up`); then:
+#   make analytics-up            start Metabase (http://localhost:$$METABASE_PORT, default 3001)
+#   make analytics-role          create/refresh the read-only metabase_ro role on the axiome DB
+#   make analytics-down          stop and remove only the Metabase containers
+# Cloud/on-prem: export METABASE_ENCRYPTION_KEY and METABASE_PORT from the
+# secrets store before `analytics-up`; see analytics/README.md.
+analytics-up:
+	$(ANALYTICS_COMPOSE) up -d $(METABASE_SERVICES)
+
+# Stops and removes only the Metabase containers — leaves the base stack running.
+analytics-down:
+	$(ANALYTICS_COMPOSE) rm -sf $(METABASE_SERVICES)
+
+# Follow Metabase logs (add TAIL=<n> to change the number of lines).
+analytics-logs:
+	$(ANALYTICS_COMPOSE) logs -f --tail=$(TAIL) metabase
+
+# Show the Metabase containers and their state.
+analytics-ps:
+	$(ANALYTICS_COMPOSE) ps $(METABASE_SERVICES)
+
+# Create/refresh the least-privilege read-only role Metabase connects as.
+# Runs the role SQL inside the postgres container against the axiome DB. Set a
+# real metabase_ro password from the secrets store for cloud/on-prem (the SQL
+# ships a change_me_readonly placeholder — never use it in prod).
+analytics-role:
+	$(COMPOSE) exec -T postgres psql -U $${POSTGRES_USER:-axiome} -d $${POSTGRES_DB:-axiome} \
+		< analytics/funnels/00_metabase_readonly_role.sql
+
 # Seed a clean environment to its known baseline (AXI-1001, FR4/FR5/NFR4):
 # reference data, system rule packs, bootstrap roles/users. Idempotent —
 # safe to re-run. Fails closed (non-zero exit) on any expected-vs-actual
@@ -134,6 +174,13 @@ help:
 	@echo "  make local-shell SERVICE=backend         open a shell in a container"
 	@echo "  make local-exec SERVICE=backend CMD=\"...\"  run a one-off command"
 	@echo "  make local-debug [SERVICE=x]             foreground + verbose log levels"
+	@echo ""
+	@echo "Analytics (Metabase read layer — run 'make local-up' first):"
+	@echo "  make analytics-up                start Metabase overlay (http://localhost:3001)"
+	@echo "  make analytics-role              create/refresh the read-only metabase_ro DB role"
+	@echo "  make analytics-down              stop and remove only the Metabase containers"
+	@echo "  make analytics-logs [TAIL=500]   follow Metabase logs"
+	@echo "  make analytics-ps                list Metabase containers"
 	@echo ""
 	@echo "Environment seeding:"
 	@echo "  make seed                        seed the local stack to its known baseline"

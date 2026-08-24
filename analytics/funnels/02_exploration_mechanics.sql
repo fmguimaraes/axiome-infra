@@ -7,7 +7,7 @@ WITH actor_steps AS (
     MIN(ts_server) FILTER (WHERE event = 'analysis_table_explored') AS s1,
     MIN(ts_server) FILTER (WHERE event = 'chart_opened')           AS s2,
     MIN(ts_server) FILTER (WHERE event = 'threshold_set')          AS s3
-  FROM organization_svc.events
+  FROM organization_svc.analytics_events
   WHERE actor_role = 'analyst'
     AND COALESCE(anonymous_id, user_id) IS NOT NULL
     [[ AND ts_server >= {{start_date}} ]]

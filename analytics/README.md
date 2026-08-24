@@ -1,7 +1,7 @@
 # Behavior Tracking — Metabase funnel read layer (AXI-1048 / FR10 / AC4)
 
 The **read** half of Behavior Tracking. Capture (front-end `analytics.track`, the
-`POST /api/v1/events` ingest, and the generic `organization_svc.events` table) lands
+`POST /api/v1/events` ingest, and the generic `organization_svc.analytics_events` table) lands
 elsewhere; this directory stands up **Metabase** over that table so the six target
 funnels are queryable — with **no third-party egress**.
 
@@ -18,7 +18,7 @@ funnels are queryable — with **no third-party egress**.
 | File | Purpose |
 |---|---|
 | `docker-compose.analytics.yml` | Metabase container overlay + one-shot init that creates Metabase's own app DB on the shared Postgres. |
-| `funnels/00_metabase_readonly_role.sql` | Least-privilege `metabase_ro` role — `SELECT` on `organization_svc.events` only (NFR2 / no egress, no product-data exposure). |
+| `funnels/00_metabase_readonly_role.sql` | Least-privilege `metabase_ro` role — `SELECT` on `organization_svc.analytics_events` only (NFR2 / no egress, no product-data exposure). |
 | `funnels/01..06_*.sql` | The six funnels as Metabase-ready native SQL (distinct-actor, ordered-step, with entry/step conversion %). |
 
 ## 1. Start Metabase
@@ -38,7 +38,8 @@ the browser.
 
 ## 2. Add the deployment DB as a read-only data source
 
-Create the read-only role once, **after** the backend has migrated the `events` table:
+Create the read-only role once, **after** the backend has migrated the
+`organization_svc.analytics_events` table:
 
 ```bash
 psql "$DATABASE_URL" -f analytics/funnels/00_metabase_readonly_role.sql
@@ -89,5 +90,5 @@ window the funnel; leave them empty for all-time.
   what keeps funnel 6 (client) distinct from funnels 2/4/5 (analyst).
 - **Output columns:** `step_name`, `users`, `pct_of_entry` (vs step 1), and
   `pct_of_prev_step` (step-to-step drop-off).
-- **Schema:** the read layer only touches `organization_svc.events` and no other
+- **Schema:** the read layer only touches `organization_svc.analytics_events` and no other
   product table — nothing here obstructs the funnels, satisfying FR10 / AC4.
