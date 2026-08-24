@@ -69,21 +69,24 @@ terraform state (never the master or app credentials) and requires SSL. Prereqs:
 initialized, and `metabase_ro` already provisioned on prod (run
 `funnels/00_metabase_readonly_role.sql` against it once, with a real password).
 
-Credentials are read from `METABASE_RO_PASSWORD` (and optional `METABASE_RO_USER`),
-supplied via the environment or the **repo-root `.env.local`** — the single
-gitignored file the infra `.env.example` tells you to create (`cp .env.example
-.env.local`). Add these two lines to it:
+The prod password is read from `METABASE_RO_PROD_PASSWORD` (falling back to
+`METABASE_RO_PASSWORD`), supplied via the environment or the **repo-root
+`.env.local`** — the single gitignored file the infra `.env.example` tells you to
+create (`cp .env.example .env.local`).
+
+Keep the prod password in its **own** variable, separate from the local one, so
+the two never collide — the local `analytics-test` connects to the local DB (role
+password `change_me_readonly`), while the prod connect needs the real secret:
 
 ```bash
 # axiome-infra/.env.local  (never committed — the .env.example copy target)
-METABASE_RO_USER=metabase_ro
-METABASE_RO_PASSWORD=<the real read-only password from the secrets store>
+METABASE_RO_PASSWORD=change_me_readonly                      # LOCAL analytics-test
+METABASE_RO_PROD_PASSWORD=<real read-only password from the secrets store>  # analytics-connect-prod
 ```
 
-The same file feeds `analytics/test/e2e-analytics.sh`. Locally it is optional —
-the test already defaults to `metabase_ro` / `change_me_readonly` (what
-`make analytics-role` creates); add the lines only to override (e.g. the real
-prod password). The `change_me_readonly` placeholder must never reach production.
+Locally the file is optional — `analytics-test` already defaults to `metabase_ro`
+/ `change_me_readonly` (what `make analytics-role` creates). The
+`change_me_readonly` placeholder must never reach production.
 
 ## 3. Build the six funnel questions
 
