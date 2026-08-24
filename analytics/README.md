@@ -70,17 +70,19 @@ initialized, and `metabase_ro` already provisioned on prod (run
 `funnels/00_metabase_readonly_role.sql` against it once, with a real password).
 
 Credentials are read from `METABASE_RO_PASSWORD` (and optional `METABASE_RO_USER`),
-supplied via the environment or a **gitignored** `analytics/.env.local`:
+supplied via the environment or the **repo-root `.env.local`** — the single
+gitignored file the infra `.env.example` tells you to create (`cp .env.example
+.env.local`). Add these two lines to it:
 
 ```bash
-# analytics/.env.local  (never committed — matches .gitignore's .env.local rule)
+# axiome-infra/.env.local  (never committed — the .env.example copy target)
 METABASE_RO_USER=metabase_ro
 METABASE_RO_PASSWORD=<the real read-only password from the secrets store>
 ```
 
 The same file feeds `analytics/test/e2e-analytics.sh`. Locally it is optional —
 the test already defaults to `metabase_ro` / `change_me_readonly` (what
-`make analytics-role` creates); create the file only to override (e.g. the real
+`make analytics-role` creates); add the lines only to override (e.g. the real
 prod password). The `change_me_readonly` placeholder must never reach production.
 
 ## 3. Build the six funnel questions

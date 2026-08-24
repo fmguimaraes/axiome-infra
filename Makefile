@@ -153,16 +153,17 @@ analytics-test:
 # the master/app credentials. RDS requires SSL (PGSSLMODE=require).
 #
 # The metabase_ro password is read from METABASE_RO_PASSWORD — set it in the
-# gitignored analytics/.env.local (or the environment); it is NEVER committed and
-# NEVER passed through SSM/CloudTrail. Prereqs: psql + terraform on PATH, the
-# providers/aws PRODUCTION state initialized, metabase_ro provisioned on prod
-# (run analytics/funnels/00_metabase_readonly_role.sql there first).
+# repo-root .env.local (the file .env.example tells you to create; gitignored) or
+# the environment; it is NEVER committed and NEVER passed through SSM/CloudTrail.
+# Prereqs: psql + terraform on PATH, the providers/aws PRODUCTION state
+# initialized, metabase_ro provisioned on prod (run
+# analytics/funnels/00_metabase_readonly_role.sql there first).
 #   make analytics-connect-prod
 analytics-connect-prod:
 	@command -v psql >/dev/null 2>&1      || { echo "psql not found on PATH"; exit 1; }
 	@command -v terraform >/dev/null 2>&1 || { echo "terraform not found on PATH"; exit 1; }
-	@set -a; [ -f analytics/.env.local ] && . ./analytics/.env.local; set +a; \
-	 : "$${METABASE_RO_PASSWORD:?set METABASE_RO_PASSWORD (see analytics/.env.local, gitignored)}"; \
+	@set -a; [ -f .env.local ] && . ./.env.local; set +a; \
+	 : "$${METABASE_RO_PASSWORD:?set METABASE_RO_PASSWORD in .env.local (the file .env.example tells you to create)}"; \
 	 host=$$(terraform -chdir=providers/aws output -raw rds_endpoint 2>/dev/null); \
 	 conn=$$(terraform -chdir=providers/aws output -raw rds_connection_string_admin 2>/dev/null); \
 	 [ -n "$$host" ] && [ -n "$$conn" ] || { echo "Could not read RDS outputs from providers/aws — is the PRODUCTION state initialized there (terraform -chdir=providers/aws init) and use_hds_data_stack=true?"; exit 1; }; \
