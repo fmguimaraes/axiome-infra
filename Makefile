@@ -146,35 +146,16 @@ analytics-role:
 analytics-test:
 	analytics/test/e2e-analytics.sh
 
-# Open a READ-ONLY psql shell to the PRODUCTION database as `metabase_ro` — the
-# prod analogue of the local `docker compose exec postgres psql`. The RDS host,
-# port and DB name are resolved from the providers/aws terraform state (the same
-# source the DB runbook uses); only the read-only analytics role is used, never
-# the master/app credentials. RDS requires SSL (PGSSLMODE=require).
-#
-# The prod password is read from METABASE_RO_PROD_PASSWORD (falling back to
-# METABASE_RO_PASSWORD) — set it in the repo-root .env.local (the file
-# .env.example tells you to create; gitignored) or the environment; it is NEVER
-# committed and NEVER passed through SSM/CloudTrail. Keep it SEPARATE from
-# METABASE_RO_PASSWORD (which the LOCAL analytics-test uses) so the two do not
-# collide. Prereqs: psql + terraform on PATH, the providers/aws PRODUCTION state
-# initialized, metabase_ro provisioned on prod (run
-# analytics/funnels/00_metabase_readonly_role.sql there first).
+# Open a READ-ONLY psql shell to the PRODUCTION database as metabase_ro — the prod
+# analogue of the local `docker compose exec postgres psql`. The prod RDS is
+# PRIVATE and the EC2 box has no SSH, so this tunnels to RDS over AWS SSM (the same
+# access path as scripts/ssm-exec.sh) and runs psql through the tunnel; only the
+# read-only role is used, never master/app credentials. Prerequisites and the
+# credential source (METABASE_RO_PROD_PASSWORD via the repo-root .env.local) are
+# documented in analytics/connect-prod-db.sh and analytics/README.md.
 #   make analytics-connect-prod
 analytics-connect-prod:
-	@command -v psql >/dev/null 2>&1      || { echo "psql not found on PATH"; exit 1; }
-	@command -v terraform >/dev/null 2>&1 || { echo "terraform not found on PATH"; exit 1; }
-	@set -a; [ -f .env.local ] && . ./.env.local; set +a; \
-	 pw="$${METABASE_RO_PROD_PASSWORD:-$${METABASE_RO_PASSWORD:-}}"; \
-	 [ -n "$$pw" ] || { echo "set METABASE_RO_PROD_PASSWORD (the real prod read-only password) in .env.local — kept separate from METABASE_RO_PASSWORD so it does not break the LOCAL analytics-test"; exit 1; }; \
-	 host=$$(terraform -chdir=providers/aws output -raw rds_endpoint 2>/dev/null); \
-	 conn=$$(terraform -chdir=providers/aws output -raw rds_connection_string_admin 2>/dev/null); \
-	 [ -n "$$host" ] && [ -n "$$conn" ] || { echo "Could not read RDS outputs from providers/aws — is the PRODUCTION state initialized there (terraform -chdir=providers/aws init) and use_hds_data_stack=true?"; exit 1; }; \
-	 port=$$(printf '%s' "$$conn" | sed -E 's#.*@[^:]+:([0-9]+)/.*#\1#'); \
-	 db=$$(printf '%s'   "$$conn" | sed -E 's#.*/([^/?]+)(\?.*)?$$#\1#'); \
-	 echo "Connecting to PRODUCTION RDS $$host:$$port/$$db as metabase_ro (read-only, SSL required)…"; \
-	 PGPASSWORD="$$pw" PGSSLMODE=require \
-	   psql -h "$$host" -p "$$port" -U "$${METABASE_RO_PROD_USER:-$${METABASE_RO_USER:-metabase_ro}}" -d "$$db"
+	analytics/connect-prod-db.sh
 
 # Seed a clean environment to its known baseline (AXI-1001, FR4/FR5/NFR4):
 # reference data, system rule packs, bootstrap roles/users. Idempotent —

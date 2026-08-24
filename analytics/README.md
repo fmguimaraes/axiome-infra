@@ -62,12 +62,23 @@ Postgres user — but production/on-prem should use `metabase_ro`.
 ### Connecting to the production database
 
 `make analytics-connect-prod` opens a **read-only** `psql` shell to the production
-RDS as `metabase_ro` — the prod analogue of the local `docker compose exec
-postgres psql`. It resolves the RDS host/port/db from the `providers/aws`
-terraform state (never the master or app credentials) and requires SSL. Prereqs:
-`psql` + `terraform` on `PATH`, the `providers/aws` **production** state
-initialized, and `metabase_ro` already provisioned on prod (run
-`funnels/00_metabase_readonly_role.sql` against it once, with a real password).
+database as `metabase_ro` — the prod analogue of the local `docker compose exec
+postgres psql`.
+
+The prod RDS is **private** (not internet-reachable) and the EC2 box has no SSH,
+so the target (`analytics/connect-prod-db.sh`) tunnels to RDS over **AWS SSM** —
+the same access path as `scripts/ssm-exec.sh` — and runs `psql` through the
+forwarded local port. It uses only the read-only role, never master/app creds.
+
+Prerequisites (each is checked with a clear message):
+
+| Need | Why |
+|---|---|
+| `aws` CLI **+ the Session Manager plugin** (`session-manager-plugin`) | opens the SSM port-forward to the private RDS |
+| `psql`, `terraform` on `PATH` | the client; resolving the RDS host from state |
+| `providers/aws` initialized to the **production** state | `terraform output rds_endpoint` must resolve |
+| `metabase_ro` provisioned **on prod** | run `funnels/00_metabase_readonly_role.sql` against production once, with a real password |
+| `METABASE_RO_PROD_PASSWORD` set | that real read-only password (see below) |
 
 The prod password is read from `METABASE_RO_PROD_PASSWORD` (falling back to
 `METABASE_RO_PASSWORD`), supplied via the environment or the **repo-root
