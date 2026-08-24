@@ -3,6 +3,7 @@
         local-logs local-tail local-ps local-stats \
         local-shell local-exec local-debug local-health \
         analytics-up analytics-down analytics-logs analytics-ps analytics-role analytics-test \
+        analytics-connect-prod \
         seed seed-env \
         fmt validate help
 
@@ -145,6 +146,32 @@ analytics-role:
 analytics-test:
 	analytics/test/e2e-analytics.sh
 
+# Open a READ-ONLY psql shell to the PRODUCTION database as `metabase_ro` — the
+# prod analogue of the local `docker compose exec postgres psql`. The RDS host,
+# port and DB name are resolved from the providers/aws terraform state (the same
+# source the DB runbook uses); only the read-only analytics role is used, never
+# the master/app credentials. RDS requires SSL (PGSSLMODE=require).
+#
+# The metabase_ro password is read from METABASE_RO_PASSWORD — set it in the
+# gitignored analytics/.env.local (or the environment); it is NEVER committed and
+# NEVER passed through SSM/CloudTrail. Prereqs: psql + terraform on PATH, the
+# providers/aws PRODUCTION state initialized, metabase_ro provisioned on prod
+# (run analytics/funnels/00_metabase_readonly_role.sql there first).
+#   make analytics-connect-prod
+analytics-connect-prod:
+	@command -v psql >/dev/null 2>&1      || { echo "psql not found on PATH"; exit 1; }
+	@command -v terraform >/dev/null 2>&1 || { echo "terraform not found on PATH"; exit 1; }
+	@set -a; [ -f analytics/.env.local ] && . ./analytics/.env.local; set +a; \
+	 : "$${METABASE_RO_PASSWORD:?set METABASE_RO_PASSWORD (see analytics/.env.local, gitignored)}"; \
+	 host=$$(terraform -chdir=providers/aws output -raw rds_endpoint 2>/dev/null); \
+	 conn=$$(terraform -chdir=providers/aws output -raw rds_connection_string_admin 2>/dev/null); \
+	 [ -n "$$host" ] && [ -n "$$conn" ] || { echo "Could not read RDS outputs from providers/aws — is the PRODUCTION state initialized there (terraform -chdir=providers/aws init) and use_hds_data_stack=true?"; exit 1; }; \
+	 port=$$(printf '%s' "$$conn" | sed -E 's#.*@[^:]+:([0-9]+)/.*#\1#'); \
+	 db=$$(printf '%s'   "$$conn" | sed -E 's#.*/([^/?]+)(\?.*)?$$#\1#'); \
+	 echo "Connecting to PRODUCTION RDS $$host:$$port/$$db as metabase_ro (read-only, SSL required)…"; \
+	 PGPASSWORD="$${METABASE_RO_PASSWORD}" PGSSLMODE=require \
+	   psql -h "$$host" -p "$$port" -U "$${METABASE_RO_USER:-metabase_ro}" -d "$$db"
+
 # Seed a clean environment to its known baseline (AXI-1001, FR4/FR5/NFR4):
 # reference data, system rule packs, bootstrap roles/users. Idempotent —
 # safe to re-run. Fails closed (non-zero exit) on any expected-vs-actual
@@ -187,6 +214,7 @@ help:
 	@echo "  make analytics-role              create/refresh the read-only metabase_ro DB role"
 	@echo "  make analytics-down              stop and remove only the Metabase containers"
 	@echo "  make analytics-test              e2e-test the read layer (funnels + read-only role)"
+	@echo "  make analytics-connect-prod      read-only psql to the PRODUCTION DB as metabase_ro"
 	@echo "  make analytics-logs [TAIL=500]   follow Metabase logs"
 	@echo "  make analytics-ps                list Metabase containers"
 	@echo ""

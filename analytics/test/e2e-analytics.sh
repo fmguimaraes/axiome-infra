@@ -24,6 +24,11 @@ set -euo pipefail
 INFRA_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 cd "$INFRA_DIR"
 
+# Optional gitignored credential overrides (e.g. a real prod password, a custom
+# role name). The defaults below already match `make analytics-role` locally
+# (metabase_ro / change_me_readonly), so no file is needed for local runs.
+[ -f analytics/.env.local ] && { set -a; . ./analytics/.env.local; set +a; }
+
 MARKER='e2e-analytics-test'
 DB=${POSTGRES_DB:-axiome}
 OWNER=${POSTGRES_USER:-axiome}

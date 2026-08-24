@@ -59,6 +59,30 @@ Then in Metabase → **Admin → Databases → Add database → PostgreSQL**:
 For a quick local look you can instead point Metabase at the existing `axiome`
 Postgres user — but production/on-prem should use `metabase_ro`.
 
+### Connecting to the production database
+
+`make analytics-connect-prod` opens a **read-only** `psql` shell to the production
+RDS as `metabase_ro` — the prod analogue of the local `docker compose exec
+postgres psql`. It resolves the RDS host/port/db from the `providers/aws`
+terraform state (never the master or app credentials) and requires SSL. Prereqs:
+`psql` + `terraform` on `PATH`, the `providers/aws` **production** state
+initialized, and `metabase_ro` already provisioned on prod (run
+`funnels/00_metabase_readonly_role.sql` against it once, with a real password).
+
+Credentials are read from `METABASE_RO_PASSWORD` (and optional `METABASE_RO_USER`),
+supplied via the environment or a **gitignored** `analytics/.env.local`:
+
+```bash
+# analytics/.env.local  (never committed — matches .gitignore's .env.local rule)
+METABASE_RO_USER=metabase_ro
+METABASE_RO_PASSWORD=<the real read-only password from the secrets store>
+```
+
+The same file feeds `analytics/test/e2e-analytics.sh`. Locally it is optional —
+the test already defaults to `metabase_ro` / `change_me_readonly` (what
+`make analytics-role` creates); create the file only to override (e.g. the real
+prod password). The `change_me_readonly` placeholder must never reach production.
+
 ## 3. Build the six funnel questions
 
 For each file in `funnels/01..06_*.sql`: Metabase → **+ New → SQL query** → select the
