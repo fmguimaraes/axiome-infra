@@ -18,3 +18,4 @@ scripts' `log_event`; do not edit past rows.
 | 2026-08-21T07:09:44Z | production | RDS axiome-production-pg | available -> stopping (AWS auto-restarts after 7d) | arn:aws:iam::225201317100:user/axiome-terraform |
 | 2026-08-21T07:09:51Z | production | Redis axiome-production-redis | snapshot axiome-production-redis-final-20260821-0709 taken, replication group deleting | arn:aws:iam::225201317100:user/axiome-terraform |
 | 2026-08-25T14:35:34Z | production | EC2 i-0fce8b81eab806118 | compute stopped | arn:aws:iam::225201317100:user/axiome-terraform |
+| 2026-08-25T14:35:40Z | production | RDS axiome-production-pg | available -> stopping (AWS auto-restarts after 7d) | arn:aws:iam::225201317100:user/axiome-terraform |
