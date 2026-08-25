@@ -8,9 +8,17 @@
 #
 # Triggers:
 #   * repository_dispatch (type: image-published) — the green-build notification
-#     axiome-back emits via reusable-build.yml (same event dev-auto-promote uses).
-#     Scoped to `backend` here; axiome-front / axiome-bio-compute prod CD is AXI-1350.
+#     axiome-back / axiome-front / axiome-bio-compute each emit via
+#     reusable-build.yml (same event dev-auto-promote uses). Covers all three
+#     services (AXI-1350/FR14/AC19 widened this from backend-only).
 #   * workflow_dispatch — manual one-click deploy of any service + tag.
+#
+# Health path per service (AXI-1350) — deploy-prod.sh's own HEALTH_URL default
+# is backend-shaped (`/api/v1/health` on every env's FQDN); the "Deploy to
+# production" step below overrides it per service instead of editing that
+# script (kept generic/reusable as-is): bio-compute -> `/api/v1/version`,
+# frontend -> `/` (a static SPA has no health endpoint; a 2xx on `/` is the
+# signal), backend keeps the script's own default.
 #
 # The GATE: the `deploy` job declares `environment: production`. Configure that as a
 # PROTECTED GitHub environment with required reviewers (repo Settings → Environments)
@@ -52,8 +60,8 @@ env:
 
 jobs:
   # Resolve trigger inputs and decide whether to proceed BEFORE requesting the
-  # (approval-gated) production environment — so a non-backend image-published
-  # event doesn't raise a needless approval prompt (front/bio prod CD is AXI-1350).
+  # (approval-gated) production environment — so an unrecognized/malformed
+  # event doesn't raise a needless approval prompt.
   gate:
     name: Resolve & gate
     runs-on: ubuntu-latest
@@ -80,13 +88,17 @@ jobs:
             exit 1
           fi
 
-          # Auto (repository_dispatch) prod CD is backend-only for this story.
-          if [ "${{ github.event_name }}" = "repository_dispatch" ] && [ "${SERVICE}" != "backend" ]; then
-            echo "repository_dispatch for '${SERVICE}' — prod CD covers backend only (front/bio: AXI-1350). Skipping."
-            echo "deploy=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "deploy=true" >> "$GITHUB_OUTPUT"
-          fi
+          # AXI-1350/AC19 — auto (repository_dispatch) prod CD now covers all
+          # three services (was backend-only). Still guard against a
+          # malformed/unknown service in the dispatch payload rather than
+          # handing deploy-prod.sh a value it will reject anyway.
+          case "${SERVICE}" in
+            backend|frontend|biocompute) echo "deploy=true" >> "$GITHUB_OUTPUT" ;;
+            *)
+              echo "Unknown service '${SERVICE}' (event=${{ github.event_name }}) — valid: backend|frontend|biocompute. Skipping."
+              echo "deploy=false" >> "$GITHUB_OUTPUT"
+              ;;
+          esac
           echo "service=${SERVICE}" >> "$GITHUB_OUTPUT"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
 
@@ -119,6 +131,18 @@ jobs:
           # migrate deploy + up), health-checks, records, and fails closed. jq + the
           # AWS CLI are preinstalled on ubuntu-latest; ssm-exec.sh uses send-command
           # (no session-manager-plugin needed).
+          #
+          # AXI-1350/AC19 — deploy-prod.sh's own HEALTH_URL default is backend-
+          # shaped (`/api/v1/health`); override it per service here (the script
+          # itself stays generic/reusable, per its own HEALTH_URL precedence —
+          # env var wins over the built-in default).
+          set -euo pipefail
+          case "${SERVICE}" in
+            biocompute) export HEALTH_URL="https://platform.axiomebio.com/api/v1/version" ;;
+            frontend)   export HEALTH_URL="https://platform.axiomebio.com/" ;;
+            # backend: no override — deploy-prod.sh's own default already
+            # resolves https://platform.axiomebio.com/api/v1/health.
+          esac
           bash scripts/deploy-prod.sh
 
       - name: Upload deploy report
@@ -138,3 +162,7 @@ jobs:
 # 3. Production is powered down by default (cost control). Before approving a run,
 #    power it on: `cd providers/aws && make turn-on ENV=production YES=1`. Wiring an
 #    automatic power-on/off around the deploy is deferred (touches the data tier).
+# 4. (AXI-1350) axiome-front and axiome-bio-compute must each carry the GH_PAT
+#    secret used by their reusable-build.yml call so the `image-published`
+#    repository_dispatch to this workflow actually fires — same mechanism the
+#    backend already relies on (AXI-1349).
