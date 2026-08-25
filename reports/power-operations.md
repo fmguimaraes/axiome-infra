@@ -22,3 +22,5 @@ scripts' `log_event`; do not edit past rows.
 | 2026-08-25T17:06:08Z | production | RDS axiome-production-pg | stopped -> starting | arn:aws:iam::225201317100:user/axiome-terraform |
 | 2026-08-25T17:06:13Z | production | Redis axiome-production-redis | recreating from snapshot axiome-production-redis-final-20260821-0709 | arn:aws:iam::225201317100:user/axiome-terraform |
 | 2026-08-25T17:16:22Z | production | EC2 i-0fce8b81eab806118 | compute started, time-to-up 58s | arn:aws:iam::225201317100:user/axiome-terraform |
+| 2026-08-25T17:16:24Z | production | platform | TURN-ON completed (data + compute up) | arn:aws:iam::225201317100:user/axiome-terraform |
+| 2026-08-25T21:31:43Z | production | EC2 i-0fce8b81eab806118 | compute stopped | arn:aws:iam::225201317100:user/axiome-terraform |
