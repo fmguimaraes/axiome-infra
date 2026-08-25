@@ -5,6 +5,7 @@
         analytics-up analytics-down analytics-logs analytics-ps analytics-role analytics-test \
         analytics-connect-prod \
         seed seed-env \
+        deploy-prod \
         fmt validate help
 
 ENV ?= dev
@@ -169,6 +170,18 @@ seed:
 seed-env:
 	scripts/seed-environment.sh -e $(ENV)
 
+# --- Authoritative production deploy (AXI-1349, FR12/AC15) ---------------------
+# The SINGLE command that actually changes what production runs (closes the
+# promote≠deploy gap: the CI promote job only bumps the manifest and is inert).
+# Advances ECR :stable -> the chosen image, rolls the box over SSM (pull +
+# `prisma migrate deploy` + up), health-checks /api/v1/health, records the action,
+# and fails closed (prior image keeps serving) on an unhealthy result.
+#   make deploy-prod ENV=production TAG=<sha>            # execute the deploy
+#   make deploy-prod ENV=production TAG=<sha> DRY_RUN=1  # print the plan, mutate nothing
+# SERVICE defaults to backend; pass SERVICE=frontend|biocompute for the others.
+deploy-prod:
+	ENV=$(ENV) TAG=$(TAG) SERVICE=$(SERVICE) DRY_RUN=$(DRY_RUN) scripts/deploy-prod.sh
+
 # Utilities
 fmt:
 	terraform fmt -recursive
@@ -206,3 +219,7 @@ help:
 	@echo "Environment seeding:"
 	@echo "  make seed                        seed the local stack to its known baseline"
 	@echo "  make seed-env ENV=staging        seed a deployed environment via SSM"
+	@echo ""
+	@echo "Production deploy (authoritative — AXI-1349):"
+	@echo "  make deploy-prod ENV=production TAG=<sha>            advance :stable + roll + migrate + health-check"
+	@echo "  make deploy-prod ENV=production TAG=<sha> DRY_RUN=1  print the plan, mutate nothing"

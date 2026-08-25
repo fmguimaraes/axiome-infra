@@ -1,0 +1,140 @@
+# Gated continuous-deployment to PRODUCTION (AXI-1349, FR13/AC17/NFR6).
+#
+# Closes the promote≠deploy gap: a green `main` build can become a deployed prod
+# through a ONE-CLICK approval, without manual ECR surgery. This runs the SAME
+# authoritative deploy as `make deploy-prod` (scripts/deploy-prod.sh): advance ECR
+# :stable -> the image, roll the box over SSM (pull + `prisma migrate deploy` + up),
+# health-check, record, and fail closed (prior image keeps serving) on failure.
+#
+# Triggers:
+#   * repository_dispatch (type: image-published) — the green-build notification
+#     axiome-back emits via reusable-build.yml (same event dev-auto-promote uses).
+#     Scoped to `backend` here; axiome-front / axiome-bio-compute prod CD is AXI-1350.
+#   * workflow_dispatch — manual one-click deploy of any service + tag.
+#
+# The GATE: the `deploy` job declares `environment: production`. Configure that as a
+# PROTECTED GitHub environment with required reviewers (repo Settings → Environments)
+# so every run pauses for one-click human approval before it mutates prod. See the
+# runbook + the "Required setup" note at the bottom of this file.
+#
+# Idempotent + fail-closed (NFR6): both properties come from scripts/deploy-prod.sh
+# (re-running the same tag is a no-op retag + no-op roll; a failed migration never
+# swaps the image; a post-swap health failure auto-rolls :stable back to the prior
+# image). A `concurrency` group serializes runs so two deploys never race the box.
+
+name: deploy-production
+
+on:
+  repository_dispatch:
+    types: [image-published]
+  workflow_dispatch:
+    inputs:
+      service:
+        description: Service to deploy
+        type: choice
+        options: [backend, frontend, biocompute]
+        default: backend
+        required: true
+      tag:
+        description: Image tag to promote (8-char git SHA of a green main build)
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || secrets.AWS_REGION || 'eu-west-3' }}
+
+jobs:
+  # Resolve trigger inputs and decide whether to proceed BEFORE requesting the
+  # (approval-gated) production environment — so a non-backend image-published
+  # event doesn't raise a needless approval prompt (front/bio prod CD is AXI-1350).
+  gate:
+    name: Resolve & gate
+    runs-on: ubuntu-latest
+    outputs:
+      deploy: ${{ steps.resolve.outputs.deploy }}
+      service: ${{ steps.resolve.outputs.service }}
+      tag: ${{ steps.resolve.outputs.tag }}
+    steps:
+      - name: Resolve service + tag
+        id: resolve
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            SERVICE="${{ inputs.service }}"
+            TAG="${{ inputs.tag }}"
+          else
+            SERVICE="${{ github.event.client_payload.service }}"
+            TAG="${{ github.event.client_payload.image_tag }}"
+          fi
+          echo "Resolved service='${SERVICE}' tag='${TAG}' (event=${{ github.event_name }})"
+
+          if [ -z "${TAG}" ]; then
+            echo "::error::No image tag resolved — cannot deploy."
+            exit 1
+          fi
+
+          # Auto (repository_dispatch) prod CD is backend-only for this story.
+          if [ "${{ github.event_name }}" = "repository_dispatch" ] && [ "${SERVICE}" != "backend" ]; then
+            echo "repository_dispatch for '${SERVICE}' — prod CD covers backend only (front/bio: AXI-1350). Skipping."
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "service=${SERVICE}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    name: Deploy ${{ needs.gate.outputs.service }} to production
+    needs: gate
+    if: needs.gate.outputs.deploy == 'true'
+    runs-on: ubuntu-latest
+    # ‼ The one-click approval gate. Make `production` a PROTECTED environment with
+    #   required reviewers so this job blocks until a human approves it.
+    environment: production
+    steps:
+      - name: Checkout axiome-infra
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy to production (authoritative)
+        env:
+          ENV: production
+          SERVICE: ${{ needs.gate.outputs.service }}
+          TAG: ${{ needs.gate.outputs.tag }}
+        run: |
+          # scripts/deploy-prod.sh advances :stable, rolls the box over SSM (pull +
+          # migrate deploy + up), health-checks, records, and fails closed. jq + the
+          # AWS CLI are preinstalled on ubuntu-latest; ssm-exec.sh uses send-command
+          # (no session-manager-plugin needed).
+          bash scripts/deploy-prod.sh
+
+      - name: Upload deploy report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deploy-report-${{ needs.gate.outputs.service }}-${{ needs.gate.outputs.tag }}
+          path: reports/*-production-deploy-*.md
+          if-no-files-found: ignore
+          retention-days: 90
+
+# --- Required setup (human-owned; noted as follow-up in AXI-1349) --------------
+# 1. Create a PROTECTED GitHub environment named `production` (repo Settings →
+#    Environments) with at least one required reviewer — this is the one-click gate.
+# 2. Add repo (or environment-scoped) secrets: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
+#    (an IAM identity allowed to ECR put-image + ssm:SendCommand on the prod host).
+# 3. Production is powered down by default (cost control). Before approving a run,
+#    power it on: `cd providers/aws && make turn-on ENV=production YES=1`. Wiring an
+#    automatic power-on/off around the deploy is deferred (touches the data tier).

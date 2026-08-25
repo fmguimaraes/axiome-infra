@@ -39,31 +39,74 @@ different things:
 
 | Mechanism | What it actually does | What it does **not** do |
 |---|---|---|
-| **CI `promote-to-production` job** (runs on push to `axiome-back` `main`) | Bumps the image tag in `providers/aws/environments/production/images.tfvars` — a **manifest record**, committed by `ci-bot` (e.g. `b9355cc`). | It does **not** change what production runs. Because prod pins `:stable`, a manifest bump alone is **inert** on the running system. |
-| **`:stable` retag** (manual, **authoritative**) | Retags the chosen backend image to `:stable` in ECR (`axiome/backend`), then `docker compose pull` + `up -d` on the production EC2 host over SSM, and runs migrations. **This is the only thing that changes the running production backend.** | — |
+| **CI `promote-to-production` job** (runs on push to `axiome-back` `main`) | Bumps the image tag in `providers/aws/environments/production/images.tfvars` — a **manifest record**, committed by `ci-bot` (e.g. `b9355cc`). | It does **not** change what production runs. Because prod pins `:stable`, a manifest bump alone is **inert** on the running system. It is **never** a deploy. |
+| **The one-command deploy — `make deploy-prod`** (the **single authoritative path**) | Advances the chosen backend image to `:stable` in ECR (`axiome/backend`), then `docker compose pull` + `prisma migrate deploy` + `up -d` on the production EC2 host over SSM, health-checks, and records the action. **This is the only thing that changes the running production backend.** | — |
 
 So: a green `promote-to-production` means *"the manifest was recorded"*, **not**
 *"production was deployed"*. During the ~5-week CI outage this gap is exactly why
 production sat frozen on a June image while promote jobs looked green.
 
-### The real production backend deploy
+### The real production backend deploy — one command (AXI-1349, FR12)
 
-Prereqs: AWS creds; `aws` CLI + Session Manager plugin; production powered on
-(`cd providers/aws && make turn-on ENV=production YES=1`). Never pass a secret as
-a literal to SSM — fetch it on the box.
+There is now **one** command that performs the authoritative deploy end-to-end.
+Do not do the ECR retag / SSM roll by hand — run this:
 
-1. **Choose the image**: a green `axiome-back` `main` build that passed the now-
-   **blocking** `scan-image` gate (AXI-1345). Its tag is the 8-char commit SHA.
-2. **Advance `:stable`** in ECR: retag that SHA image to `:stable` in the
-   `axiome/backend` repo (this is what prod pulls).
-3. **Swap + migrate on the box** via `scripts/ssm-exec.sh -e production` running
-   `scripts/roll-service.sh` (or `docker compose -f /opt/axiome/docker-compose.yml
-   pull backend && … up -d`): `roll-service.sh` pulls `:stable`, runs
-   `prisma migrate deploy` (baselining first if `_prisma_migrations` is absent),
-   and **fails closed** (old containers keep serving) if migrate fails.
-4. **Verify**: `/api/v1/health` is 200 and `migrate diff` shows zero drift.
-5. **Rollback**: retag `:stable` back to the previous known-good SHA and re-pull;
-   for schema, restore the pre-deploy RDS snapshot (see the catch-up plan).
+```bash
+cd axiome-infra
+make deploy-prod ENV=production TAG=<sha>            # execute
+make deploy-prod ENV=production TAG=<sha> DRY_RUN=1  # print the plan, mutate nothing
+```
+
+`make deploy-prod` (→ [`scripts/deploy-prod.sh`](../scripts/deploy-prod.sh)) does, in order:
+
+1. **Preflight** — verifies `axiome/backend:<sha>` exists in ECR, resolves its
+   digest, and captures the current `:stable` digest for rollback. Fails closed
+   (nothing deployed) if the source image is missing.
+2. **Advance `:stable`** — a server-side manifest retag (no docker pull) so prod
+   pulls the chosen image. Idempotent (a no-op if `:stable` already points there).
+3. **Roll the box** — pipes [`scripts/roll-service.sh`](../scripts/roll-service.sh)
+   over [`scripts/ssm-exec.sh -e production`](../scripts/ssm-exec.sh): `docker
+   compose pull` → `prisma migrate deploy` (baselining first if `_prisma_migrations`
+   is absent) → `up -d`. **Fails closed** — a failed migration never swaps the
+   image; the old containers keep serving.
+4. **Health-check** — polls `/api/v1/health` until 2xx. On an unhealthy result it
+   **auto-rolls `:stable` back** to the prior image (so the prior image keeps
+   serving) and aborts non-zero.
+5. **Record** — writes `reports/<ts>-production-deploy-backend.md` + a row in
+   `reports/deploy-operations.md` (SHA + digest + timestamp + actor).
+
+Prereqs: AWS creds; `aws` CLI (+ Session Manager plugin for interactive sessions
+— `deploy-prod.sh` itself uses `ssm send-command`, no plugin needed); production
+powered on (`cd providers/aws && make turn-on ENV=production YES=1`). Never pass a
+secret as a literal to SSM — the on-box roll fetches everything from
+`/opt/axiome/.env`.
+
+**Choosing the image:** a green `axiome-back` `main` build that passed the
+**blocking** `scan-image` gate (AXI-1345). Its tag is the 8-char commit SHA.
+
+**Rollback:** the health-check step auto-rolls `:stable` back to the prior image
+on failure. To roll back manually later, re-run `make deploy-prod` with the
+previous known-good `<sha>`; for schema, restore the pre-deploy RDS snapshot (see
+the catch-up plan).
+
+### Gated one-click CD (AXI-1349, FR13)
+
+The same deploy is available as a **gated continuous-deployment** GitHub Actions
+workflow, [`.github/workflows/deploy-production.yml`](../.github/workflows/deploy-production.yml):
+
+- **Triggers:** the `image-published` `repository_dispatch` a green `axiome-back`
+  `main` build emits (backend only for now — front/bio-compute prod CD is AXI-1350),
+  or a manual `workflow_dispatch` (any service + tag).
+- **The gate:** the deploy job declares `environment: production`. Configure that
+  as a **protected** GitHub environment with required reviewers, so a green `main`
+  becomes a deployed prod only after **one-click human approval** — never
+  automatically.
+- It runs the exact same `scripts/deploy-prod.sh`, so it inherits the idempotent +
+  fail-closed guarantees (NFR6).
+
+> **Required human setup** (one-time): create the protected `production` environment
+> with reviewers; add `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` secrets; power
+> prod on before approving a run. See the note at the foot of the workflow file.
 
 > **First-time catch-up is special.** Production's DB is months behind and its
 > `organization_svc` has **no migration ledger at all**, so the naive baseline is
@@ -72,16 +115,27 @@ a literal to SSM — fetch it on the box.
 
 ## Deployment Steps
 
-### Deploy a new version
+> **Production deploys use `make deploy-prod` (or the gated CD workflow) — see
+> [The real production backend deploy — one command](#the-real-production-backend-deploy--one-command-axi-1349-fr12)
+> above.** The steps below describe the **dev-provider (Scaleway) promote flow**
+> and staging validation; they are **not** the production path. The old
+> "Go to Actions → Promote" route only bumps the manifest for AWS production and
+> is **inert** on the running system (prod pins `:stable`).
+
+### Deploy a new version (dev / staging — legacy Scaleway flow)
 
 1. Merge code to `main`
 2. CI automatically deploys to dev
 3. Verify in dev environment
 4. Go to Actions → "Promote" → Run workflow
 5. Enter the image tag and select staging
-6. After staging validation, promote to production
+6. For **production**, use `make deploy-prod ENV=production TAG=<sha>` (above)
 
 ### Rollback
+
+**Production:** re-run `make deploy-prod ENV=production TAG=<previous-good-sha>` (the
+health-check step also auto-rolls back on a failed deploy). For dev/staging on the
+Scaleway provider:
 
 1. Go to Actions → "Promote" → Run workflow
 2. Enter the **previous known-good image tag**
