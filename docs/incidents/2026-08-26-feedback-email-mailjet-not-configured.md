@@ -65,9 +65,13 @@ the sender was also defaulting to the unverified `noreply@axiome.app`.
 
 ## Permanent fix (this change)
 
-- **`terraform-cd.yml`** now exports `TF_VAR_mailjet_api_key` / `TF_VAR_mailjet_secret_key`
-  from the GitHub secrets on **both** the plan (`ci-gate`) and apply (`apply-production`)
-  steps, so Terraform actually receives them and the SSM params are created/managed.
+- **Workflow wiring** — the `export-deploy-credentials` composite action already had
+  `mailjet_api_key` / `mailjet_secret_key` inputs (which it exports as `TF_VAR_*` into
+  `$GITHUB_ENV`), but no workflow passed them. `terraform-cd.yml` (both the `ci-gate`
+  plan and `apply-production` invocations) and `terraform-ci.yml` (PR plan) now pass the
+  two GitHub secrets as those inputs, so Terraform receives the vars and the SSM params
+  are created/managed. This also silences the action's misleading
+  `::notice:: Mailjet keys not set` on every deploy.
 - Refreshed the `MAILJET_API_KEY` / `MAILJET_SECRET_KEY` GitHub secrets to the validated
   values (their old values had never been exercised by an apply).
 - Deleted the two **manually-created** SSM params so the next gated prod apply creates

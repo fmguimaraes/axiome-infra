@@ -64,6 +64,10 @@ jobs:
           aws_access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           neon_api_key: ${{ secrets.NEON_API_KEY }}
+          # Keep the PR plan consistent with terraform-cd (else the plan shows the
+          # mailjet SSM params as pending creates). See feedback-email incident 2026-08-26.
+          mailjet_api_key: ${{ secrets.MAILJET_API_KEY }}
+          mailjet_secret_key: ${{ secrets.MAILJET_SECRET_KEY }}
 
       # dev/staging state backends (S3 bucket + DynamoDB lock table) are
       # intentionally torn down to save cost when not actively in use —
