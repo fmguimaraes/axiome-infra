@@ -86,10 +86,11 @@ Full detail, timings, and the safety rationale: [AWS power runbook](providers/aw
 | local | Development | docker-compose |
 | dev | Integration | Auto on merge to main |
 | staging | Pre-production | Manual promotion |
-| production | Live | Manual promotion |
+| production | Live | Gated one-click approval — `deploy-production` (app) / `terraform-cd` (infra); see [Deploy Procedure](docs/deploy-procedure.md) |
 
 ## Documentation
 
+- **[Deploy Procedure](docs/deploy-procedure.md) — operator quick reference: which path ships what, and where to approve a gated production deploy** ← start here to deploy
 - [Bootstrapping](docs/bootstrapping.md) — full setup guide for local, Scaleway, and AWS
 - [GitOps Lifecycle](docs/gitops-lifecycle.md) — GitHub Flow, CI/CD, promotion, audit trail
 - [Architecture](docs/architecture.md) — topology, services, storage layout
