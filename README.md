@@ -50,6 +50,35 @@ make plan ENV=dev
 make apply ENV=dev
 ```
 
+## Powering Production On/Off (cost control)
+
+Production compute (EC2) and the data tier (RDS + ElastiCache Redis) are parked
+when idle to save cost, so finding production **stopped is normal** — bring it back
+with the AWS provider's power controls, run from `providers/aws/`:
+
+```bash
+cd providers/aws
+
+# Bring EVERYTHING up (data tier + compute), validated:
+make turn-on ENV=production          # 1) dry-run preflight — read-only, makes NO changes
+make turn-on ENV=production YES=1    # 2) execute: data tier up + Redis restore, then compute (health-gated)
+
+make status  ENV=production          # show EC2 / RDS / Redis state
+make down    ENV=production          # park it again: stop app, stop RDS, snapshot + delete Redis
+```
+
+`turn-on` is the safe path (`scripts/power-up-all.sh`): its preflight **aborts if the
+Redis final snapshot is missing** — that snapshot is the only copy of Redis data (no
+automatic backups) — then it restores the data tier and waits healthy before starting
+compute, blocking on `/api/v1/health/live`. Finer-grained controls exist too:
+compute-only `make power-up` / `power-down` (safe, daily, never touches storage) and
+data-tier-only `make data-up` / `data-down` (long idle only; destructive for Redis).
+
+> **‼ Keep `terraform-cd` gated for the entire down→up window.** Redis is recreated
+> outside Terraform's view, so an apply mid-window fights the restore.
+
+Full detail, timings, and the safety rationale: [AWS power runbook](providers/aws/docs/power-runbook.md).
+
 ## Environments
 
 | Environment | Purpose | Deploy Method |
@@ -70,3 +99,4 @@ make apply ENV=dev
 - [Providers](docs/providers.md) — Scaleway/AWS portability
 - [Disaster Recovery](docs/disaster-recovery.md) — backups, restore, RTO/RPO
 - [Runbooks](docs/runbooks.md) — operational procedures
+- [AWS Power Runbook](providers/aws/docs/power-runbook.md) — powering production compute/data on and off (cost control)
