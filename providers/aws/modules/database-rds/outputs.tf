@@ -1,6 +1,10 @@
 output "instance_id" {
   description = "RDS instance identifier — used to scope CloudWatch alarms / event subscriptions (FR12)."
-  value       = aws_db_instance.this.id
+  # Use .identifier, NOT .id: under AWS provider v5 aws_db_instance.id returns the
+  # DbiResourceId (db-XXXX), but CloudWatch alarm DBInstanceIdentifier dimensions and
+  # aws_db_event_subscription.source_ids both require the instance *identifier* (name).
+  # Passing .id made CreateEventSubscription fail with SourceNotFound (AXI-1350 alerting).
+  value = aws_db_instance.this.identifier
 }
 
 output "endpoint" {
