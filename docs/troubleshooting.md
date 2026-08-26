@@ -170,6 +170,25 @@ plan first) or for `user_svc`.
 
 ---
 
+## Emails not being sent (feedback, @mentions, password reset, welcome, export)
+
+**Symptom:** an action that should email (e.g. the in-app feedback button) succeeds in
+the UI, but no email arrives. No error is shown — email sends are best-effort and the
+failure is swallowed.
+
+**First check:** `scripts/ssm-exec.sh 'docker logs axiome-user-service --since 1h 2>&1 | grep -i mailjet'`.
+- `Mailjet NOT configured — MAILJET_API_KEY=missing, MAILJET_SECRET_KEY=missing` →
+  the credentials are absent, `EmailService` is in log-only mode, nothing is sent.
+- `Mailjet configured` → the client is up; look instead for `No active admins to notify`
+  (no `role=ADMIN`/`status=ACTIVE` recipient) or `Failed to notify admins`.
+
+**Root cause seen in production (2026-08-26):** the Mailjet SSM params were never created
+because `terraform-cd.yml` did not inject the `MAILJET_API_KEY`/`SECRET_KEY` GitHub
+secrets as `TF_VAR_*`, so the `count`-guarded resources stayed at 0. Full write-up and
+the permanent fix: [incidents/2026-08-26-feedback-email-mailjet-not-configured.md](incidents/2026-08-26-feedback-email-mailjet-not-configured.md).
+
+---
+
 ## General triage order
 
 1. **Is the app up?** `scripts/platform-debug.sh health` → expect `{"status":"ok"}`.

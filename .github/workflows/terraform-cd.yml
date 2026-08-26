@@ -87,6 +87,14 @@ jobs:
       - name: terraform plan (production)
         env:
           PROVIDER: ${{ vars.PROVIDER || vars.REGISTRY_PROVIDER || 'aws' }}
+          # Mailjet transactional-email credentials (feedback / mention / password-reset
+          # / welcome / export emails). Terraform reads TF_VAR_* env automatically and
+          # feeds providers/aws/modules/secrets -> SSM MAILJET_API_KEY / MAILJET_SECRET_KEY.
+          # Set on BOTH plan and apply so the plan matches the apply. An empty secret
+          # leaves the var at its "" default => the param is not created => EmailService
+          # stays in its log-only fallback (the AXI feedback-email incident, 2026-08-26).
+          TF_VAR_mailjet_api_key: ${{ secrets.MAILJET_API_KEY }}
+          TF_VAR_mailjet_secret_key: ${{ secrets.MAILJET_SECRET_KEY }}
         run: bash scripts/deploy.sh production --plan-only
 
   apply-production:
@@ -114,6 +122,14 @@ jobs:
       - name: Deploy production
         env:
           PROVIDER: ${{ vars.PROVIDER || vars.REGISTRY_PROVIDER || 'aws' }}
+          # Mailjet transactional-email credentials (feedback / mention / password-reset
+          # / welcome / export emails). Terraform reads TF_VAR_* env automatically and
+          # feeds providers/aws/modules/secrets -> SSM MAILJET_API_KEY / MAILJET_SECRET_KEY.
+          # Set on BOTH plan and apply so the plan matches the apply. An empty secret
+          # leaves the var at its "" default => the param is not created => EmailService
+          # stays in its log-only fallback (the AXI feedback-email incident, 2026-08-26).
+          TF_VAR_mailjet_api_key: ${{ secrets.MAILJET_API_KEY }}
+          TF_VAR_mailjet_secret_key: ${{ secrets.MAILJET_SECRET_KEY }}
         run: |
           # Apply on push (automatic promotion) and on a normal manual dispatch.
           # Only a manual dispatch with plan_only=true stays plan-only.
