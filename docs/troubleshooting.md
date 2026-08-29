@@ -40,31 +40,35 @@ gateway `unhealthy` as a false alarm and verify with the command above.
 The login request reaches the server (you see the 401 in the gateway logs), the
 route works, user-service is healthy — but the password is rejected.
 
-**Root cause: the bootstrap admin password is re-applied on every start (G5 replay).**
-`AdminBootstrapService` runs `onApplicationBootstrap` and **upserts** the admin user
-from the SSM parameter `BOOTSTRAP_ADMIN_PASSWORD` every time user-service starts.
-So:
+**Historical root cause (fixed — G5/FR9, AXI-983): the bootstrap admin password
+used to be re-applied on every start.** `AdminBootstrapService` used to run
+`onApplicationBootstrap` and **upsert** the admin user from the SSM parameter
+`BOOTSTRAP_ADMIN_PASSWORD` every time user-service started, so:
 
-- Whatever value is in **SSM is the effective password**, always.
-- Any password you set **in the UI silently reverts** on the next user-service
-  restart — including every EC2 **stop/start** (each start boots the containers and
-  re-runs the upsert). Two stop/starts = two reverts.
-- A password "saved in the browser" that no longer matches SSM → 401.
+- Whatever value was in SSM was the effective password, always.
+- Any password set **in the UI silently reverted** on the next user-service
+  restart — including every EC2 stop/start.
 
-This is tracked as compliance gap **G5** with remediation **FR5** (make bootstrap
-create-only and blank the SSM param after first rotation) — see
-`axiome-docs/05 - product/features/HDS-Compliance-Gap-Remediation.md`.
+`AdminBootstrapService` is now **create-only**: it seeds the admin once, and a
+restart never touches an existing admin's password/profile again. The
+`BOOTSTRAP_ADMIN_PASSWORD` SSM parameter is **deleted** after the admin is
+seeded/rotated (see `scripts/reset-admin-password.sh`), so there is no
+replayable bootstrap secret left in SSM. If you still see a 401 today, the cause
+is a genuinely wrong/stale password, not a bootstrap replay — rotate it through
+the product's forgot-password / reset-password flow, or (only if no admin exists
+yet) seed one:
 
 **Diagnose:**
 
 ```bash
-scripts/platform-debug.sh login-test <admin-email>   # → HTTP/1.1 200 OK if SSM pw is correct
+scripts/platform-debug.sh login-test <admin-email>   # only works right after
+                                                       # reset-admin-password.sh -k;
+                                                       # otherwise errors cleanly
+                                                       # because SSM has no lingering
+                                                       # bootstrap secret (by design)
 ```
 
-If that returns 200 but your browser still fails, your browser has a stale password —
-the SSM value is authoritative. Reset to a known value:
-
-**Fix — rotate the admin password (authoritative):**
+**Fix — seed the admin (only if it does not exist yet):**
 
 ```bash
 scripts/reset-admin-password.sh                 # prod, auto-generates a strong pw
@@ -72,7 +76,10 @@ scripts/reset-admin-password.sh -p 'My-Pass'    # or set a specific one
 ```
 
 This writes SSM → refreshes the on-box `.env` → recreates user-service → verifies
-login = 200, then prints the new password once. Save it in your password manager.
+login = 200 → **blanks the SSM param**, then prints the new password once. Save
+it in your password manager. Against an environment that already has an admin,
+the login check will correctly fail (create-only skips the seed) — use the
+product's reset-password flow to change that admin's password instead.
 
 > ⚠️ **Do not** edit `BOOTSTRAP_ADMIN_PASSWORD` directly in `/opt/axiome/.env` by
 > hand with `printf '...\n'` — an unquoted `\n` in `dash` is stripped to a literal
