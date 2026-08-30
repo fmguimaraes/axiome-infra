@@ -81,7 +81,7 @@ run_sql_local() {
   # $1 = database name. SQL body comes from stdin (default table formatting —
   # used for the multi-statement roles migration, not for count queries).
   local db="$1"
-  docker compose -f "${INFRA_ROOT}/docker-compose.yml" exec -T postgres \
+  docker compose -p axiome-shared -f "${INFRA_ROOT}/docker-compose.shared.yml" exec -T postgres \
     psql -v ON_ERROR_STOP=1 -U "${POSTGRES_USER:-axiome}" -d "${db}"
 }
 
@@ -111,7 +111,7 @@ count_local() {
   # $1 = database name, $2 = a single "SELECT count(*) ..." query.
   # -tAc = tuples-only, unaligned, single command — prints just the bare number.
   local db="$1" sql="$2"
-  docker compose -f "${INFRA_ROOT}/docker-compose.yml" exec -T postgres \
+  docker compose -p axiome-shared -f "${INFRA_ROOT}/docker-compose.shared.yml" exec -T postgres \
     psql -v ON_ERROR_STOP=1 -tAc "${sql}" -U "${POSTGRES_USER:-axiome}" -d "${db}"
 }
 

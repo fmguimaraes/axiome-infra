@@ -8,8 +8,10 @@
 # from cloud to on-prem (point a Metabase at the customer DB once an access path
 # exists — see axiome-docs/04 - architecture/Behavior-Tracking-Architecture.md §6).
 #
-# Compose overlay (alongside the base stack):
-#   docker compose -f docker-compose.yml -f analytics/docker-compose.analytics.yml up -d
+# Runs in the shared project on axiome-shared-net (shared stack up first —
+# `make shared-up`):
+#   docker compose -p axiome-shared -f analytics/docker-compose.analytics.yml up -d
+#   (or: make analytics-up)
 #
 # Then browse http://localhost:${METABASE_PORT:-3001} and add the deployment DB as a
 # read-only data source (see analytics/README.md). The six funnels in analytics/funnels/
@@ -21,9 +23,8 @@ services:
   metabase-db-init:
     image: postgres:15-alpine
     container_name: axiome-metabase-db-init
-    depends_on:
-      postgres:
-        condition: service_healthy
+    # postgres is in the separate axiome-shared project, reachable by name on
+    # axiome-shared-net — bring the shared stack up first (`make shared-up`).
     environment:
       PGHOST: postgres
       PGUSER: ${POSTGRES_USER:-axiome}
@@ -34,20 +35,20 @@ services:
       - -c
       - |
         set -e
+        echo "Waiting for shared postgres on $${PGHOST}...";
+        until pg_isready -q; do sleep 2; done
         echo "Ensuring Metabase application database '$${MB_APP_DB}' exists...";
         psql -tc "SELECT 1 FROM pg_database WHERE datname = '$${MB_APP_DB}'" \
           | grep -q 1 || psql -c "CREATE DATABASE \"$${MB_APP_DB}\"";
         echo "Metabase application database ready.";
     networks:
-      - axiome-network
+      - axiome-shared-net
 
   metabase:
     image: metabase/metabase:v0.50.26
     container_name: axiome-metabase
     restart: unless-stopped
     depends_on:
-      postgres:
-        condition: service_healthy
       metabase-db-init:
         condition: service_completed_successfully
     environment:
@@ -71,9 +72,9 @@ services:
       retries: 10
       start_period: 90s
     networks:
-      - axiome-network
+      - axiome-shared-net
 
 networks:
-  axiome-network:
+  axiome-shared-net:
     external: true
-    name: axiome-local
+    name: axiome-shared-net
