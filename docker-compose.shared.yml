@@ -1,0 +1,142 @@
+# Shared infrastructure stack — one instance per machine, started once.
+#
+# These are the stateful commodity services (Postgres, MongoDB, Redis,
+# RabbitMQ, MinIO). They are SHARED across every worktree on this machine and
+# isolated LOGICALLY per worktree (one Postgres/Mongo database, one Redis DB
+# index, one RabbitMQ vhost, one bucket set per worktree) — never duplicated.
+#
+# Compose project name: axiome-shared  (always pass `-p axiome-shared`)
+# External network:      axiome-shared-net  (created by scripts/wt-up.sh)
+#
+# Bring up / down ONLY through the scripts:
+#   scripts/wt-up.sh --shared-only     # start + wait for health
+#   scripts/wt-down.sh --shared         # stop the shared stack (never in a feature task)
+#
+# Host ports are FIXED here (5432/6379/9000/9001/27017/5672/15672) — every
+# worktree's app stack reaches these services by their in-network service name
+# (postgres, redis, minio, mongodb, rabbitmq), so the fixed host ports only
+# matter for host-side tooling (psql, mc, a browser hitting the MinIO console).
+# Do not change these ports or this file as part of a feature task.
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      # The default/admin database. Per-worktree databases are created ON this
+      # instance by wt-up.sh (CREATE DATABASE "<slug>"), never a 2nd container.
+      POSTGRES_DB: ${SHARED_POSTGRES_DB:-axiome}
+      POSTGRES_USER: ${SHARED_POSTGRES_USER:-axiome}
+      POSTGRES_PASSWORD: ${SHARED_POSTGRES_PASSWORD:-axiome_local_dev}
+    ports:
+      - "${SHARED_POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - axiome-shared-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${SHARED_POSTGRES_USER:-axiome}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  mongodb:
+    image: mongo:7
+    # Single-node replica set so Prisma can use transactions (event-service
+    # audit-log writes). An authenticated replica set needs a keyfile; generate
+    # a persistent one on first boot, then the healthcheck initiates rs0.
+    entrypoint:
+      - bash
+      - -c
+      - |
+        if [ ! -f /data/db/keyfile ]; then
+          openssl rand -base64 756 > /data/db/keyfile
+          chmod 400 /data/db/keyfile
+          chown 999:999 /data/db/keyfile
+        fi
+        exec docker-entrypoint.sh mongod --replSet rs0 --keyFile /data/db/keyfile --bind_ip_all
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${SHARED_MONGODB_USER:-axiome}
+      MONGO_INITDB_ROOT_PASSWORD: ${SHARED_MONGODB_PASSWORD:-axiome_local_dev}
+    ports:
+      - "${SHARED_MONGODB_PORT:-27017}:27017"
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - axiome-shared-net
+    healthcheck:
+      test: >
+        mongosh -u ${SHARED_MONGODB_USER:-axiome} -p ${SHARED_MONGODB_PASSWORD:-axiome_local_dev}
+        --authenticationDatabase admin --quiet --eval
+        "try { rs.status().ok } catch(e) { rs.initiate({_id:'rs0',members:[{_id:0,host:'localhost:27017'}]}).ok }"
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "${SHARED_REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - axiome-shared-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: ${SHARED_RABBITMQ_USER:-axiome}
+      RABBITMQ_DEFAULT_PASS: ${SHARED_RABBITMQ_PASSWORD:-axiome_local_dev}
+    ports:
+      - "${SHARED_RABBITMQ_PORT:-5672}:5672"
+      - "${SHARED_RABBITMQ_MGMT_PORT:-15672}:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - axiome-shared-net
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${SHARED_S3_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${SHARED_S3_SECRET_KEY:-minioadmin}
+    ports:
+      - "${SHARED_S3_PORT:-9000}:9000"
+      - "${SHARED_S3_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio_data:/data
+    networks:
+      - axiome-shared-net
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+# One volume set for the whole machine — the shared instances' state. Named
+# under the axiome-shared project (axiome-shared_postgres_data, ...). Per-worktree
+# data lives INSIDE these instances (own DB / index / bucket), not in own volumes.
+volumes:
+  postgres_data:
+  mongodb_data:
+  redis_data:
+  rabbitmq_data:
+  minio_data:
+
+# External so every per-worktree app stack (axiome-<slug>) can attach to the
+# same network and resolve postgres/redis/minio/mongodb/rabbitmq by name.
+# Created by scripts/wt-up.sh (`docker network create axiome-shared-net`).
+networks:
+  axiome-shared-net:
+    external: true
+    name: axiome-shared-net

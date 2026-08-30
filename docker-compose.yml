@@ -1,138 +1,23 @@
+# Per-worktree APPLICATION stack — one per agent/worktree.
+#
+# ONLY the services under active development (backend, biocompute, frontend).
+# The stateful commodity services (postgres/mongodb/redis/rabbitmq/minio) are
+# SHARED and defined in docker-compose.shared.yml (project axiome-shared).
+#
+# Compose project name: axiome-<slug>   (scripts pass `-p axiome-<slug>`)
+# Slug + all per-worktree values come from the gitignored `.env` that
+# scripts/wt-up.sh writes. Bring this stack up / down ONLY through the scripts:
+#   scripts/wt-up.sh        scripts/wt-down.sh        scripts/wt-status.sh
+# They enforce the project name; a bare `docker compose up` here would collide
+# on the default project name (the directory) with every other worktree.
+#
+# NOTHING in this file pins a container_name or a literal host port — container
+# names are namespaced by the project (axiome-<slug>-backend-1, ...) and every
+# published port is `${BACKEND_PORT}` etc., which wt-up.sh computes as
+# base + PORT_OFFSET so two worktrees never publish the same host port.
 services:
-  postgres:
-    image: postgres:15-alpine
-    container_name: axiome-postgres
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB:-axiome}
-      POSTGRES_USER: ${POSTGRES_USER:-axiome}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-axiome_local_dev}
-    ports:
-      - "${POSTGRES_PORT:-5432}:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    networks:
-      - axiome-network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-axiome}"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
-  mongodb:
-    image: mongo:7
-    container_name: axiome-mongodb
-    # Run as a single-node replica set so Prisma can use transactions
-    # (e.g. event-service audit-log writes). An authenticated replica set
-    # requires a keyfile; we generate a persistent one on first boot, then
-    # the healthcheck initiates rs0 if it is not already configured.
-    entrypoint:
-      - bash
-      - -c
-      - |
-        if [ ! -f /data/db/keyfile ]; then
-          openssl rand -base64 756 > /data/db/keyfile
-          chmod 400 /data/db/keyfile
-          chown 999:999 /data/db/keyfile
-        fi
-        exec docker-entrypoint.sh mongod --replSet rs0 --keyFile /data/db/keyfile --bind_ip_all
-    environment:
-      MONGO_INITDB_ROOT_USERNAME: ${MONGODB_USER:-axiome}
-      MONGO_INITDB_ROOT_PASSWORD: ${MONGODB_PASSWORD:-axiome_local_dev}
-      MONGO_INITDB_DATABASE: ${MONGODB_DB:-axiome}
-    ports:
-      - "${MONGODB_PORT:-27017}:27017"
-    volumes:
-      - mongodb_data:/data/db
-    networks:
-      - axiome-network
-    healthcheck:
-      test: >
-        mongosh -u ${MONGODB_USER:-axiome} -p ${MONGODB_PASSWORD:-axiome_local_dev}
-        --authenticationDatabase admin --quiet --eval
-        "try { rs.status().ok } catch(e) { rs.initiate({_id:'rs0',members:[{_id:0,host:'localhost:27017'}]}).ok }"
-      interval: 10s
-      timeout: 10s
-      retries: 10
-      start_period: 30s
-
-  redis:
-    image: redis:7-alpine
-    container_name: axiome-redis
-    ports:
-      - "${REDIS_PORT:-6379}:6379"
-    volumes:
-      - redis_data:/data
-    networks:
-      - axiome-network
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
-  rabbitmq:
-    image: rabbitmq:3.13-management-alpine
-    container_name: axiome-rabbitmq
-    environment:
-      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-axiome}
-      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-axiome_local_dev}
-    ports:
-      - "${RABBITMQ_PORT:-5672}:5672"
-      - "${RABBITMQ_MGMT_PORT:-15672}:15672"
-    volumes:
-      - rabbitmq_data:/var/lib/rabbitmq
-    networks:
-      - axiome-network
-    healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-
-  minio:
-    image: minio/minio:latest
-    container_name: axiome-minio
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: ${S3_ACCESS_KEY:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-minioadmin}
-    ports:
-      - "9000:9000"
-      - "9001:9001"
-    volumes:
-      - minio_data:/data
-    networks:
-      - axiome-network
-    healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
-  minio-init:
-    image: minio/mc:latest
-    container_name: axiome-minio-init
-    depends_on:
-      minio:
-        condition: service_healthy
-    entrypoint: >
-      /bin/sh -c "
-      mc alias set local http://minio:9000 $${MINIO_ROOT_USER} $${MINIO_ROOT_PASSWORD};
-      mc mb local/axiome-local-artifacts --ignore-existing;
-      mc mb local/axiome-local-uploads --ignore-existing;
-      mc mb local/axiome-local-system --ignore-existing;
-      mc version enable local/axiome-local-artifacts;
-      echo 'Buckets created successfully';
-      "
-    environment:
-      MINIO_ROOT_USER: ${S3_ACCESS_KEY:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-minioadmin}
-    networks:
-      - axiome-network
-
   backend:
     image: node:20-alpine
-    container_name: axiome-backend
     working_dir: /app
     command: sh -c "apk add --no-cache openssl chromium nss freetype harfbuzz ca-certificates ttf-freefont && npm install && npm run dev"
     environment:
@@ -140,47 +25,49 @@ services:
       PORT: "3000"
       PUPPETEER_SKIP_DOWNLOAD: "true"
       PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium-browser
-      DATABASE_URL: postgresql://${POSTGRES_USER:-axiome}:${POSTGRES_PASSWORD:-axiome_local_dev}@postgres:5432/${POSTGRES_DB:-axiome}
-      USER_DATABASE_URL: postgresql://${POSTGRES_USER:-axiome}:${POSTGRES_PASSWORD:-axiome_local_dev}@postgres:5432/${POSTGRES_DB:-axiome}?schema=user_svc
-      ORGANIZATION_DATABASE_URL: postgresql://${POSTGRES_USER:-axiome}:${POSTGRES_PASSWORD:-axiome_local_dev}@postgres:5432/${POSTGRES_DB:-axiome}?schema=organization_svc
-      MONGODB_URL: mongodb://${MONGODB_USER:-axiome}:${MONGODB_PASSWORD:-axiome_local_dev}@mongodb:27017/${MONGODB_DB:-axiome}?authSource=admin&directConnection=true
-      RABBITMQ_URL: amqp://${RABBITMQ_USER:-axiome}:${RABBITMQ_PASSWORD:-axiome_local_dev}@rabbitmq:5672
-      REDIS_URL: redis://redis:6379
-      S3_ENDPOINT: http://minio:9000
-      # Browser-facing presigned URLs (upload/download) must use the published
-      # host — the browser can't resolve the in-Docker `minio` hostname.
-      S3_PUBLIC_ENDPOINT: http://localhost:9000
+      # --- Postgres: this worktree's own database on the SHARED instance ---
+      DATABASE_URL: postgresql://${POSTGRES_USER:-axiome}:${POSTGRES_PASSWORD:-axiome_local_dev}@postgres:5432/${POSTGRES_DB}
+      USER_DATABASE_URL: postgresql://${POSTGRES_USER:-axiome}:${POSTGRES_PASSWORD:-axiome_local_dev}@postgres:5432/${POSTGRES_DB}?schema=user_svc
+      ORGANIZATION_DATABASE_URL: postgresql://${POSTGRES_USER:-axiome}:${POSTGRES_PASSWORD:-axiome_local_dev}@postgres:5432/${POSTGRES_DB}?schema=organization_svc
+      # --- Mongo: this worktree's own event-store database ---
+      MONGODB_URL: mongodb://${MONGODB_USER:-axiome}:${MONGODB_PASSWORD:-axiome_local_dev}@mongodb:27017/${MONGODB_DB}?authSource=admin&directConnection=true
+      # --- RabbitMQ: this worktree's own vhost ---
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-axiome}:${RABBITMQ_PASSWORD:-axiome_local_dev}@rabbitmq:5672/${RABBITMQ_VHOST}
+      # --- Redis: this worktree's own logical DB index (+ reserved key prefix) ---
+      REDIS_URL: redis://redis:6379/${REDIS_DB_INDEX}
+      REDIS_PREFIX: ${REDIS_PREFIX}
+      # --- Object store: shared endpoint, this worktree's own bucket set ---
+      S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}
+      # Browser-facing presigned URLs must use the published host — the browser
+      # can't resolve the in-Docker `minio` hostname.
+      S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-http://localhost:9000}
       S3_ACCESS_KEY: ${S3_ACCESS_KEY:-minioadmin}
       S3_SECRET_KEY: ${S3_SECRET_KEY:-minioadmin}
-      S3_BUCKET_ARTIFACTS: axiome-local-artifacts
-      S3_BUCKET_UPLOADS: axiome-local-uploads
-      S3_REGION: eu-west-3
+      # Backend uses ONE bucket (S3_BUCKET, falling back to S3_BUCKET_UPLOADS);
+      # artifacts/system are key-prefixes inside it. Set both to the worktree bucket.
+      S3_BUCKET: ${S3_BUCKET}
+      S3_BUCKET_UPLOADS: ${S3_BUCKET_UPLOADS}
+      S3_BUCKET_ARTIFACTS: ${S3_BUCKET_ARTIFACTS}
+      S3_BUCKET_SYSTEM: ${S3_BUCKET_SYSTEM}
+      S3_REGION: ${S3_REGION:-eu-west-3}
       S3_FORCE_PATH_STYLE: "true"
-      BIO_COMPUTE_URL: http://biocompute:8000
-      CALLBACK_BASE_URL: http://backend:3004
+      # App-to-app calls use slug-scoped hostnames (unique on the shared net).
+      BIO_COMPUTE_URL: http://biocompute-${WT_SLUG}:8000
+      CALLBACK_BASE_URL: http://backend-${WT_SLUG}:3004
       JWT_SECRET: ${JWT_SECRET:-local-dev-jwt-secret-change-in-production}
       BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-admin@axiome.local}
       BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-admin}
       BOOTSTRAP_ADMIN_FIRST_NAME: ${BOOTSTRAP_ADMIN_FIRST_NAME:-Local}
       BOOTSTRAP_ADMIN_LAST_NAME: ${BOOTSTRAP_ADMIN_LAST_NAME:-Admin}
     ports:
-      - "${BACKEND_PORT:-3000}:3000"
+      - "${BACKEND_PORT}:3000"
     volumes:
-      - ../axiome-back:/app
+      - ${BACKEND_SRC:-../axiome-back}:/app
       - backend_node_modules:/app/node_modules
-    depends_on:
-      postgres:
-        condition: service_healthy
-      mongodb:
-        condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      minio-init:
-        condition: service_completed_successfully
     networks:
-      - axiome-network
+      axiome-shared-net:
+        aliases:
+          - backend-${WT_SLUG}
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/v1/health/live"]
       interval: 10s
@@ -189,62 +76,61 @@ services:
 
   biocompute:
     build:
-      context: ../axiome-bio-compute
+      context: ${BIOCOMPUTE_SRC:-../axiome-bio-compute}
       dockerfile: Dockerfile
-    container_name: axiome-biocompute
     working_dir: /app
     command: uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
     environment:
       BIO_COMPUTE_LOG_LEVEL: ${BIOCOMPUTE_LOG_LEVEL:-INFO}
       BIO_COMPUTE_PORT: "8000"
-      BIO_COMPUTE_S3_ENDPOINT_URL: http://minio:9000
+      BIO_COMPUTE_S3_ENDPOINT_URL: ${S3_ENDPOINT:-http://minio:9000}
       BIO_COMPUTE_S3_ACCESS_KEY: ${S3_ACCESS_KEY:-minioadmin}
       BIO_COMPUTE_S3_SECRET_KEY: ${S3_SECRET_KEY:-minioadmin}
-      BIO_COMPUTE_S3_BUCKET: axiome-local-artifacts
-      BIO_COMPUTE_DASHBOARD_DB_URL: postgresql://${POSTGRES_USER:-axiome}:${POSTGRES_PASSWORD:-axiome_local_dev}@postgres:5432/${POSTGRES_DB:-axiome}
+      BIO_COMPUTE_S3_BUCKET: ${BIO_COMPUTE_S3_BUCKET}
+      BIO_COMPUTE_DASHBOARD_DB_URL: postgresql://${POSTGRES_USER:-axiome}:${POSTGRES_PASSWORD:-axiome_local_dev}@postgres:5432/${POSTGRES_DB}
       BIO_COMPUTE_JWT_SECRET: ${JWT_SECRET:-local-dev-jwt-secret-change-in-production}
     ports:
-      - "${BIOCOMPUTE_PORT:-8000}:8000"
+      - "${BIOCOMPUTE_PORT}:8000"
     volumes:
-      - ../axiome-bio-compute:/app
-    depends_on:
-      postgres:
-        condition: service_healthy
-      minio-init:
-        condition: service_completed_successfully
+      - ${BIOCOMPUTE_SRC:-../axiome-bio-compute}:/app
     networks:
-      - axiome-network
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      axiome-shared-net:
+        aliases:
+          - biocompute-${WT_SLUG}
 
   frontend:
     image: node:20-alpine
-    container_name: axiome-frontend
     working_dir: /app
     command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
     environment:
-      VITE_API_URL: http://localhost:${BACKEND_PORT:-3000}/api/v1
+      # Point the browser at THIS worktree's backend host port.
+      VITE_API_URL: http://localhost:${BACKEND_PORT}/api/v1
+      VITE_GATEWAY_WS_URL: http://localhost:${BACKEND_PORT}
+      # Jobs dashboard (biocompute) — this worktree's biocompute host port.
+      # NOTE: axiome-front currently hardcodes http://localhost:8000/dashboard in
+      # Layout.tsx; this var is honored only once that hardcode is fixed to read
+      # import.meta.env.VITE_BIOCOMPUTE_URL (reported follow-up).
+      VITE_BIOCOMPUTE_URL: http://localhost:${BIOCOMPUTE_PORT}
     ports:
-      - "${FRONTEND_PORT:-5173}:5173"
+      - "${FRONTEND_PORT}:5173"
     volumes:
-      - ../axiome-front:/app
+      - ${FRONTEND_SRC:-../axiome-front}:/app
       - frontend_node_modules:/app/node_modules
     networks:
-      - axiome-network
+      axiome-shared-net:
+        aliases:
+          - frontend-${WT_SLUG}
 
+# node_modules volumes are namespaced by the compose project (axiome-<slug>_...),
+# so each worktree gets its own — no cross-worktree dependency bleed.
 volumes:
-  postgres_data:
-  mongodb_data:
-  minio_data:
-  rabbitmq_data:
-  redis_data:
   backend_node_modules:
   frontend_node_modules:
 
+# The shared services' network, created by wt-up.sh and owned by the
+# axiome-shared stack. App services attach here to reach postgres/redis/minio/
+# mongodb/rabbitmq by name, and to reach each other by slug-scoped alias.
 networks:
-  axiome-network:
-    driver: bridge
-    name: axiome-local
+  axiome-shared-net:
+    external: true
+    name: axiome-shared-net

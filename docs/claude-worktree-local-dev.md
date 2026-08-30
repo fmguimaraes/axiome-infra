@@ -1,181 +1,138 @@
-# Running a Claude-harness worktree against the local dev stack
+# Per-worktree local dev — isolation strategy
 
-How to point the dockerized dev stack (`make local-up`) at a Claude Code
-worktree (`.claude/worktrees/<name>/`) instead of the primary checkout, so a
-branch built in a worktree can be clicked through in a real browser before
-it's merged. This is the fast path — skip straight to §6 if you've done this
-before and just need the commands.
+How several agent/dev sessions each run the full Axiome platform locally **at the
+same time**, in their own git worktrees, without colliding on ports, the docker
+compose project, named volumes, databases, or object-storage buckets.
 
-> This is a *different* worktree convention from the one
-> [docker-compose.override.yml.example](../docker-compose.override.yml.example)
-> documents (`_worktrees/<repo>-<branch>`, a manual `git worktree add` layout).
-> A Claude-harness worktree lives at
-> `<repo-root>/.claude/worktrees/<name>/<submodule>/` instead — same override
-> mechanism, different path.
+> **This supersedes the old single-stack + `docker-compose.override.yml` approach.**
+> That approach pointed *one* stack (fixed container names, fixed host ports, one
+> database, one bucket set) at whichever worktree you last edited — so two sessions
+> fought over the same containers and data. The override file is still read by the
+> legacy `make local-*` targets, but for parallel work use the `wt-*` scripts below.
 
 ---
 
-## 1. Why this is more setup than a normal worktree
+## 1. The problem
 
-A Claude-harness worktree of `axiome-global` is a full checkout of the
-super-repo, but its submodules (`axiome-front`, `axiome-back`, `axiome-infra`,
-...) come back **uninitialized** — `git submodule update --init` has never run
-there. Two consequences:
+The platform is one docker-compose stack: Postgres, MongoDB, Redis, RabbitMQ,
+MinIO, plus the app services (backend, biocompute, frontend). Run it twice on one
+machine and every layer collides:
 
-- Nothing under `axiome-front/`, `axiome-back/`, etc. exists until you init
-  the submodules you need.
-- The submodule pointer the superproject records is whatever commit was
-  current when the worktree's branch diverged — usually **stale** relative to
-  each submodule's own `origin/main`, sometimes by dozens of commits.
+- **Host ports** — both stacks want 5432 / 6379 / 9000 / 3000 / 5173 / 8000 …
+- **Compose project name** — both default to the directory name, so `up` in one
+  worktree *recreates* the other's containers instead of adding new ones.
+- **Container names** — pinned `container_name: axiome-backend` etc. mean the
+  second `up` silently repoints the first.
+- **Data** — one Postgres database, one Mongo event store, one Redis keyspace, one
+  bucket set, shared by both → cross-contamination and lost work.
 
----
+## 2. The strategy — hybrid: share the commodity, duplicate the code
 
-## 2. Init and fast-forward the submodules you need
+We do **not** duplicate everything per worktree — running five stateful engines
+per session would melt the machine. Instead:
 
-Only init what the task touches — each is a full clone.
+- **Stateful commodity services are shared** — exactly one Postgres, Mongo, Redis,
+  RabbitMQ, and MinIO for the whole machine (the `axiome-shared` stack). They are
+  isolated **logically**, per worktree, *inside* that one instance.
+- **Only the services under active development are duplicated** — each worktree
+  gets its own backend / biocompute / frontend (the `axiome-<slug>` stack),
+  because that is the code you are actually changing and want to run in isolation.
+
+```
+                 ┌──────────────────────── one machine ────────────────────────┐
+                 │                                                              │
+  worktree A ──► │  axiome-<slugA>  (backend, biocompute, frontend)  ┐          │
+                 │      ports 3000 / 5173 / 8000                     │          │
+                 │                                                   ├─► axiome-shared-net
+  worktree B ──► │  axiome-<slugB>  (backend, biocompute, frontend)  │      │   │
+                 │      ports 3100 / 5273 / 8100                     ┘      ▼   │
+                 │                                          ┌───────────────────┐
+                 │   axiome-shared  (ONE each, fixed ports):│ postgres  5432    │
+                 │                                          │ redis     6379    │
+                 │   logical isolation per worktree:        │ minio  9000/9001  │
+                 │     DB <slugA> / <slugB>                 │ mongodb   27017   │
+                 │     redis index 0 / 1                    │ rabbitmq  5672     │
+                 │     vhost <slugA> / <slugB>              └───────────────────┘
+                 │     buckets <slug>-uploads/-artifacts/-system                │
+                 └──────────────────────────────────────────────────────────────┘
+```
+
+### The slug is the namespace
+
+Everything a worktree owns is derived from a **slug** (the sanitized worktree
+directory name, or an explicit `WT_SLUG`): the compose project (`axiome-<slug>`),
+container/volume/network-alias names, the Postgres and Mongo database, the
+RabbitMQ vhost, the Redis key prefix, and the bucket names. Two worktrees can
+therefore never touch the same named resource.
+
+### Ports are offset, not fixed
+
+Each worktree gets a `PORT_OFFSET` (0, 100, 200, …) allocated collision-free from
+a machine-local registry (`~/.axiome/worktree-registry.json`). Published host
+ports are `base + PORT_OFFSET` — backend `3000+off`, frontend `5173+off`,
+biocompute `8000+off`. No compose file pins a host port, and no `container_name`
+is pinned anywhere.
+
+### One network, slug-scoped app hostnames
+
+The shared stack publishes an **external** network, `axiome-shared-net`. Every
+app stack attaches to it to reach `postgres` / `redis` / `minio` / `mongodb` /
+`rabbitmq` by name (there is only one of each, so the name is unambiguous).
+App-to-app calls use **slug-scoped aliases** (`backend-<slug>`, `biocompute-<slug>`)
+so that two worktrees' `backend`s never shadow each other on the shared network.
+
+### Logical isolation, service by service
+
+| Shared service | Isolation per worktree | Set via |
+|---|---|---|
+| Postgres | one **database** `<slug>` on the shared instance (never a 2nd container); schemas `user_svc` / `organization_svc` live inside it | `POSTGRES_DB`, `DATABASE_URL` |
+| MongoDB (event store) | one **database** `<slug>` | `MONGODB_DB`, `MONGODB_URL` |
+| Redis | one **logical DB index** (0–15) + reserved `axiome:<slug>:` key prefix | `REDIS_DB_INDEX` (in `REDIS_URL` path), `REDIS_PREFIX` |
+| RabbitMQ | one **vhost** `<slug>` with full app-user permissions | `RABBITMQ_VHOST`, `RABBITMQ_URL` |
+| MinIO | one **bucket set** `<slug>-uploads` / `-artifacts` / `-system` (versioning on artifacts); shared endpoint + creds, disjoint namespace | `S3_BUCKET*`, `BIO_COMPUTE_S3_BUCKET` |
+
+**Application code must read these names from env — never build a bucket/DB/URL
+from a literal.** A hardcoded name or port defeats the whole scheme.
+
+## 3. The scripts
+
+All in `axiome-infra/scripts/` (POSIX bash, idempotent, safe to re-run):
+
+- **`wt-up.sh`** — derive the slug, allocate a free `PORT_OFFSET` + Redis index,
+  write the gitignored `.env`, bring up `axiome-shared` (wait for health), create
+  this worktree's Postgres DB / RabbitMQ vhost / MinIO buckets, start the app
+  stack (`docker compose -p axiome-<slug> up -d --build`), run migrations, and
+  print the resolved URLs / DB / index / buckets.
+  Flags: `--shared-only` (just the shared stack), `--provision-only` (everything
+  except starting the app services), `--no-seed`.
+- **`wt-down.sh`** — `docker compose -p axiome-<slug> down -v` for this project
+  only (leaves the shared stack and every other worktree running). `--purge` also
+  drops this worktree's Postgres + Mongo DB, flushes its Redis index, deletes its
+  vhost + buckets, and frees its registry entry. Purge is opt-in, never default.
+  `--shared` / `--purge-shared` stop the machine-wide shared stack (not a
+  feature-task action).
+- **`wt-status.sh`** — list every worktree stack with its ports, database, Redis
+  index, vhost, buckets, and up/down state. `--verify` also probes the shared
+  services. This is how you find your own resources.
+
+## 4. Daily workflow
 
 ```bash
-git submodule update --init axiome-front axiome-back axiome-infra
+cd <your-worktree>/axiome-infra
+./scripts/wt-up.sh              # start your isolated stack; prints your URLs
+# … develop; app is at the printed frontend/backend ports …
+./scripts/wt-status.sh         # see every running worktree stack on the machine
+./scripts/wt-down.sh           # stop your stack at task end (keeps data + ports)
+./scripts/wt-down.sh --purge   # …or also destroy this worktree's data + free its slot
 ```
 
-For each one, check it out on `main` and fast-forward — do **not** trust the
-commit the worktree checked out to:
+The gitignored `.env` is generated by `wt-up.sh`; `.env.example` documents every
+variable and how each per-worktree value is derived.
 
-```bash
-cd axiome-front
-git checkout main && git merge --ff-only origin/main
-cd ../axiome-back
-git checkout main && git merge --ff-only origin/main
-cd ../axiome-infra
-git checkout main && git merge --ff-only origin/main
-```
+## 5. Rules (see SDLC)
 
-If a submodule is on a real feature branch rather than `main`, fetch and
-check that branch out instead — the point is just "not the stale pointer".
-
----
-
-## 3. `node_modules` for standalone tsc/vitest (optional)
-
-A fresh worktree has no `node_modules`. If you need to run `tsc --noEmit`,
-`vitest`, etc. *outside* Docker, symlink the primary checkout's:
-
-```bash
-ln -s /path/to/axiome-global/axiome-front/node_modules axiome-front/node_modules
-```
-
-**Remove this symlink before step 5** — `make local-up` mounts the whole
-service directory into the container, and a symlinked `node_modules` breaks
-that mount ("not a directory"). The Makefile also mounts a real
-`frontend_node_modules` Docker volume over `/app/node_modules` inside the
-container, so the container never needs your symlink anyway.
-
-```bash
-rm axiome-front/node_modules
-```
-
----
-
-## 4. Check what's already running before you touch anything
-
-Container names in `docker-compose.yml` are fixed (`axiome-frontend`,
-`axiome-backend`, ...) — bringing up a service **recreates** the same
-container wherever it's currently pointed, it doesn't add a second one. If a
-stack is already running (e.g. against the primary checkout), `make local-up`
-here will silently repoint and restart it.
-
-```bash
-docker ps --format 'table {{.Names}}\t{{.Status}}'
-docker inspect axiome-frontend --format '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{"\n"}}{{end}}'
-```
-
-If someone's dev session is running against the primary checkout, ask before
-repointing it — don't assume it's free to take over.
-
-Only touch the services your change actually needs. `postgres` / `minio` /
-`redis` / `rabbitmq` / `mongodb` are shared data services with nothing
-worktree-specific to mount — leave them running against whatever they're
-already attached to. If your worktree's `axiome-back` is on the same commit
-as the primary checkout's (check `git log -1 --oneline` in both), there's no
-reason to repoint `backend` either — a frontend-only change only needs
-`frontend` recreated.
-
----
-
-## 5. Point the stack at the worktree
-
-`docker-compose.override.yml` in `axiome-infra/` (gitignored, machine-local,
-auto-merged by every `make local-*` target) overrides a service's `volumes:`.
-Point it at the worktree's **absolute path**, not the
-`_worktrees/<repo>-<branch>` convention from the `.example` file — that
-convention doesn't apply to Claude-harness worktrees:
-
-```yaml
-# axiome-infra/docker-compose.override.yml
-services:
-  frontend:
-    volumes:
-      - /absolute/path/to/.claude/worktrees/<name>/axiome-front:/app
-      - frontend_node_modules:/app/node_modules
-```
-
-Add a `backend:` block the same way only if the worktree's `axiome-back`
-actually diverges from the primary checkout's.
-
-```bash
-cd axiome-infra
-make local-up SERVICE=frontend    # add SERVICE=backend too if you overrode it
-docker logs axiome-frontend --tail 30    # confirm Vite came up clean
-```
-
----
-
-## 6. Fast path (already done this once)
-
-```bash
-git submodule update --init axiome-front               # + axiome-back, axiome-infra as needed
-(cd axiome-front && git checkout main && git merge --ff-only origin/main)
-rm -f axiome-front/node_modules                         # only if you'd symlinked it for tsc
-docker ps --format 'table {{.Names}}\t{{.Status}}'       # check nothing else is using these containers
-# write axiome-infra/docker-compose.override.yml pointing frontend: at this worktree's axiome-front
-cd axiome-infra && make local-up SERVICE=frontend
-```
-
-The app is then live at `http://localhost:5173` with your worktree's code —
-browser session auth/data from whatever was last logged in there carries
-over, so an already-authed browser tab is usually good to go immediately.
-
-To restore afterward, see §7 — deleting the override file alone does **not**
-put the primary checkout back.
-
----
-
-## 7. When you're done
-
-**Deleting the override is not enough to restore the primary checkout.**
-`docker-compose.yml`'s own `frontend.volumes` path is relative to
-`axiome-infra/`'s own directory — run `make local-up` with no override from
-*this worktree's* `axiome-infra`, and it happily resolves that relative path
-against the worktree again, not the primary checkout. (Confirmed the hard
-way: `rm docker-compose.override.yml && make local-up SERVICE=frontend` left
-`axiome-frontend` mounted on the worktree.)
-
-Write a **temporary** override pointing at the primary checkout's absolute
-path instead, apply it, then delete it:
-
-```bash
-cat > axiome-infra/docker-compose.override.yml <<'EOF'
-services:
-  frontend:
-    volumes:
-      - /absolute/path/to/axiome-global/axiome-front:/app
-      - frontend_node_modules:/app/node_modules
-EOF
-cd axiome-infra && make local-up SERVICE=frontend
-docker inspect axiome-frontend --format '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{"\n"}}{{end}}'   # confirm it's the primary checkout, not the worktree
-cd .. && rm axiome-infra/docker-compose.override.yml
-```
-
-The container itself doesn't revert when the file disappears — only the next
-`make local-up` reads it, so removing the override after the container is
-already recreated is safe and just leaves the worktree clean for next time.
+The parallel-agent working rules — one task per worktree, migration
+serialisation, treating the shared stack / bucket layout as a serialised shared
+surface, teardown as part of task completion — live in
+[`axiome-docs/SDLC.md` → Parallel Agent Working Rules](../../axiome-docs/SDLC.md#parallel-agent-working-rules-worktree-isolation)
+and the **Local environment** section of the root `CLAUDE.md`.
