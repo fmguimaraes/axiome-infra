@@ -73,33 +73,29 @@ shared-up:
 shared-down:
 	./scripts/wt-down.sh $(if $(PURGE),--purge-shared,--shared)
 
-# Bring up the `local`-slug stack: shared services + this slug's app services,
-# create its DB/vhost/buckets, and run migrations (full wt-up.sh). With
-# SERVICE=<name>, provisions then (re)builds just that one app service.
-local-up:
-	@if [ -n "$(SERVICE)" ]; then \
-		WT_SLUG=$(LEGACY_SLUG) ./scripts/wt-up.sh --provision-only; \
-		$(APP) up -d --build $(SERVICE); \
-	else \
-		WT_SLUG=$(LEGACY_SLUG) ./scripts/wt-up.sh; \
-	fi
+# local-* now ALIAS the fast fixed-port demo stack (2026-09-04). The old per-
+# worktree wt-up.sh path reinstalled node_modules every start, used a PORT_OFFSET
+# (not 5173/3000), and rewrote .env — none of which is wanted now that every
+# worktree shares the ONE axiome-localhost DB and only main runs. `local-up` and
+# `demo-up` are the same thing; use either. (The isolation path still exists via
+# ./scripts/wt-up.sh directly for anyone who explicitly needs a private stack.)
+local-up: demo-up
 
 # Foreground mode: streams all logs live; Ctrl-C stops the app stack.
 local-up-fg:
-	WT_SLUG=$(LEGACY_SLUG) ./scripts/wt-up.sh --provision-only
-	$(APP) up $(SERVICE)
+	$(DEMO) up $(SERVICE)
 
-# Stop THIS slug's app stack (down -v). Leaves the shared stack + data intact.
-local-down:
-	./scripts/wt-down.sh --slug $(LEGACY_SLUG)
+# Stop the stack (keep containers — next start is instant).
+local-down: demo-down
 
-# Also destroy this slug's data (DB / mongo / redis index / vhost / buckets) and
-# free its registry allocation.
+# local-purge is retired: it would destroy the ONE shared axiome-localhost DB
+# (the real APHM / Biotech One data). Refuse loudly instead of nuking it.
 local-purge:
-	./scripts/wt-down.sh --slug $(LEGACY_SLUG) --purge
+	@echo "local-purge is disabled: it would destroy the shared axiome-localhost DB (APHM data)." >&2
+	@echo "To remove only the demo containers (keeping data + node_modules): make demo-rm" >&2
+	@exit 1
 
-local-restart:
-	$(APP) restart $(SERVICE)
+local-restart: demo-restart
 
 # ── Fast fixed-port DEMO stack (APHM / Biotech One on axiome-legacydb) ──────────
 # A hardcoded compose: fixed container names, fixed reserved ports (front 5173,
@@ -120,11 +116,11 @@ demo-rm:                 ## remove the demo containers (keeps node_modules volum
 
 # Follow logs (all app services, or one with SERVICE=<name>).
 local-logs:
-	$(APP) logs -f --tail=$(TAIL) $(SERVICE)
+	$(DEMO) logs -f --tail=$(TAIL) $(SERVICE)
 
 # Print last N lines and exit (non-following). Useful for CI / scripts.
 local-tail:
-	$(APP) logs --tail=$(TAIL) $(SERVICE)
+	$(DEMO) logs --tail=$(TAIL) $(SERVICE)
 
 # Show running containers and their state (app + shared).
 local-ps:
