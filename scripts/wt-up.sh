@@ -22,12 +22,18 @@
 set -euo pipefail
 . "$(cd "$(dirname "$0")" && pwd)/wt-common.sh"
 
-SHARED_ONLY=0; PROVISION_ONLY=0; DO_SEED=1; BUILD_FLAG="--build"
+# DO_SEED defaults OFF (2026-09-04): every worktree now shares ONE Postgres DB
+# (axiome-localhost), and the seed step below can fall back to `prisma db push
+# --accept-data-loss`, which would DESTROY that shared DB's data if a worktree's
+# schema differs. Opt in deliberately with `--seed` only when you intend to
+# migrate the one shared DB (it affects every worktree).
+SHARED_ONLY=0; PROVISION_ONLY=0; DO_SEED=0; BUILD_FLAG="--build"
 while [ $# -gt 0 ]; do
   case "$1" in
     --shared-only)    SHARED_ONLY=1 ;;
     --provision-only) PROVISION_ONLY=1 ;;
     --no-seed)        DO_SEED=0 ;;
+    --seed)           DO_SEED=1 ;;   # opt in: migrate the ONE shared DB (affects all worktrees)
     --rebuild)        BUILD_FLAG="--build" ;;
     -h|--help)        sed -n '2,25p' "$0"; exit 0 ;;
     *) die "unknown flag: $1 (try --help)" ;;
@@ -69,12 +75,11 @@ ok "Wrote per-worktree env"
 # --- 4. Create per-worktree isolation on the shared services ---------------
 log "Provisioning isolated resources on the shared services"
 
-if pg_db_exists "${PG_DB}"; then
-  ok "Postgres DB \"${PG_DB}\" already exists"
-else
-  pg_admin -c "CREATE DATABASE \"${PG_DB}\"" >/dev/null
-  ok "Created Postgres DB \"${PG_DB}\""
-fi
+# Postgres: the ONE shared DB ("${PG_DB}") lives on the external `axiome-localhost`
+# container (see docker-compose.yml), provisioned outside wt-up — NOT on the shared
+# `postgres` service. Do not create it here: `pg_admin` targets `postgres`, so a
+# CREATE would mint a junk DB on the wrong server and re-fragment the setup.
+ok "Postgres DB \"${PG_DB}\" on axiome-localhost (shared; externally provisioned — not created here)"
 
 # RabbitMQ vhost + full permissions for the app user (idempotent)
 if rabbitmqctl list_vhosts --quiet 2>/dev/null | grep -qx "${MQ_VHOST}"; then

@@ -101,6 +101,23 @@ local-purge:
 local-restart:
 	$(APP) restart $(SERVICE)
 
+# ── Fast fixed-port DEMO stack (APHM / Biotech One on axiome-legacydb) ──────────
+# A hardcoded compose: fixed container names, fixed reserved ports (front 5173,
+# API 3000, biocompute 8000), the legacy demo DB baked in, no wt-up/.env dance.
+# First `demo-up` repairs node_modules once (needs network); after that it is
+# instant. Requires the shared stack + axiome-legacydb already running.
+DEMO := $(DOCKER_COMPOSE) -p axiome-demo -f docker-compose.demo.yml
+demo-up:                 ## start the demo stack (fixed ports, legacy demo data)
+	$(DEMO) up -d
+demo-down:               ## stop the demo containers (keep them — next start is instant)
+	$(DEMO) stop
+demo-restart:
+	$(DEMO) restart $(SERVICE)
+demo-logs:
+	$(DEMO) logs -f $(SERVICE)
+demo-rm:                 ## remove the demo containers (keeps node_modules volumes)
+	$(DEMO) down
+
 # Follow logs (all app services, or one with SERVICE=<name>).
 local-logs:
 	$(APP) logs -f --tail=$(TAIL) $(SERVICE)

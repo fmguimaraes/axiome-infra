@@ -1,0 +1,128 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# HARDCODED DEMO STACK — APHM / Biotech One — the ONLY DB (axiome-localhost), fixed ports, fast.
+#
+# Everything is pinned literally: fixed container names, fixed reserved host
+# ports (front 5173, API 3000, biocompute 8000), the one localhost DB baked in,
+# and no per-worktree .env dance. Reuses the ALREADY-BUILT node_modules volumes
+# and mounted source of the AXI-1233 worktree (the code the demo was verified
+# against — its schema matches this DB; `main` has since moved ahead).
+#
+# FAST because the command runs the app directly (`npm run dev`) and does NOT
+# reinstall node_modules on every start — that reinstall is the slow, network-
+# flaky step (`ETIMEDOUT`) that was killing the container.
+#
+#   Start:  docker compose -p axiome-demo -f docker-compose.demo.yml up -d      (or: make demo-up)
+#   Stop:   docker compose -p axiome-demo -f docker-compose.demo.yml stop        (or: make demo-down  — keeps containers, restart is instant)
+#   Logs:   docker compose -p axiome-demo -f docker-compose.demo.yml logs -f backend
+#
+# Requires the shared stack (postgres/mongo/redis/rabbitmq/minio) + axiome-localhost
+# already running on the external `axiome-shared-net` network — bring those up once
+# with `make shared-up` (or they are already up from a prior `make local-up`).
+#
+# Login:  admin@cro-one.com / admin   (SUPER ADMIN on Biotech One)   → http://localhost:5173
+# ─────────────────────────────────────────────────────────────────────────────
+
+networks:
+  shared:
+    external: true
+    name: axiome-shared-net
+
+volumes:
+  # Reuse the volumes the AXI-1233 stack already populated (node_modules + prisma client).
+  backend_node_modules:
+    external: true
+    name: axiome-axiome-global-axi-1233_backend_node_modules
+  frontend_node_modules:
+    external: true
+    name: axiome-axiome-global-axi-1233_frontend_node_modules
+
+services:
+  backend:
+    image: node:20-alpine
+    container_name: axiome-demo-backend
+    working_dir: /app
+    # openssl is the only real dependency Prisma needs at runtime; install it only
+    # if the base image lacks it, then run the app. NO `npm install` — the volume
+    # already holds node_modules and the generated Prisma client.
+    # First run repairs the volume (npm install, one-time, needs network); every
+    # start after that skips straight to `npm run dev` — instant, no network.
+    command: sh -c "command -v openssl >/dev/null 2>&1 || apk add --no-cache openssl >/dev/null 2>&1 || true; [ -x node_modules/.bin/nest ] || npm install; npm run dev"
+    restart: unless-stopped
+    networks: [shared]
+    ports:
+      - "3000:3000"   # gateway API  → http://localhost:3000/api/v1
+    volumes:
+      - /home/felipe/dev/axiome/_worktrees/axiome-global-AXI-1233/axiome-back:/app
+      - backend_node_modules:/app/node_modules
+    environment:
+      NODE_ENV: development
+      PORT: "3000"
+      PUPPETEER_SKIP_DOWNLOAD: "true"
+      PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium-browser
+      # ── THE ONLY DB — APHM / Biotech One data (container axiome-localhost) ──
+      DATABASE_URL: postgresql://axiome:axiome_local_dev@axiome-localhost:5432/axiome
+      USER_DATABASE_URL: postgresql://axiome:axiome_local_dev@axiome-localhost:5432/axiome?schema=user_svc
+      ORGANIZATION_DATABASE_URL: postgresql://axiome:axiome_local_dev@axiome-localhost:5432/axiome?schema=organization_svc
+      # ── shared commodity services (reusing the AXI-1233 worktree's own DB/vhost/index/prefix) ──
+      MONGODB_URL: mongodb://axiome:axiome_local_dev@mongodb:27017/axiome-global-axi-1233?authSource=admin&directConnection=true
+      RABBITMQ_URL: amqp://axiome:axiome_local_dev@rabbitmq:5672/axiome-global-axi-1233
+      REDIS_URL: redis://redis:6379/1
+      REDIS_PREFIX: "axiome:axiome-demo:"
+      # ── object store (the demo's uploaded datasets + rule-run artifacts live in these buckets) ──
+      S3_ENDPOINT: http://minio:9000
+      S3_PUBLIC_ENDPOINT: http://localhost:9000
+      S3_ACCESS_KEY: minioadmin
+      S3_SECRET_KEY: minioadmin
+      S3_BUCKET: axiome-global-axi-1233-uploads
+      S3_BUCKET_UPLOADS: axiome-global-axi-1233-uploads
+      S3_BUCKET_ARTIFACTS: axiome-global-axi-1233-artifacts
+      S3_BUCKET_SYSTEM: axiome-global-axi-1233-system
+      S3_REGION: eu-west-3
+      S3_FORCE_PATH_STYLE: "true"
+      # ── intra-stack callbacks (fixed container names on the shared net) ──
+      BIO_COMPUTE_URL: http://axiome-demo-biocompute:8000
+      CALLBACK_BASE_URL: http://axiome-demo-backend:3004
+      JWT_SECRET: local-dev-jwt-secret-change-in-production
+      BOOTSTRAP_ADMIN_EMAIL: admin@axiome.local
+      BOOTSTRAP_ADMIN_PASSWORD: admin
+      BOOTSTRAP_ADMIN_FIRST_NAME: Local
+      BOOTSTRAP_ADMIN_LAST_NAME: Admin
+
+  biocompute:
+    image: axiome-axiome-global-axi-1233-biocompute
+    container_name: axiome-demo-biocompute
+    working_dir: /app
+    command: uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
+    restart: unless-stopped
+    networks: [shared]
+    ports:
+      - "8000:8000"
+    volumes:
+      - /home/felipe/dev/axiome/_worktrees/axiome-global-AXI-1233/axiome-bio-compute:/app
+    environment:
+      BIO_COMPUTE_S3_ENDPOINT_URL: http://minio:9000
+      BIO_COMPUTE_S3_ACCESS_KEY: minioadmin
+      BIO_COMPUTE_S3_SECRET_KEY: minioadmin
+      BIO_COMPUTE_S3_BUCKET: axiome-global-axi-1233-artifacts
+      BIO_COMPUTE_DASHBOARD_DB_URL: postgresql://axiome:axiome_local_dev@axiome-localhost:5432/axiome
+      BIO_COMPUTE_JWT_SECRET: local-dev-jwt-secret-change-in-production
+      BIO_COMPUTE_LOG_LEVEL: INFO
+      BIO_COMPUTE_PORT: "8000"
+
+  frontend:
+    image: node:20-alpine
+    container_name: axiome-demo-frontend
+    working_dir: /app
+    command: sh -c "[ -x node_modules/.bin/vite ] || npm install; npm run dev -- --host 0.0.0.0 --port 5173"
+    restart: unless-stopped
+    networks: [shared]
+    ports:
+      - "5173:5173"   # UI  → http://localhost:5173
+    volumes:
+      - /home/felipe/dev/axiome/_worktrees/axiome-global-AXI-1233/axiome-front:/app
+      - frontend_node_modules:/app/node_modules
+    environment:
+      # browser-facing URLs → the fixed reserved host ports above
+      VITE_API_URL: http://localhost:3000/api/v1
+      VITE_GATEWAY_WS_URL: http://localhost:3000
+      VITE_BIOCOMPUTE_URL: http://localhost:8000

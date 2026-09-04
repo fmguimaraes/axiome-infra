@@ -212,9 +212,16 @@ wt_derive_vars() {  # $1=slug $2=offset $3=redis_db
   BACKEND_PORT=$((BASE_BACKEND_PORT + OFFSET))
   FRONTEND_PORT=$((BASE_FRONTEND_PORT + OFFSET))
   BIOCOMPUTE_PORT=$((BASE_BIOCOMPUTE_PORT + OFFSET))
-  PG_DB="${SLUG}"; MONGO_DB="${SLUG}"; MQ_VHOST="${SLUG}"
-  B_UPLOADS="${SLUG}-uploads"; B_ARTIFACTS="${SLUG}-artifacts"; B_SYSTEM="${SLUG}-system"
-  REDIS_PREFIX="axiome:${SLUG}:"
+  # SINGLE SHARED DATA LAYER (2026-09-04, user directive): every worktree uses
+  # ONE Postgres DB / Mongo DB / MinIO bucket set / RabbitMQ vhost / Redis index,
+  # not a per-slug set. Postgres lives on the `axiome-localhost` container (see the
+  # DB host in docker-compose.yml); Mongo/MinIO/RabbitMQ/Redis are the shared
+  # instances with these fixed names. Ports stay offset-based so two stacks can
+  # still run at once — they just share the same data. Revert these five lines to
+  # the `${SLUG}`-based values to restore per-worktree isolation.
+  PG_DB="axiome"; MONGO_DB="axiome-global-axi-1233"; MQ_VHOST="axiome-global-axi-1233"
+  B_UPLOADS="axiome-global-axi-1233-uploads"; B_ARTIFACTS="axiome-global-axi-1233-artifacts"; B_SYSTEM="axiome-global-axi-1233-system"
+  REDIS_PREFIX="axiome:shared:"; REDIS_DB=1
 }
 
 wt_write_env() {  # $1=file $2=slug $3=offset $4=redis_db
