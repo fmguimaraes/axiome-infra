@@ -72,6 +72,10 @@ services:
       BIO_COMPUTE_URL: http://axiome-demo-biocompute:8000
       CALLBACK_BASE_URL: http://axiome-demo-backend:3004
       JWT_SECRET: local-dev-jwt-secret-change-in-production
+      # Optional verbosity knobs — default off; `make local-debug` sets them.
+      LOG_LEVEL: ${LOG_LEVEL:-}
+      DEBUG: ${DEBUG:-}
+      NODE_OPTIONS: ${NODE_OPTIONS:-}
       BOOTSTRAP_ADMIN_EMAIL: admin@axiome.local
       BOOTSTRAP_ADMIN_PASSWORD: admin
       BOOTSTRAP_ADMIN_FIRST_NAME: Local
@@ -95,7 +99,7 @@ services:
       BIO_COMPUTE_S3_BUCKET: axiome-global-axi-1233-artifacts
       BIO_COMPUTE_DASHBOARD_DB_URL: postgresql://axiome:axiome_local_dev@axiome-localhost:5432/axiome
       BIO_COMPUTE_JWT_SECRET: local-dev-jwt-secret-change-in-production
-      BIO_COMPUTE_LOG_LEVEL: INFO
+      BIO_COMPUTE_LOG_LEVEL: ${BIO_COMPUTE_LOG_LEVEL:-INFO}
       BIO_COMPUTE_PORT: "8000"
 
   frontend:

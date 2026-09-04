@@ -142,7 +142,7 @@ local-shell:
 	@if [ -z "$(SERVICE)" ]; then \
 		echo "Usage: make local-shell SERVICE=<service-name>"; exit 1; \
 	fi
-	$(APP) exec $(SERVICE) sh
+	$(DEMO) exec $(SERVICE) sh
 
 # Run an arbitrary command inside an app service container.
 # Usage: make local-exec SERVICE=backend CMD="npm test"
@@ -150,18 +150,17 @@ local-exec:
 	@if [ -z "$(SERVICE)" ] || [ -z "$(CMD)" ]; then \
 		echo 'Usage: make local-exec SERVICE=<name> CMD="<command>"'; exit 1; \
 	fi
-	$(APP) exec $(SERVICE) sh -c '$(CMD)'
+	$(DEMO) exec $(SERVICE) sh -c '$(CMD)'
 
-# Bring the app stack up in the foreground with verbose application logging.
-# Overrides LOG_LEVEL / DEBUG flags for the duration of the run only.
+# Bring the demo stack up in the foreground with verbose application logging.
+# Overrides LOG_LEVEL / DEBUG flags for the duration of the run only (the demo
+# compose reads them via ${VAR:-default}). Ctrl-C stops the app stack.
 local-debug:
-	WT_SLUG=$(LEGACY_SLUG) ./scripts/wt-up.sh --provision-only
-	BIOCOMPUTE_LOG_LEVEL=DEBUG \
+	BIO_COMPUTE_LOG_LEVEL=DEBUG \
 	LOG_LEVEL=debug \
 	NODE_OPTIONS=--enable-source-maps \
 	DEBUG=$${DEBUG:-axiome:*} \
-	PYTHONUNBUFFERED=1 \
-	$(APP) up $(SERVICE)
+	$(DEMO) up $(SERVICE)
 
 # Behavior Tracking / Metabase read layer (AXI-1048) --------------------------
 #
