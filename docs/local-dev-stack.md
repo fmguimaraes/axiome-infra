@@ -4,12 +4,11 @@ How to run the full Axiome platform locally: **main code, the real APHM / Biotec
 One data, fixed ports, no reinstall, and it runs offline.** This is the default
 path for everyday local work as of 2026-09-04.
 
-> **Relationship to per-worktree isolation.** The multi-stack, one-database-per-worktree
-> model in [`claude-worktree-local-dev.md`](claude-worktree-local-dev.md) still exists
-> (`./scripts/wt-up.sh` directly) for the rare case where you genuinely need a private,
-> throwaway stack. But the `make local-*` targets no longer use it — they now drive the
-> single shared stack described here. One database, one of each commodity service, for
-> every worktree.
+> **Relationship to per-worktree isolation.** The multi-stack model in
+> [`claude-worktree-local-dev.md`](claude-worktree-local-dev.md) still exists
+> (`./scripts/wt-up.sh` directly). But the `make local-*` targets no longer use it —
+> they now drive the single shared stack described here. See **§10** for exactly what
+> worktree mode still does vs. what changed.
 
 ---
 
@@ -206,3 +205,34 @@ and `demo-up` are interchangeable.
 | `d1d4ef3` | `make local-up/-down/-restart/-logs` aliased to the demo stack; `local-purge` disabled. |
 | `90604c7` | `local-debug/-shell/-exec` pointed at the demo stack + debug env knobs. |
 | `fc4c26f` | Baked Chromium (offline screenshots) + Node inspect mode (`make local-inspect`). |
+| `228132d` | This document + pointer from `claude-worktree-local-dev.md`. |
+
+---
+
+## 10. Worktree mode (`./scripts/wt-up.sh`) — what still holds
+
+Running `./scripts/wt-up.sh` directly still brings up a **separate app deploy on
+different ports**, so you can run it alongside the demo stack or other worktrees:
+
+- Its own compose project `axiome-<slug>` with its own backend / frontend / biocompute
+  containers.
+- Ports are **offset-based**: front `5173 + OFFSET`, API `3000 + OFFSET`, biocompute
+  `8000 + OFFSET` (the demo stack is offset 0 = 5173/3000/8000; new worktrees get a
+  non-zero offset, so they don't collide with it).
+
+**What changed:** every worktree now shares the **one data layer** (§2) instead of
+getting its own DB/buckets. So the isolation is **code + containers + ports only, not
+data** — two stacks up at once read and write the **same** `axiome-localhost` database.
+
+Two consequences:
+
+- **It's the slow path.** `wt-up.sh` uses the canonical `docker-compose.yml` (alpine +
+  `npm install` on start, rebuilding a musl `bcrypt`) — not the glibc no-reinstall demo
+  image. It works, it's just slower to start.
+- **Migrations hit everyone.** Because the DB is shared, a `prisma migrate` / `db push`
+  from a worktree changes the one shared DB. Seeding is therefore **off by default**;
+  `wt-up.sh --seed` is opt-in and explicitly destructive to the shared data.
+
+To restore full per-worktree **data** isolation (a private DB / bucket set per
+worktree), revert the five marked lines in `scripts/wt-common.sh` (`wt_derive_vars`)
+back to the `${SLUG}`-based names — the comment there says which.
