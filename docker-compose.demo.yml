@@ -28,28 +28,36 @@ networks:
 
 services:
   backend:
-    # GLIBC image (Debian) — the mounted primary-checkout node_modules is glibc-built
-    # (bcrypt has only a glibc native binding; sharp/prisma carry glibc engines), so it
-    # loads as-is here. On alpine/musl bcrypt segfaults (SIGSEGV/139) at admin bootstrap.
-    # This is what lets us reuse the on-disk node_modules with NO reinstall.
-    image: node:20-slim
+    # GLIBC base (Debian node:20-slim) + a baked system Chromium — see
+    # docker/demo-node.Dockerfile. GLIBC so the mounted primary-checkout node_modules
+    # (bcrypt has only a glibc binding; sharp/prisma carry glibc engines) loads as-is
+    # with NO reinstall; on alpine/musl bcrypt segfaults (SIGSEGV/139) at admin
+    # bootstrap. Chromium is baked so screenshot/PDF features work OFFLINE (build once,
+    # then no network). Built to a fixed local tag, so `up` reuses it after the first build.
+    build:
+      context: .
+      dockerfile: docker/demo-node.Dockerfile
+    image: axiome-demo-node:local
     container_name: axiome-demo-backend
     working_dir: /app
     # No node_modules volume — use the primary checkout's own on-disk node_modules.
-    # openssl (for Prisma) is ensured only if absent; npm install runs only if the
-    # checkout has no node_modules. Normal start = straight to `npm run dev`.
-    command: sh -c "command -v openssl >/dev/null 2>&1 || (apt-get update >/dev/null 2>&1 && apt-get install -y --no-install-recommends openssl >/dev/null 2>&1) || true; [ -x node_modules/.bin/nest ] || npm install; npm run dev"
+    # openssl + chromium are already in the image; the baked entrypoint installs only
+    # if node_modules is absent. INSPECT=1 (via `make local-inspect`) makes it start each
+    # service under the Node debugger on 9229-9232 instead of the plain `npm run dev`.
+    command: ["demo-backend-entrypoint.sh"]
     restart: unless-stopped
     networks: [shared]
     ports:
       - "3000:3000"
+      - "9229-9232:9229-9232"   # Node inspector (only bound when INSPECT=1)
     volumes:
       - /home/felipe/dev/axiome/axiome-global/axiome-back:/app     # MAIN (primary checkout)
     environment:
       NODE_ENV: development
       PORT: "3000"
+      INSPECT: ${INSPECT:-}
       PUPPETEER_SKIP_DOWNLOAD: "true"
-      PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium-browser
+      PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium
       # ── THE ONE DB — APHM / Biotech One data, on the axiome-localhost container ──
       DATABASE_URL: postgresql://axiome:axiome_local_dev@axiome-localhost:5432/axiome
       USER_DATABASE_URL: postgresql://axiome:axiome_local_dev@axiome-localhost:5432/axiome?schema=user_svc

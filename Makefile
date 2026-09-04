@@ -162,6 +162,15 @@ local-debug:
 	DEBUG=$${DEBUG:-axiome:*} \
 	$(DEMO) up $(SERVICE)
 
+# Start the backend with the Node inspector attached, one debug port per service:
+#   gateway :9229   user-service :9230   event-service :9231   organization :9232
+# Attach from VS Code / chrome://inspect to localhost:<port>. `make local-down` (or
+# a plain `make local-up`) returns to the normal, non-inspected stack.
+local-inspect:
+	INSPECT=1 $(DEMO) up -d backend
+	@echo "Inspector attached — gateway:9229 user-service:9230 event-service:9231 organization-service:9232"
+	@echo "Logs: make local-logs SERVICE=backend   |   Back to normal: make local-up"
+
 # Behavior Tracking / Metabase read layer (AXI-1048) --------------------------
 #
 # Metabase runs as an overlay next to the base stack, reading the deployment's
