@@ -1,5 +1,12 @@
 # Per-worktree local dev — isolation strategy
 
+> **For everyday local work, see [`local-dev-stack.md`](local-dev-stack.md) instead.**
+> As of 2026-09-04 the `make local-*` targets drive a single shared stack (one
+> database — the real APHM data — fixed ports, no reinstall, offline-capable), **not**
+> the per-worktree isolation described here. This document covers the isolation model
+> that still backs `./scripts/wt-up.sh` for the rare case where you need a private,
+> throwaway stack.
+
 How several agent/dev sessions each run the full Axiome platform locally **at the
 same time**, in their own git worktrees, without colliding on ports, the docker
 compose project, named volumes, databases, or object-storage buckets.
