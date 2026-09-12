@@ -17,14 +17,16 @@
 # base + PORT_OFFSET so two worktrees never publish the same host port.
 services:
   backend:
-    image: node:20-alpine
+    # glibc base (node:20-slim), not alpine: the alpine bcrypt prebuilt segfaults
+    # on login → auth 503 (documented). slim uses apt + chromium at /usr/bin/chromium.
+    image: node:20-slim
     working_dir: /app
-    command: sh -c "apk add --no-cache openssl chromium nss freetype harfbuzz ca-certificates ttf-freefont && npm install && npm run dev"
+    command: sh -c "apt-get update && apt-get install -y --no-install-recommends openssl chromium ca-certificates fonts-freefont-ttf && rm -rf /var/lib/apt/lists/* && npm install && npm run dev"
     environment:
       NODE_ENV: development
       PORT: "3000"
       PUPPETEER_SKIP_DOWNLOAD: "true"
-      PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium-browser
+      PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium
       # --- Postgres: this worktree's own database on the SHARED instance ---
       DATABASE_URL: postgresql://${POSTGRES_USER:-axiome}:${POSTGRES_PASSWORD:-axiome_local_dev}@axiome-localhost:5432/${POSTGRES_DB}
       USER_DATABASE_URL: postgresql://${POSTGRES_USER:-axiome}:${POSTGRES_PASSWORD:-axiome_local_dev}@axiome-localhost:5432/${POSTGRES_DB}?schema=user_svc
@@ -32,7 +34,11 @@ services:
       # --- Mongo: this worktree's own event-store database ---
       MONGODB_URL: mongodb://${MONGODB_USER:-axiome}:${MONGODB_PASSWORD:-axiome_local_dev}@mongodb:27017/${MONGODB_DB}?authSource=admin&directConnection=true
       # --- RabbitMQ: this worktree's own vhost ---
-      RABBITMQ_URL: amqp://${RABBITMQ_USER:-axiome}:${RABBITMQ_PASSWORD:-axiome_local_dev}@rabbitmq:5672/${RABBITMQ_VHOST}
+      # NOTE: wt-up wrote RABBITMQ_VHOST=axi-1233 (collided with the demo stack),
+      # so the worktree gateway and the demo backend were competing consumers on
+      # the same queues (cross-stack RPC bleed). Pin the worktree's OWN vhost so
+      # its gateway↔org-service RPCs stay inside this stack.
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-axiome}:${RABBITMQ_PASSWORD:-axiome_local_dev}@rabbitmq:5672/axiome-global-axi-1458
       # --- Redis: this worktree's own logical DB index (+ reserved key prefix) ---
       REDIS_URL: redis://redis:6379/${REDIS_DB_INDEX}
       REDIS_PREFIX: ${REDIS_PREFIX}
@@ -55,6 +61,11 @@ services:
       BIO_COMPUTE_URL: http://biocompute-${WT_SLUG}:8000
       CALLBACK_BASE_URL: http://backend-${WT_SLUG}:3004
       JWT_SECRET: ${JWT_SECRET:-local-dev-jwt-secret-change-in-production}
+      # --- Guided Analysis LLM adapter (AXI-1458). Values come from the
+      # gitignored .env; only the references live here (no secret in git). ---
+      GUIDED_ANALYSIS_LLM_PROVIDER: ${GUIDED_ANALYSIS_LLM_PROVIDER:-fallback}
+      GUIDED_ANALYSIS_ANTHROPIC_API_KEY: ${GUIDED_ANALYSIS_ANTHROPIC_API_KEY:-}
+      GUIDED_ANALYSIS_ANTHROPIC_MODEL: ${GUIDED_ANALYSIS_ANTHROPIC_MODEL:-claude-haiku-4-5}
       BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-admin@axiome.local}
       BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-admin}
       BOOTSTRAP_ADMIN_FIRST_NAME: ${BOOTSTRAP_ADMIN_FIRST_NAME:-Local}
