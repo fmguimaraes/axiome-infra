@@ -9,6 +9,9 @@
 #   scripts/platform-debug.sh health                 # gateway /api/v1/health (real path)
 #   scripts/platform-debug.sh logs gateway [N]       # tail N (default 80) lines of a service
 #   scripts/platform-debug.sh login-test EMAIL       # POST /auth/login with the SSM admin pw
+#                                                     # (only works right after reset-admin-password.sh -k;
+#                                                     # FR9 blanks BOOTSTRAP_ADMIN_PASSWORD after rotation,
+#                                                     # so this errors cleanly once the param is gone)
 #   scripts/platform-debug.sh env                    # list .env KEYS (names only, no values)
 #   scripts/platform-debug.sh shell '<cmd>'          # run an arbitrary command on the box
 #
@@ -62,8 +65,18 @@ case "${SUBCMD}" in
     # then POST it and print only the HTTP status line (no token, no password).
     # Uses GetParameter on the known path — the box's runtime role can Get but not
     # Describe parameters, so we never call describe-parameters here.
+    #
+    # FR9/FR10 (AXI-983): BOOTSTRAP_ADMIN_PASSWORD is blanked (deleted) after the
+    # admin is seeded/rotated, so this only works right after
+    # reset-admin-password.sh -k. Once blanked, get-parameter fails with
+    # ParameterNotFound by design — that is NOT a bug, it means no replayable
+    # bootstrap secret is sitting in SSM. Test login with the real password instead.
     run "set -e
-PW=\$(aws ssm get-parameter --region ${REGION} --name ${PARAM} --with-decryption --query Parameter.Value --output text)
+if ! PW=\$(aws ssm get-parameter --region ${REGION} --name ${PARAM} --with-decryption --query Parameter.Value --output text 2>/dev/null); then
+  echo 'BOOTSTRAP_ADMIN_PASSWORD is not set in SSM (expected once an admin has been seeded — FR9 blanks it after rotation).' >&2
+  echo 'Test login with the actual current password instead of this shortcut.' >&2
+  exit 1
+fi
 BODY=\$(printf '{\"email\":\"%s\",\"password\":\"%s\"}' '${EMAIL}' \"\$PW\")
 docker exec axiome-gateway wget -S -qO /dev/null --post-data=\"\$BODY\" --header=Content-Type:application/json http://localhost:3000/api/v1/auth/login 2>&1 | grep -i 'HTTP/'"
     ;;
