@@ -88,6 +88,10 @@ services:
       BOOTSTRAP_ADMIN_PASSWORD: admin
       BOOTSTRAP_ADMIN_FIRST_NAME: Local
       BOOTSTRAP_ADMIN_LAST_NAME: Admin
+      # Without this, every governed run (guided analysis, statistical ops, …)
+      # submits fine but sits at RUNNING/0 steps forever — the reconciler tick
+      # is entirely env-gated (AXI-1462 W5-validation round 2).
+      GOVERNED_EXECUTION_RECONCILER: "on"
 
   biocompute:
     image: axiome-axiome-global-axi-1233-biocompute
