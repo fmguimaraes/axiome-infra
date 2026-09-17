@@ -12,6 +12,10 @@
 .env.*.local
 *.secret
 
+# Runtime compose override written by scripts/enable-llm-planner.sh (references
+# the Anthropic key via ${...}; never holds the value, but keep it out of git).
+docker-compose.demo.llm.yml
+
 # OS
 .DS_Store
 Thumbs.db
