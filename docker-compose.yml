@@ -29,6 +29,12 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-axiome}:${POSTGRES_PASSWORD:-axiome_local_dev}@axiome-localhost:5432/${POSTGRES_DB}
       USER_DATABASE_URL: postgresql://${POSTGRES_USER:-axiome}:${POSTGRES_PASSWORD:-axiome_local_dev}@axiome-localhost:5432/${POSTGRES_DB}?schema=user_svc
       ORGANIZATION_DATABASE_URL: postgresql://${POSTGRES_USER:-axiome}:${POSTGRES_PASSWORD:-axiome_local_dev}@axiome-localhost:5432/${POSTGRES_DB}?schema=organization_svc
+      # Control-plane (SI-043): own schema on this worktree's DB (same one-DB-per-worktree
+      # convention as user_svc/organization_svc), never a DB on another server.
+      CONTROL_PLANE_DATABASE_URL: postgresql://${POSTGRES_USER:-axiome}:${POSTGRES_PASSWORD:-axiome_local_dev}@axiome-localhost:5432/${POSTGRES_DB}?schema=control_plane_svc
+      CONTROL_PLANE_SERVICE_PORT: "3005"
+      # Local-dev only signing key for tenant assertions (fail-closed if unset).
+      CONTROL_ASSERTION_SIGNING_KEY: ${CONTROL_ASSERTION_SIGNING_KEY:-local-dev-control-assertion-key-change-me}
       # --- Mongo: this worktree's own event-store database ---
       MONGODB_URL: mongodb://${MONGODB_USER:-axiome}:${MONGODB_PASSWORD:-axiome_local_dev}@mongodb:27017/${MONGODB_DB}?authSource=admin&directConnection=true
       # --- RabbitMQ: this worktree's own vhost ---
