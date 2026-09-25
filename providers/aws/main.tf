@@ -139,7 +139,9 @@ module "secrets" {
   fqdn                = local.fqdn
   mailjet_api_key     = var.mailjet_api_key
   mailjet_secret_key  = var.mailjet_secret_key
-  tags                = local.base_tags
+
+  guided_analysis_anthropic_api_key = var.guided_analysis_anthropic_api_key
+  tags                              = local.base_tags
 }
 
 # ---------------- Database — Neon (Postgres) ----------------

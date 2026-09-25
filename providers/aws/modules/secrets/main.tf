@@ -203,6 +203,27 @@ resource "aws_ssm_parameter" "mailjet_from_name" {
   tags  = var.tags
 }
 
+# Guided Analysis provider (Anthropic) API key — FR35 / AC26.
+#
+# Published only when provided, same pattern as the Mailjet keys above: SSM
+# rejects an empty SecureString, and an absent key leaves the guided-analysis
+# LLM arm unconfigured (the deterministic planner remains the safety net, parent
+# NFR9) rather than breaking the apply. Resolved on the box by the cloud-init
+# `aws ssm get-parameters-by-path --with-decryption` step into /opt/axiome/.env,
+# which every app container consumes via `env_file`; the consumer is
+# organization-service (guided-analysis unit), which reads
+# process.env.GUIDED_ANALYSIS_ANTHROPIC_API_KEY.
+#
+# The value never lives in this repo: it is supplied out of band through the
+# GUIDED_ANALYSIS_ANTHROPIC_API_KEY GitHub secret -> TF_VAR_guided_analysis_anthropic_api_key.
+resource "aws_ssm_parameter" "guided_analysis_anthropic_api_key" {
+  count = var.guided_analysis_anthropic_api_key != "" ? 1 : 0
+  name  = "${local.prefix}/GUIDED_ANALYSIS_ANTHROPIC_API_KEY"
+  type  = "SecureString"
+  value = var.guided_analysis_anthropic_api_key
+  tags  = var.tags
+}
+
 # IAM role for the Lightsail VM to read SSM parameters. Only created for the
 # legacy Lightsail compute path (var.create_lightsail_iam). The EC2/HDS stack
 # uses its own instance profile (modules/compute-ec2), so this is not created.

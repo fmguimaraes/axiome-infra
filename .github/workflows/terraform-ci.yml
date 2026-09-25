@@ -68,6 +68,10 @@ jobs:
           # mailjet SSM params as pending creates). See feedback-email incident 2026-08-26.
           mailjet_api_key: ${{ secrets.MAILJET_API_KEY }}
           mailjet_secret_key: ${{ secrets.MAILJET_SECRET_KEY }}
+          # FR35: exported as TF_VAR_guided_analysis_anthropic_api_key -> SSM
+          # GUIDED_ANALYSIS_ANTHROPIC_API_KEY (SecureString). Empty = parameter not
+          # published and the guided-analysis LLM arm stays unconfigured in prod.
+          guided_analysis_anthropic_api_key: ${{ secrets.GUIDED_ANALYSIS_ANTHROPIC_API_KEY }}
 
       # dev/staging state backends (S3 bucket + DynamoDB lock table) are
       # intentionally torn down to save cost when not actively in use —

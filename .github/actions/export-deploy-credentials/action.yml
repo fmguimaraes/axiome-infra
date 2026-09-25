@@ -10,6 +10,9 @@ description: |
     - TF_VAR_mailjet_api_key / TF_VAR_mailjet_secret_key (optional)
         → secrets module SSM parameters consumed by user-service
           EmailService. Empty leaves transactional email disabled.
+    - TF_VAR_guided_analysis_anthropic_api_key (optional)
+        → secrets module SSM SecureString consumed by organization-service
+          (guided-analysis planner). Empty leaves the LLM arm unconfigured.
 
   AWS creds fail-fast with a clear ::error:: annotation if missing.
   Third-party DB creds are exported only when non-empty — terraform's own
@@ -34,6 +37,10 @@ inputs:
     description: "Mailjet secret key (optional — paired with mailjet_api_key). Exported as TF_VAR_mailjet_secret_key."
     required: false
     default: ""
+  guided_analysis_anthropic_api_key:
+    description: "Anthropic API key for the guided-analysis planner (optional — empty leaves the LLM arm unconfigured). Exported as TF_VAR_guided_analysis_anthropic_api_key."
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -46,6 +53,7 @@ runs:
         IN_NEON_API_KEY: ${{ inputs.neon_api_key }}
         IN_MAILJET_API_KEY: ${{ inputs.mailjet_api_key }}
         IN_MAILJET_SECRET_KEY: ${{ inputs.mailjet_secret_key }}
+        IN_GUIDED_ANALYSIS_ANTHROPIC_API_KEY: ${{ inputs.guided_analysis_anthropic_api_key }}
       run: |
         set -euo pipefail
         : "${IN_AWS_ACCESS_KEY_ID:?AWS_ACCESS_KEY_ID is required — configure it as a repo-level Secret on axiome-infra}"
@@ -75,4 +83,11 @@ runs:
           exit 1
         else
           echo "::notice::Mailjet keys not set — transactional email stays disabled (EmailService logs links instead of sending)."
+        fi
+
+        if [[ -n "${IN_GUIDED_ANALYSIS_ANTHROPIC_API_KEY}" ]]; then
+          echo "TF_VAR_guided_analysis_anthropic_api_key=${IN_GUIDED_ANALYSIS_ANTHROPIC_API_KEY}" >> "$GITHUB_ENV"
+          echo "Guided-analysis provider key exported."
+        else
+          echo "::notice::GUIDED_ANALYSIS_ANTHROPIC_API_KEY not set — the SSM parameter is not published and the guided-analysis LLM arm stays unconfigured in production."
         fi

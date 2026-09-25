@@ -52,6 +52,7 @@ plus credentials for the third-party providers (Neon, MongoDB Atlas).
 | `MONGODB_ATLAS_PRIVATE_KEY` | Secret | Atlas API key (private part) | Paired with above. |
 | `MAILJET_API_KEY` | Secret | Mailjet API key | Transactional email (user-service `EmailService`). Exported as `TF_VAR_mailjet_api_key` → written to SSM `MAILJET_API_KEY`. Optional: if unset, email sending is disabled and the service logs links instead. Required as a pair with the secret key. |
 | `MAILJET_SECRET_KEY` | Secret | Mailjet secret key | Paired with `MAILJET_API_KEY`; exported as `TF_VAR_mailjet_secret_key` → SSM `MAILJET_SECRET_KEY`. |
+| `GUIDED_ANALYSIS_ANTHROPIC_API_KEY` | Secret | Anthropic API key (`sk-ant-…`) | Guided-analysis LLM planner (organization-service). Exported as `TF_VAR_guided_analysis_anthropic_api_key` → written to SSM `GUIDED_ANALYSIS_ANTHROPIC_API_KEY` as a **SecureString**. Optional: if unset, the parameter is not created and the LLM planner arm stays unconfigured in production (the deterministic planner remains the fallback). FR35 / AC26. |
 | `GH_PAT` | Secret | PAT with `Contents: write` on `axiome-infra` | Used by `dev-auto-promote.yml`'s `actions/checkout@v4` so the resulting commit can trigger `terraform-cd.yml` (a checkout with `GITHUB_TOKEN` would not). |
 
 IAM policy for the infra-repo AWS key needs at minimum, beyond the

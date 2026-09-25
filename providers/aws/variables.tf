@@ -309,6 +309,13 @@ variable "mailjet_secret_key" {
   sensitive   = true
 }
 
+variable "guided_analysis_anthropic_api_key" {
+  description = "Anthropic API key for the guided-analysis LLM planner (FR35). Sourced from the GUIDED_ANALYSIS_ANTHROPIC_API_KEY GitHub secret via TF_VAR_guided_analysis_anthropic_api_key; published to SSM as GUIDED_ANALYSIS_ANTHROPIC_API_KEY (SecureString) only when non-empty. Empty = the LLM planner arm stays unconfigured in production."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
 # ---------------- Alerting (FR12 / AC12) ----------------
 
 variable "alert_email" {

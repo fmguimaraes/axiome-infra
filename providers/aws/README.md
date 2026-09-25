@@ -170,6 +170,27 @@ them to SSM (`MAILJET_API_KEY`, `MAILJET_SECRET_KEY`) along with `MAILJET_FROM_E
 which land in `/opt/axiome/.env` at boot. Override the From identity per env with
 `-var mailjet_from_email=...` / `-var mailjet_from_name=...` if needed.
 
+### 0.6. Guided-analysis provider key (optional)
+
+Powers the guided-analysis LLM planner in `organization-service`
+(`process.env.GUIDED_ANALYSIS_ANTHROPIC_API_KEY`). Optional — if the key is
+absent, Terraform skips the SSM parameter and the LLM planner arm stays
+unconfigured (the deterministic planner remains in charge).
+
+```bash
+export TF_VAR_guided_analysis_anthropic_api_key="<anthropic-api-key>"
+```
+
+In CI this comes from the `GUIDED_ANALYSIS_ANTHROPIC_API_KEY` GitHub secret
+(see [docs/secrets.md](../../docs/secrets.md)); the `export-deploy-credentials`
+action re-exports it as the `TF_VAR_*` above. The secrets module writes it to SSM
+as a **SecureString** at `/<env>/axiome-<env>/GUIDED_ANALYSIS_ANTHROPIC_API_KEY`,
+and cloud-init's `get-parameters-by-path --with-decryption` step lands it in
+`/opt/axiome/.env`, which every app container reads via `env_file`.
+
+Never put the value in a tfvars file, a commit, or an `ssm-exec`/`send-command`
+argument — it belongs in the GitHub secret (or in SSM, placed out of band).
+
 ### 0.6. Scope down Terraform IAM (recommended after first apply)
 
 After the first successful `terraform apply`, replace the AdministratorAccess policy on `axiome-terraform` with the least-privilege set covering only the resources Terraform manages (Lightsail, S3, IAM, ECR, SSM, DynamoDB — plus Route 53 only if you flip `use_route53 = true`; the default Microsoft 365 setup does not need it). This is the standard production-hygiene step. A policy template is at [docs/iam-terraform-policy.json](../../docs/iam-terraform-policy.json) (create separately as the policy stabilizes).

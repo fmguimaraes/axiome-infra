@@ -87,6 +87,13 @@ variable "mailjet_from_name" {
   default     = "Axiome"
 }
 
+variable "guided_analysis_anthropic_api_key" {
+  description = "Anthropic API key for the guided-analysis LLM planner (organization-service, GUIDED_ANALYSIS_ANTHROPIC_API_KEY). Published to SSM as a SecureString only when non-empty; empty leaves the LLM arm unconfigured and the deterministic planner in charge."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
 variable "tags" {
   type    = map(string)
   default = {}
