@@ -143,6 +143,8 @@ services:
       - .env
     environment:
       NODE_ENV: production
+      # AXI-1758: required at boot (live|recorded). Served stacks = live; dev/demo = recorded (CLAUDE.md).
+      GUIDED_ANALYSIS_LLM_TRANSPORT: live
       PORT: "3004"
       RABBITMQ_URL: amqp://${RABBITMQ_USER:-axiome}:${RABBITMQ_PASSWORD}@rabbitmq:5672
       ORGANIZATION_DATABASE_URL: ${ORGANIZATION_DATABASE_URL}

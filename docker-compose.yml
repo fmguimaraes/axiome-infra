@@ -22,6 +22,8 @@ services:
     command: sh -c "apk add --no-cache openssl chromium nss freetype harfbuzz ca-certificates ttf-freefont && npm install && npm run dev"
     environment:
       NODE_ENV: development
+      # AXI-1758: required at boot (live|recorded). Served stacks = live; dev/demo = recorded (CLAUDE.md).
+      GUIDED_ANALYSIS_LLM_TRANSPORT: recorded
       PORT: "3000"
       PUPPETEER_SKIP_DOWNLOAD: "true"
       PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium-browser

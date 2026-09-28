@@ -54,6 +54,8 @@ services:
       - /home/felipe/dev/axiome/axiome-global/axiome-back:/app     # MAIN (primary checkout)
     environment:
       NODE_ENV: development
+      # AXI-1758: required at boot (live|recorded). Served stacks = live; dev/demo = recorded (CLAUDE.md).
+      GUIDED_ANALYSIS_LLM_TRANSPORT: recorded
       PORT: "3000"
       INSPECT: ${INSPECT:-}
       PUPPETEER_SKIP_DOWNLOAD: "true"

@@ -105,6 +105,8 @@ services:
     env_file:
       - .env
     environment:
+      # AXI-1758: required at boot (live|recorded). Served stacks = live; dev/demo = recorded (CLAUDE.md).
+      GUIDED_ANALYSIS_LLM_TRANSPORT: live
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       MONGODB_URL: mongodb://${MONGODB_USER}:${MONGODB_PASSWORD}@mongodb:27017/${MONGODB_DB}?authSource=admin
       S3_ENDPOINT: http://minio:9000

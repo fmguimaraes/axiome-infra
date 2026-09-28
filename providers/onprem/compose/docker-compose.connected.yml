@@ -27,6 +27,9 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      # AXI-1758: required at boot (live|recorded). Served stacks = live; dev/demo = recorded (CLAUDE.md).
+      GUIDED_ANALYSIS_LLM_TRANSPORT: live
     networks:
       - axiome
     healthcheck:
