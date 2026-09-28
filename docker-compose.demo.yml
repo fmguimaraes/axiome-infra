@@ -56,6 +56,9 @@ services:
       NODE_ENV: development
       # AXI-1758: required at boot (live|recorded). Served stacks = live; dev/demo = recorded (CLAUDE.md).
       GUIDED_ANALYSIS_LLM_TRANSPORT: recorded
+      # AXI-1687: the demo plans with the compiled planner, answered from committed recordings
+      # (recorded transport; no API key, no spend). Without this the legacy planner serves.
+      GUIDED_ANALYSIS_LLM_PROVIDER: compiled
       PORT: "3000"
       INSPECT: ${INSPECT:-}
       PUPPETEER_SKIP_DOWNLOAD: "true"
