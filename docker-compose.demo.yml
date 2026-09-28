@@ -97,6 +97,13 @@ services:
       # submits fine but sits at RUNNING/0 steps forever — the reconciler tick
       # is entirely env-gated (AXI-1462 W5-validation round 2).
       GOVERNED_EXECUTION_RECONCILER: "on"
+      # AXI-1867 (demo-only): skip the FR16 boot status migration so the
+      # demo's rule library survives a backend restart instead of getting
+      # demoted every time. No value but exactly "off" (trim + case
+      # insensitive) has this effect — see rule-status-migration.ts. Do NOT
+      # set this anywhere else (prod/other compose files stay unset, so the
+      # migration keeps running there as governance requires).
+      RULE_STATUS_MIGRATION: "off"
 
   biocompute:
     image: axiome-axiome-global-axi-1233-biocompute
