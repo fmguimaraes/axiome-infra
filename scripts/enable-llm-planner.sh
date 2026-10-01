@@ -8,7 +8,11 @@
 #   The Anthropic key is read from, in order:
 #     1) $GUIDED_ANALYSIS_ANTHROPIC_API_KEY already in your environment
 #     2) the line  GUIDED_ANALYSIS_ANTHROPIC_API_KEY=sk-ant-...  in
-#        axiome-infra/.env  (gitignored — see .gitignore)
+#        axiome-infra/.secrets.env  (gitignored — see .gitignore; AXI-1827:
+#        deliberately NOT axiome-infra/.env, which scripts/wt-up.sh regenerates
+#        wholesale on every run and would silently wipe the key)
+#     3) (legacy fallback, with a migration warning) the same line in the old
+#        axiome-infra/.env location, for keys stored there before AXI-1827
 #   It is NEVER taken as an argument (that leaks to shell history / `ps`) and
 #   NEVER written into a compose file: the runtime override references it as
 #   ${GUIDED_ANALYSIS_ANTHROPIC_API_KEY}, which docker compose substitutes from
@@ -27,7 +31,8 @@ INFRA="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 COMPOSE="${INFRA}/docker-compose.demo.yml"
 PROJECT="axiome-demo"
 SERVICE="backend"
-SECRET_STORE="${INFRA}/.env"                              # gitignored, in the infra folder
+SECRET_STORE="${INFRA}/.secrets.env"                      # gitignored; wt-up.sh never writes this file (AXI-1827)
+LEGACY_SECRET_STORE="${INFRA}/.env"                       # pre-AXI-1827 location; read-only fallback
 OVERRIDE="${INFRA}/docker-compose.demo.llm.yml"           # gitignored (see .gitignore)
 # AXI-1462 (W5 validation): Sonnet 5 — the P01–P61 plan contract needs a model
 # that holds a 61-rule schema and its own arithmetic. Every rejection seen on the
@@ -46,6 +51,13 @@ fi
 key="${GUIDED_ANALYSIS_ANTHROPIC_API_KEY:-}"
 if [[ -z "$key" && -f "$SECRET_STORE" ]]; then
   key="$(grep -E '^GUIDED_ANALYSIS_ANTHROPIC_API_KEY=' "$SECRET_STORE" | tail -1 | cut -d= -f2- || true)"
+fi
+if [[ -z "$key" && -f "$LEGACY_SECRET_STORE" ]]; then
+  key="$(grep -E '^GUIDED_ANALYSIS_ANTHROPIC_API_KEY=' "$LEGACY_SECRET_STORE" | tail -1 | cut -d= -f2- || true)"
+  if [[ -n "$key" ]]; then
+    echo "warning: key found in legacy ${LEGACY_SECRET_STORE} (scripts/wt-up.sh regenerates this file and WILL wipe it)." >&2
+    echo "         migrate it now:  echo 'GUIDED_ANALYSIS_ANTHROPIC_API_KEY=${key}' >> ${SECRET_STORE}" >&2
+  fi
 fi
 if [[ -z "$key" ]]; then
   cat >&2 <<MSG
