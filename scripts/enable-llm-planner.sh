@@ -48,15 +48,23 @@ if [[ "${1:-}" == "--off" ]]; then
 fi
 
 # --- Resolve the key from env, else from the infra secret store (never from argv) ---
+# key_source tracks where the key actually came from, for the summary message below.
+key_source="env"
 key="${GUIDED_ANALYSIS_ANTHROPIC_API_KEY:-}"
 if [[ -z "$key" && -f "$SECRET_STORE" ]]; then
   key="$(grep -E '^GUIDED_ANALYSIS_ANTHROPIC_API_KEY=' "$SECRET_STORE" | tail -1 | cut -d= -f2- || true)"
+  [[ -n "$key" ]] && key_source="$SECRET_STORE"
 fi
 if [[ -z "$key" && -f "$LEGACY_SECRET_STORE" ]]; then
   key="$(grep -E '^GUIDED_ANALYSIS_ANTHROPIC_API_KEY=' "$LEGACY_SECRET_STORE" | tail -1 | cut -d= -f2- || true)"
   if [[ -n "$key" ]]; then
+    key_source="${LEGACY_SECRET_STORE} (migrated to ${SECRET_STORE})"
     echo "warning: key found in legacy ${LEGACY_SECRET_STORE} (scripts/wt-up.sh regenerates this file and WILL wipe it)." >&2
-    echo "         migrate it now:  echo 'GUIDED_ANALYSIS_ANTHROPIC_API_KEY=${key}' >> ${SECRET_STORE}" >&2
+    echo "         migrating it now to ${SECRET_STORE} (key value not printed)..." >&2
+    # Copy the line itself — never echo the key value.
+    grep -E '^GUIDED_ANALYSIS_ANTHROPIC_API_KEY=' "$LEGACY_SECRET_STORE" | tail -1 >> "$SECRET_STORE"
+    chmod 600 "$SECRET_STORE"
+    echo "         migrated. Future runs will read it from ${SECRET_STORE}." >&2
   fi
 fi
 if [[ -z "$key" ]]; then
@@ -91,5 +99,5 @@ export GUIDED_ANALYSIS_ANTHROPIC_API_KEY="$key"
 docker compose -p "$PROJECT" -f "$COMPOSE" -f "$OVERRIDE" up -d "$SERVICE"
 
 echo "LLM planner ENABLED on ${PROJECT} backend (provider=anthropic, model=${MODEL})."
-echo "Key sourced from env/${SECRET_STORE#"$INFRA"/}; not committed, not in the compose file."
+echo "Key sourced from ${key_source}; not committed, not in the compose file."
 echo "Verify:  a /guided-analysis/plan response should now report  planner=anthropic  (falls back to deterministic on any API/parse error)."
