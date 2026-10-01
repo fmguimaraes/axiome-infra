@@ -8,7 +8,11 @@
 #   The Anthropic key is read from, in order:
 #     1) $GUIDED_ANALYSIS_ANTHROPIC_API_KEY already in your environment
 #     2) the line  GUIDED_ANALYSIS_ANTHROPIC_API_KEY=sk-ant-...  in
-#        axiome-infra/.env  (gitignored — see .gitignore)
+#        axiome-infra/.secrets.env  (gitignored — see .gitignore; AXI-1827:
+#        deliberately NOT axiome-infra/.env, which scripts/wt-up.sh regenerates
+#        wholesale on every run and would silently wipe the key)
+#     3) (legacy fallback, with a migration warning) the same line in the old
+#        axiome-infra/.env location, for keys stored there before AXI-1827
 #   It is NEVER taken as an argument (that leaks to shell history / `ps`) and
 #   NEVER written into a compose file: the runtime override references it as
 #   ${GUIDED_ANALYSIS_ANTHROPIC_API_KEY}, which docker compose substitutes from
@@ -27,7 +31,8 @@ INFRA="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 COMPOSE="${INFRA}/docker-compose.demo.yml"
 PROJECT="axiome-demo"
 SERVICE="backend"
-SECRET_STORE="${INFRA}/.env"                              # gitignored, in the infra folder
+SECRET_STORE="${INFRA}/.secrets.env"                      # gitignored; wt-up.sh never writes this file (AXI-1827)
+LEGACY_SECRET_STORE="${INFRA}/.env"                       # pre-AXI-1827 location; read-only fallback
 OVERRIDE="${INFRA}/docker-compose.demo.llm.yml"           # gitignored (see .gitignore)
 # AXI-1462 (W5 validation): Sonnet 5 — the P01–P61 plan contract needs a model
 # that holds a 61-rule schema and its own arithmetic. Every rejection seen on the
@@ -43,9 +48,24 @@ if [[ "${1:-}" == "--off" ]]; then
 fi
 
 # --- Resolve the key from env, else from the infra secret store (never from argv) ---
+# key_source tracks where the key actually came from, for the summary message below.
+key_source="env"
 key="${GUIDED_ANALYSIS_ANTHROPIC_API_KEY:-}"
 if [[ -z "$key" && -f "$SECRET_STORE" ]]; then
   key="$(grep -E '^GUIDED_ANALYSIS_ANTHROPIC_API_KEY=' "$SECRET_STORE" | tail -1 | cut -d= -f2- || true)"
+  [[ -n "$key" ]] && key_source="$SECRET_STORE"
+fi
+if [[ -z "$key" && -f "$LEGACY_SECRET_STORE" ]]; then
+  key="$(grep -E '^GUIDED_ANALYSIS_ANTHROPIC_API_KEY=' "$LEGACY_SECRET_STORE" | tail -1 | cut -d= -f2- || true)"
+  if [[ -n "$key" ]]; then
+    key_source="${LEGACY_SECRET_STORE} (migrated to ${SECRET_STORE})"
+    echo "warning: key found in legacy ${LEGACY_SECRET_STORE} (scripts/wt-up.sh regenerates this file and WILL wipe it)." >&2
+    echo "         migrating it now to ${SECRET_STORE} (key value not printed)..." >&2
+    # Copy the line itself — never echo the key value.
+    grep -E '^GUIDED_ANALYSIS_ANTHROPIC_API_KEY=' "$LEGACY_SECRET_STORE" | tail -1 >> "$SECRET_STORE"
+    chmod 600 "$SECRET_STORE"
+    echo "         migrated. Future runs will read it from ${SECRET_STORE}." >&2
+  fi
 fi
 if [[ -z "$key" ]]; then
   cat >&2 <<MSG
@@ -79,5 +99,5 @@ export GUIDED_ANALYSIS_ANTHROPIC_API_KEY="$key"
 docker compose -p "$PROJECT" -f "$COMPOSE" -f "$OVERRIDE" up -d "$SERVICE"
 
 echo "LLM planner ENABLED on ${PROJECT} backend (provider=anthropic, model=${MODEL})."
-echo "Key sourced from env/${SECRET_STORE#"$INFRA"/}; not committed, not in the compose file."
+echo "Key sourced from ${key_source}; not committed, not in the compose file."
 echo "Verify:  a /guided-analysis/plan response should now report  planner=anthropic  (falls back to deterministic on any API/parse error)."
