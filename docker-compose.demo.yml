@@ -85,6 +85,11 @@ services:
       BIO_COMPUTE_URL: http://axiome-demo-biocompute:8000
       CALLBACK_BASE_URL: http://axiome-demo-backend:3004
       JWT_SECRET: local-dev-jwt-secret-change-in-production
+      # AXI-1829: control-plane's EnvSigningKeyProvider fails closed (throws, refuses to
+      # boot) when this is unset — docker-compose.yml (per-worktree stack) already
+      # defaults it; this demo compose file never set it at all, so axiome-demo-backend
+      # crashed at boot. Local-dev only key, matches the per-worktree default.
+      CONTROL_ASSERTION_SIGNING_KEY: local-dev-control-assertion-key-change-me
       # Optional verbosity knobs — default off; `make local-debug` sets them.
       LOG_LEVEL: ${LOG_LEVEL:-}
       DEBUG: ${DEBUG:-}
