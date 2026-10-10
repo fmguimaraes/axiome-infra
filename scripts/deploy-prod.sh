@@ -171,7 +171,7 @@ ecr_retag_stable() {
 # Exit codes mirror ssm-exec.sh: 0 success, 1 definite failure (gate/roll
 # failed), 2 indeterminate (wait expired; remote state unknown).
 roll_on_box() {
-  local tag="$1" wait="${2:-${SSM_ROLL_WAIT}}"
+  local tag="$1" wait="${SSM_ROLL_WAIT}"
   { echo "export KEY='${ROLL_KEY}' IMAGE_TAG='${tag}' SERVICE='${SERVICE}'"; cat "${SCRIPT_DIR}/roll-service.sh"; } \
     | "${SCRIPT_DIR}/ssm-exec.sh" -e "${ENV}" -t "${wait}" -
 }
@@ -188,7 +188,7 @@ roll_on_box() {
 # encoded in the printed text) so the ONLY non-zero ssm-exec.sh exit here
 # means the box could not be reached at all (EC1).
 preflight_on_box() {
-  local wait="${1:-${SSM_PREFLIGHT_WAIT}}"
+  local wait="${SSM_PREFLIGHT_WAIT}"
   {
     printf 'export KEY=%q BACKEND_PREFLIGHT=%q\n' "${ROLL_KEY}" "${IS_BACKEND}"
     cat <<'REMOTE'
