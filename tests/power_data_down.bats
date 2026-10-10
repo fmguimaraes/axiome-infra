@@ -157,3 +157,43 @@ refute_stub_called_with() {
   refute_stub_called_with aws "stop-db-instance"
   refute_stub_called_with aws "delete-replication-group"
 }
+
+# refute_park_state_rm — the stub log is ONE ARGV ELEMENT PER LINE (never a
+# joined command string), so `aws s3 rm <key>` shows up as a "s3" line
+# immediately followed by a "rm" line — never a single line containing
+# both substrings. Fails if ANY such "s3" -> "rm" pair is recorded.
+refute_park_state_rm() {
+  run bash -c "grep -A1 -x 's3' '${STUB_LOG}' | grep -x 'rm'"
+  [ "$status" -ne 0 ] || fail "expected NO 'aws s3 rm' call but one was recorded in ${STUB_LOG}"
+}
+
+# UT-INFRA-428 (bounce #1, AXI-1967): review bounce — `down` refused by a
+# held DEPLOY lock must release ONLY the data-tier lock it just acquired;
+# it must NEVER delete the park-state record (that record, if one exists,
+# belongs to an EARLIER down/operator-override, not this refused run).
+# Confirmed failing against head 24c2942 (clear_park_state was called
+# unconditionally in this branch) before the fix removed that call.
+@test "UT-INFRA-428: power-data.sh down refused by a held deploy lock releases data-tier but never deletes park-state (bounce #1)" {
+  stub_use_rules aws "${TESTS_DIR}/fixtures/power-data-down-ok.rules.sh"
+  export POWER_DATA_FIXTURE_DEPLOY_STATE=held
+
+  run "${INFRA_ROOT}/providers/aws/scripts/power-data.sh" dev down
+
+  assert_failure
+  assert_output --partial "deploy lock is held"
+  assert_stub_called aws "delete-object"
+  refute_park_state_rm
+}
+
+# UT-INFRA-429 (bounce #1, AXI-1967): same, for a held APPLY lock.
+@test "UT-INFRA-429: power-data.sh down refused by a held apply lock releases data-tier but never deletes park-state (bounce #1)" {
+  stub_use_rules aws "${TESTS_DIR}/fixtures/power-data-down-ok.rules.sh"
+  export POWER_DATA_FIXTURE_APPLY_STATE=held
+
+  run "${INFRA_ROOT}/providers/aws/scripts/power-data.sh" dev down
+
+  assert_failure
+  assert_output --partial "apply lock is held"
+  assert_stub_called aws "delete-object"
+  refute_park_state_rm
+}

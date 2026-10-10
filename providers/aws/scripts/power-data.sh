@@ -130,6 +130,22 @@ clear_park_state() {
   aws s3 rm "$PARK_STATE_S3" --region "$REGION" >/dev/null 2>&1 || true
 }
 
+# _power_data_release_or_warn <name> <token> — releases THIS invocation's
+# own just-acquired lock on a refusal path; if the release itself fails,
+# never stays silent about it (bounce #1, AXI-1967): prints one truthful
+# line naming the lock, that it may still be HELD, and the remedy.
+_power_data_release_or_warn() { # name token
+  local name="$1" token="$2" rel_out rel_rc
+  set +e
+  rel_out="$(lock_release "$ENV" "$name" "$token" 2>&1)"
+  rel_rc=$?
+  set -e
+  echo "$rel_out" >&2
+  if [ "$rel_rc" -ne "$LOCK_RC_OK" ]; then
+    echo "WARNING: releasing '${name}' failed (rc=${rel_rc}) — it may still be HELD. Run 'scripts/lock.sh ${ENV} status ${name}', then 'override' if this is this run's own stale lock." >&2
+  fi
+}
+
 # FR35: status shows how long RDS has been stopped — read from our own
 # recorded stop time (AWS exposes no "time stopped" field on a stopped RDS
 # instance), so this reflects the last time THIS script requested the stop.
@@ -304,23 +320,20 @@ case "$ACTION" in
 
     # FR43 (AXI-1967): data-tier is acquired FIRST (above); now verify
     # deploy and apply are both free before any AWS mutation. On refusal,
-    # release the data-tier lock this call just took and remove any
-    # park-state it wrote (none yet, at this point, but defensive — see
-    # the write below) so the refusal leaves nothing behind.
+    # release ONLY the data-tier lock THIS call just took — nothing else.
+    # Bounce #1 (review): this invocation has written no park-state yet
+    # (the first write_park_state is below); a park-state record present
+    # at this point belongs to an EARLIER `down`/operator-override, not
+    # this run, so it must never be touched here — only a refusal's own
+    # lock, never a shared record this run did not create.
     if ! lock_require_free "$ENV" deploy; then
       echo "ABORT: the deploy lock is held — releasing the data-tier lock just acquired and refusing to park while a deploy is in progress." >&2
-      set +e
-      lock_release "$ENV" data-tier "$TOKEN" >&2
-      set -e
-      clear_park_state
+      _power_data_release_or_warn data-tier "$TOKEN"
       exit 1
     fi
     if ! lock_require_free "$ENV" apply; then
       echo "ABORT: the apply lock is held — releasing the data-tier lock just acquired and refusing to park while a Terraform apply is in progress." >&2
-      set +e
-      lock_release "$ENV" data-tier "$TOKEN" >&2
-      set -e
-      clear_park_state
+      _power_data_release_or_warn data-tier "$TOKEN"
       exit 1
     fi
 
@@ -332,9 +345,7 @@ case "$ACTION" in
     # lock we just took, change nothing, and exit non-zero saying so.
     if ! write_park_state "$TOKEN" ""; then
       echo "ABORT: could not write ${PARK_STATE_S3} immediately after acquiring the lock — releasing the lock now (nothing was touched) and exiting." >&2
-      set +e
-      lock_release "$ENV" data-tier "$TOKEN" >&2
-      set -e
+      _power_data_release_or_warn data-tier "$TOKEN"
       exit 1
     fi
 

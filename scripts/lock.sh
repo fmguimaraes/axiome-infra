@@ -600,7 +600,7 @@ lock_require_free() {
 # having already named which lock blocked it on stderr.
 lock_acquire_exclusive() {
   local env="$1" name="$2" operation="$3"; shift 3
-  local acquire_out rc token other other_rc
+  local acquire_out rc token other other_rc release_rc
   acquire_out="$(lock_acquire "$env" "$name" "$operation")"
   rc=$?
   [ "$rc" -eq "${LOCK_RC_OK}" ] || return "$rc"
@@ -617,6 +617,10 @@ lock_acquire_exclusive() {
     if [ "$other_rc" -ne "${LOCK_RC_OK}" ]; then
       echo "ERROR: acquired '${name}' but '${other}' is not free — releasing '${name}' and refusing (FR43)." >&2
       lock_release "$env" "$name" "${token}" >&2
+      release_rc=$?
+      if [ "$release_rc" -ne "${LOCK_RC_OK}" ]; then
+        echo "WARNING: releasing '${name}' failed (rc=${release_rc}) — it may still be HELD. Run 'scripts/lock.sh ${env} status ${name}', then 'override' if this is this run's own stale lock." >&2
+      fi
       return "$other_rc"
     fi
   done

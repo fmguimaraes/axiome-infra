@@ -38,6 +38,10 @@ stub_respond() {
       return 0
       ;;
     *"delete-object"*"locks/deploy.json"*)
+      if [ "${LOCK_EXCLUSIVE_DEPLOY_RELEASE_FAIL:-0}" = "1" ]; then
+        echo "An error occurred (AccessDenied) when calling the DeleteObject operation: Access Denied"
+        return 254
+      fi
       return 0
       ;;
 

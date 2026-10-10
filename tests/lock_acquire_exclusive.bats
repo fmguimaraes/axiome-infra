@@ -4,7 +4,8 @@
 # FR42/FR43, AC34/AC35). deploy-prod.bats/power_data_*.bats/power_status.bats
 # cover this helper's effect through each caller script; this file instead
 # pins the helper's OWN return-code contract so a future edit to its
-# internals (e.g. AXI-1973) cannot silently regress it the way the
+# internals (e.g. AXI-1973, which also edits this file) cannot silently
+# regress it the way the
 # `! cmd; then $?` negation trap did during this story (see git history —
 # `other_rc=$?` inside `if ! lock_require_free ...; then` always read 0,
 # the `!`-negated boolean, never lock_require_free's real rc, so a HELD
@@ -102,6 +103,23 @@ setup() {
 # held), lock_acquire_exclusive returns lock_acquire's own rc unchanged and
 # never even looks at the other lock names — nothing was acquired, so
 # there is nothing for it to release.
+# UT-INFRA-430 (bounce #1, AXI-1967): if RELEASING the just-acquired lock
+# itself fails (e.g. AccessDenied on the conditional delete), the refusal
+# must never stay silent about it — one truthful line naming the lock,
+# that it may still be HELD, and the remedy (status then override). The
+# other-lock's own rc is still returned (non-zero either way).
+@test "UT-INFRA-430: lock_acquire_exclusive warns when releasing its own lock fails, still returns non-zero" {
+  export LOCK_EXCLUSIVE_DATATIER_STATE=held
+  export LOCK_EXCLUSIVE_DEPLOY_RELEASE_FAIL=1
+
+  run bash -c ". '${INFRA_ROOT}/scripts/lock.sh'; lock_acquire_exclusive dev deploy 'deploy test' data-tier apply; echo \"rc=\$?\""
+
+  assert_output --partial "releasing 'deploy' failed"
+  assert_output --partial "may still be HELD"
+  assert_output --partial "lock.sh dev status deploy"
+  refute_output --partial "rc=0"
+}
+
 @test "UT-INFRA-413: lock_acquire_exclusive passes through a failure to acquire its own lock untouched" {
   stub_use_rules aws "${TESTS_DIR}/fixtures/lock-acquire.rules.sh"
 

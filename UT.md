@@ -283,3 +283,6 @@ ranges are allocated by the lead per sibling story.
 | UT-INFRA-425 | AXI-1967 | `tests/lock_terraform_cd_apply_lock.bats` | The release step's real `run:` text releases `APPLY_LOCK_TOKEN` when set, and no-ops cleanly (no `aws` call at all) when it was never captured. |
 | UT-INFRA-426 | AXI-1967 | `tests/lock_acquire.bats` | `lock.sh acquire` accepts `apply` as a valid lock name across the CLI surface (FR42). |
 | UT-INFRA-427 | AXI-1967 | `tests/power_up_all_delegation.bats` | `power-up-all.sh` contains no direct mutating RDS/EC2/Redis call of its own and never calls `down` on either sub-script — it cannot bypass the FR42/FR43 rule. |
+| UT-INFRA-428 | AXI-1967 | `tests/power_data_down.bats` | Bounce #1: `power-data.sh down` refused by a held `deploy` lock releases only the data-tier lock it just acquired and NEVER deletes a pre-existing park-state record (confirmed failing against head `24c2942` before the `clear_park_state` removal). |
+| UT-INFRA-429 | AXI-1967 | `tests/power_data_down.bats` | Bounce #1: same, for a held `apply` lock. |
+| UT-INFRA-430 | AXI-1967 | `tests/lock_acquire_exclusive.bats` | Bounce #1: when releasing the just-acquired lock itself fails, `lock_acquire_exclusive` prints a truthful WARNING naming the lock, that it may still be HELD, and the `status`/`override` remedy — still returns the other lock's non-zero rc. |
