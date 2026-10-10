@@ -103,7 +103,7 @@ TMP_ENV="$(mktemp)"; trap 'rm -f "${TMP_ENV}"' EXIT
 wt_write_env "${TMP_ENV}" "${SLUG}" "${OFFSET}" "${REDIS_DB}"
 
 log "Bringing down app stack ${PROJECT} (down -v: containers + node_modules volumes)"
-docker compose -p "${PROJECT}" --env-file "${TMP_ENV}" -f "${APP_COMPOSE}" down -v || \
+"${COMPOSE_ARGS[@]}" -p "${PROJECT}" --env-file "${TMP_ENV}" -f "${APP_COMPOSE}" down -v || \
   warn "compose down reported an issue (stack may already be down)"
 ok "App stack ${PROJECT} stopped"
 

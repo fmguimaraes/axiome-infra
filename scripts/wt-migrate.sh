@@ -56,9 +56,10 @@ done
 [ -n "${COMPOSE_PROJECT}" ] && [ -n "${COMPOSE_FILE}" ] || die "wt-migrate.sh: --compose-project and --compose-file are required"
 
 _compose() {
+  need_docker   # AXI-1971 (FR54): resolve Compose v2 through the one shared resolver
   local args=(-p "${COMPOSE_PROJECT}" -f "${COMPOSE_FILE}")
   [ -z "${ENV_FILE}" ] || args+=(--env-file "${ENV_FILE}")
-  docker compose "${args[@]}" "$@"
+  "${COMPOSE_ARGS[@]}" "${args[@]}" "$@"
 }
 
 # Regenerates Prisma clients, then runs migrate-gate's own subcommand. Both

@@ -38,14 +38,9 @@ destroy:
 # AXI-1952 (AC6/B1): fail CLOSED. The legacy `docker-compose` v1 binary is
 # never a silent fallback here — it has a known data-corrupting bug against
 # modern image config (`KeyError: 'ContainerConfig'`) and must never be
-# invoked against the real local/demo/shared stacks. If DOCKER_COMPOSE is
-# already set (command line or environment — `origin` sees both), that
-# value is used verbatim and the v2 probe below is skipped entirely. Only
-# when it is NOT set do we probe for `docker compose` v2 ourselves; if that
-# probe fails too, make stops with $(error) rather than falling back to the
-# legacy binary.
+# invoked against the real local/demo/shared stacks.
 #
-# AXI-1955 fix (a): the probe/error above used to run for EVERY goal,
+# AXI-1955 fix (a): the probe/error below used to run for EVERY goal,
 # including `make help` and every Terraform/seed/deploy-prod target — a
 # machine with no Docker installed at all could not even run `make help`.
 # It is now gated on the goal(s) actually requested: only a goal whose
@@ -53,25 +48,47 @@ destroy:
 # target whose recipe references $(APP)/$(SHARED)/$(DEMO)/
 # $(ANALYTICS_COMPOSE)) triggers the probe/error below.
 #
-# AXI-1955 fix (b): a `DOCKER_COMPOSE=docker-compose` override (command
-# line or environment) used to be accepted verbatim — silently selecting
-# the same unsupported v1 binary this guard exists to keep out. It is now
-# rejected with the same clear $(error), whether set on the command line
-# or in the environment (both read the same way via `origin`).
+# AXI-1971 (FR54): resolution itself now goes through the ONE shared
+# resolver, scripts/lib/compose-resolve.sh, so the Makefile and every
+# Compose-driving script in scripts/ agree on the same rule — including
+# refusing an override by BASENAME (not exact string), so
+# `DOCKER_COMPOSE=/usr/bin/docker-compose` or `docker-compose -f x` are
+# refused too (AXI-1955 follow-up debt). Explicitly forward DOCKER_COMPOSE
+# into the resolver's shell: a command-line assignment
+# (`make demo-up DOCKER_COMPOSE=…`) is NOT part of make's own process
+# environment, so $(shell …) would not see it otherwise — only a plain
+# environment variable would.
 DOCKER_COMPOSE_TARGETS := local-up local-up-fg local-down local-restart \
 	demo-up demo-down demo-restart demo-logs demo-rm \
 	local-logs local-tail local-ps local-health local-shell local-exec local-debug local-inspect \
 	analytics-up analytics-down analytics-logs analytics-ps analytics-role
 ifneq ($(strip $(filter $(DOCKER_COMPOSE_TARGETS),$(MAKECMDGOALS))),)
-ifeq ($(origin DOCKER_COMPOSE),undefined)
-DOCKER_COMPOSE := $(shell docker compose version >/dev/null 2>&1 && echo "docker compose")
-ifeq ($(strip $(DOCKER_COMPOSE)),)
-$(error Docker Compose v2 not found (`docker compose version` failed). Install Docker Compose v2, or pass DOCKER_COMPOSE="<command>" explicitly on the command line. The legacy `docker-compose` v1 binary is not supported here — see AXI-1952)
+# _COMPOSE_RESOLVED is a fresh name (never set on the command line), so this
+# assignment is never silently discarded by make's "command line wins"
+# rule — unlike DOCKER_COMPOSE itself, which a plain `:=` here could not
+# override when it was set with `make … DOCKER_COMPOSE=…`. `override` below
+# then forces the normalized value back onto DOCKER_COMPOSE for $(SHARED)/
+# $(APP)/$(DEMO)/$(ANALYTICS_COMPOSE) to use.
+_COMPOSE_RESOLVED := $(shell DOCKER_COMPOSE="$(DOCKER_COMPOSE)" ./scripts/lib/compose-resolve.sh 2>&1)
+# AXI-1971 review fix #4: `.SHELLSTATUS` is a GNU Make >= 4.2 automatic
+# variable, populated as a SIDE EFFECT of the `$(shell …)` call directly
+# above. On an older make that has never heard of `.SHELLSTATUS`, that
+# side effect never happens, so `$(origin .SHELLSTATUS)` is STILL
+# "undefined" right here — checked AFTER the call, never before (before
+# any `$(shell …)` call in this run, `.SHELLSTATUS` reads "undefined" even
+# on a fully supported make, which would make an earlier check a false
+# positive). Without this guard, `ifneq ($(.SHELLSTATUS),0)` below would
+# compare "" to "0" — always true — and fire `$(error $(_COMPOSE_RESOLVED))`
+# even on a SUCCESSFUL resolve, printing the resolved command itself
+# (e.g. "docker compose") as if it were an error, instead of a truthful
+# version complaint.
+ifeq ($(origin .SHELLSTATUS),undefined)
+$(error This target needs GNU Make >= 4.2 for Compose v2 resolution (.SHELLSTATUS is not supported by this make: $(MAKE_VERSION)). Upgrade GNU Make, or run scripts/lib/compose-resolve.sh directly instead of through this Makefile. Nothing was run.)
 endif
+ifneq ($(.SHELLSTATUS),0)
+$(error $(_COMPOSE_RESOLVED))
 endif
-ifeq ($(strip $(DOCKER_COMPOSE)),docker-compose)
-$(error DOCKER_COMPOSE="docker-compose" names the legacy v1 binary, which is NOT supported here (AXI-1952/AXI-1955) — it has a known data-corrupting bug against modern image config (`KeyError: 'ContainerConfig'`) and must never be invoked against the real local/demo/shared stacks. Pass DOCKER_COMPOSE="docker compose" (v2) instead, or unset DOCKER_COMPOSE to let make probe for v2 itself.)
-endif
+override DOCKER_COMPOSE := $(_COMPOSE_RESOLVED)
 endif
 LEGACY_SLUG     ?= local
 SHARED_PROJECT  := axiome-shared
@@ -81,6 +98,12 @@ APP_FILE        := docker-compose.yml
 ENV_FILE        := .env
 # Shared services (postgres/redis/...) and this slug's app services. `$(APP)` needs
 # the per-worktree $(ENV_FILE), which `make local-up` (wt-up.sh) writes — run it first.
+# AXI-1971 (FR55): `$(APP)` (project axiome-$(LEGACY_SLUG), the isolated
+# per-worktree project wt-up.sh --provision-only/--shared-only uses) is kept
+# for that path, but it is NOT what `local-up`/`demo-up` actually start —
+# see $(DEMO) below. `local-ps`/`local-health` must inspect $(DEMO), not
+# $(APP) (epic AXI-1944 debt: they used to report a project no `local-*`
+# target starts).
 SHARED := $(DOCKER_COMPOSE) -p $(SHARED_PROJECT) -f $(SHARED_FILE)
 APP    := $(DOCKER_COMPOSE) -p $(APP_PROJECT) --env-file $(ENV_FILE) -f $(APP_FILE)
 
@@ -180,9 +203,12 @@ local-logs:
 local-tail:
 	$(DEMO) logs --tail=$(TAIL) $(SERVICE)
 
-# Show running containers and their state (app + shared).
+# Show running containers and their state (app + shared). AXI-1971 (FR55):
+# inspects $(DEMO) (project axiome-demo) — the project `local-up`/`demo-up`
+# actually start — not $(APP) (axiome-$(LEGACY_SLUG)), which no `local-*`
+# target starts since `local-up` became a `demo-up` alias.
 local-ps:
-	@$(APP) ps
+	@$(DEMO) ps
 	@echo "--- shared ---"
 	@$(SHARED) ps
 
@@ -191,8 +217,9 @@ local-stats:
 	docker stats
 
 # Print healthcheck status for every app service that defines one.
+# AXI-1971 (FR55): same project fix as local-ps above.
 local-health:
-	$(APP) ps --format 'table {{.Name}}\t{{.State}}\t{{.Status}}'
+	$(DEMO) ps --format 'table {{.Name}}\t{{.State}}\t{{.Status}}'
 
 # Open an interactive shell inside an app service container.
 # Usage: make local-shell SERVICE=backend

@@ -12,6 +12,11 @@ WT_COMMON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INFRA_DIR="$(cd "${WT_COMMON_DIR}/.." && pwd)"        # axiome-infra/ (holds the compose files)
 WORKTREE_ROOT="$(cd "${INFRA_DIR}/.." && pwd)"        # the super-repo checkout (= worktree)
 
+# AXI-1971 (FR54): the one shared Compose v2 resolver — see scripts/lib/compose-resolve.sh.
+# shellcheck source=./lib/compose-resolve.sh
+. "${WT_COMMON_DIR}/lib/compose-resolve.sh"
+COMPOSE_ARGS=()   # populated by need_docker()/compose_resolve(); empty until then
+
 SHARED_COMPOSE="${INFRA_DIR}/docker-compose.shared.yml"
 # shellcheck disable=SC2034  # used by wt-up.sh / wt-down.sh, which source this file
 APP_COMPOSE="${INFRA_DIR}/docker-compose.yml"
@@ -48,9 +53,13 @@ ok()    { printf '%s  ✓%s %s\n' "${_c_green}" "${_c_reset}" "$*"; }
 warn()  { printf '%s  ! %s%s\n' "${_c_yellow}" "$*" "${_c_reset}" >&2; }
 die()   { printf '%s  ✗ %s%s\n' "${_c_red}" "$*" "${_c_reset}" >&2; exit 1; }
 
+# AXI-1971 (FR54): resolves Compose v2 through the one shared resolver and
+# dies with its exact refusal message on anything else (no v2 found, or an
+# override naming the legacy v1 binary by basename). Sets $COMPOSE_ARGS for
+# shared_compose() below. Safe to call more than once (idempotent).
 need_docker() {
   command -v docker >/dev/null 2>&1 || die "docker not found on PATH"
-  docker compose version >/dev/null 2>&1 || die "docker compose v2 required"
+  compose_resolve || die "${COMPOSE_RESOLVE_ERROR}"
 }
 
 # --- Slug ------------------------------------------------------------------
@@ -164,7 +173,12 @@ wt_registry_release()  { _registry_py release "$1"; }    # $1 slug
 wt_registry_list()     { _registry_py list; }            # -> lines "slug\toffset\tredis_db\tpath"
 
 # --- Shared-stack helpers --------------------------------------------------
-shared_compose() { docker compose -p "${SHARED_PROJECT}" -f "${SHARED_COMPOSE}" "$@"; }
+# AXI-1971 (FR54): resolves Compose v2 (via need_docker()/$COMPOSE_ARGS, the
+# one shared resolver) lazily if a caller invokes this before need_docker.
+shared_compose() {
+  [ "${#COMPOSE_ARGS[@]}" -gt 0 ] || { compose_resolve || die "${COMPOSE_RESOLVE_ERROR}"; }
+  "${COMPOSE_ARGS[@]}" -p "${SHARED_PROJECT}" -f "${SHARED_COMPOSE}" "$@"
+}
 
 shared_running() {
   [ -n "$(docker ps -q --filter "label=com.docker.compose.project=${SHARED_PROJECT}" 2>/dev/null)" ]

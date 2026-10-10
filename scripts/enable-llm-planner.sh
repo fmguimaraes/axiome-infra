@@ -28,6 +28,10 @@ set -euo pipefail
 
 # Resolve the infra dir from this script's own location, so it works from anywhere.
 INFRA="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# AXI-1971 (FR54): the one shared Compose v2 resolver — see scripts/lib/compose-resolve.sh.
+# shellcheck source=./lib/compose-resolve.sh
+. "${INFRA}/scripts/lib/compose-resolve.sh"
+compose_resolve || { echo "${COMPOSE_RESOLVE_ERROR}" >&2; exit 1; }
 COMPOSE="${INFRA}/docker-compose.demo.yml"
 PROJECT="axiome-demo"
 SERVICE="backend"
@@ -42,7 +46,7 @@ MODEL="${GUIDED_ANALYSIS_ANTHROPIC_MODEL:-claude-sonnet-5}"
 # --- OFF: drop the override and recreate the backend on the base compose only ---
 if [[ "${1:-}" == "--off" ]]; then
   rm -f "$OVERRIDE"
-  docker compose -p "$PROJECT" -f "$COMPOSE" up -d "$SERVICE"
+  "${COMPOSE_ARGS[@]}" -p "$PROJECT" -f "$COMPOSE" up -d "$SERVICE"
   echo "LLM planner DISABLED — demo backend back on the deterministic planner."
   exit 0
 fi
@@ -96,7 +100,7 @@ YML
 
 # --- Recreate ONLY the backend with base + override; export key for interpolation ---
 export GUIDED_ANALYSIS_ANTHROPIC_API_KEY="$key"
-docker compose -p "$PROJECT" -f "$COMPOSE" -f "$OVERRIDE" up -d "$SERVICE"
+"${COMPOSE_ARGS[@]}" -p "$PROJECT" -f "$COMPOSE" -f "$OVERRIDE" up -d "$SERVICE"
 
 echo "LLM planner ENABLED on ${PROJECT} backend (provider=anthropic, model=${MODEL})."
 echo "Key sourced from ${key_source}; not committed, not in the compose file."

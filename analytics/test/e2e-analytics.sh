@@ -48,13 +48,18 @@ fail() { printf '  %s✗%s %s\n' "$RED" "$NC" "$1"; FAILS=$((FAILS + 1)); }
 note() { printf '  %s•%s %s\n' "$YELLOW" "$NC" "$1"; }
 section() { printf '\n%s%s%s\n' "$BOLD" "$1" "$NC"; }
 
-DC=$(docker compose version >/dev/null 2>&1 && echo "docker compose" || echo "docker-compose")
+# Compose v2 only, resolved through the one shared resolver (AXI-1971) —
+# never a local fallback to the legacy v1 binary name (that incident is
+# the whole reason the resolver exists; see scripts/lib/compose-resolve.sh).
+# shellcheck source=../../scripts/lib/compose-resolve.sh
+. "${INFRA_DIR}/scripts/lib/compose-resolve.sh"
+compose_resolve || { printf '%s\n' "${COMPOSE_RESOLVE_ERROR}" >&2; exit 1; }
 # Postgres now lives in the shared services stack (project axiome-shared).
 CA=(-p axiome-shared -f docker-compose.shared.yml)
 
 # psql as the DB owner (seed/cleanup) and as the read-only Metabase role.
-owner_psql() { $DC "${CA[@]}" exec -T postgres psql -v ON_ERROR_STOP=1 -U "$OWNER" -d "$DB" "$@"; }
-ro_psql()    { $DC "${CA[@]}" exec -T -e PGPASSWORD="$RO_PASS" postgres \
+owner_psql() { "${COMPOSE_ARGS[@]}" "${CA[@]}" exec -T postgres psql -v ON_ERROR_STOP=1 -U "$OWNER" -d "$DB" "$@"; }
+ro_psql()    { "${COMPOSE_ARGS[@]}" "${CA[@]}" exec -T -e PGPASSWORD="$RO_PASS" postgres \
                  psql -h 127.0.0.1 -U metabase_ro -d "$DB" "$@"; }
 # Strip Metabase optional [[ ... {{var}} ]] blocks so raw psql runs the all-time query.
 funnel_sql() { sed -E 's/\[\[[^]]*\]\]//g' "$1"; }

@@ -16,6 +16,16 @@
 # compose gate and it carries neither literal today (verified by this test
 # itself: it now fails loudly, not vacuously, if either literal reappears
 # anywhere, roll-service.sh included).
+#
+# AXI-1971 (FR56/AC49): scripts/sync-event-store-indexes.sh is a SANCTIONED,
+# single exception to the "db push" scan — it is the one explicit, opt-in
+# command (never a start/migrate/seed path — proved separately and
+# structurally by tests/sync-event-store-indexes.bats's UT-INFRA-527) that
+# this epic's own backlog decision ("decide how local Mongo indexes get
+# synced") asked for, after removing the implicit `prisma db push` this AC
+# originally existed to forbid. It carries NO "accept-data-loss" literal
+# (that scan below still covers it with no exception), so the data-loss half
+# of this AC still applies to it in full.
 
 load 'helpers/setup'
 
@@ -23,14 +33,17 @@ setup() {
   stub_setup
 }
 
-# _ac6_scan <pattern> — repo-wide grep for <pattern>, full-line comments
-# and excluded paths filtered out. Prints any surviving matches (empty
-# output = clean).
+# _ac6_scan <pattern> [extra-exclude-glob] — repo-wide grep for <pattern>,
+# full-line comments and excluded paths filtered out. Prints any surviving
+# matches (empty output = clean).
 _ac6_scan() {
   local pattern="$1"
+  local extra_exclude="${2:-}"
+  local -a exclude_args=(--exclude-dir=tests --exclude-dir=.git)
+  [ -z "$extra_exclude" ] || exclude_args+=(--exclude="$extra_exclude")
   grep -rn --include='*.sh' --include='Makefile' --include='*.yml' --include='*.yaml' \
     -E "$pattern" "${INFRA_ROOT}" \
-    --exclude-dir=tests --exclude-dir=.git \
+    "${exclude_args[@]}" \
     2>/dev/null \
   | awk -F: '{
       line=$0
@@ -41,11 +54,12 @@ _ac6_scan() {
     }'
 }
 
-# UT-INFRA-252 — no file in the repo (outside tests/** and
-# scripts/roll-service.sh, AXI-1953's) contains the literal "db push"
-# outside a comment.
+# UT-INFRA-252 — no file in the repo (outside tests/**,
+# scripts/roll-service.sh (AXI-1953's), and scripts/sync-event-store-indexes.sh
+# (AXI-1971's sanctioned, explicit, opt-in exception — see docstring above))
+# contains the literal "db push" outside a comment.
 @test "UT-INFRA-252: no repo file contains the literal 'db push' outside a comment" {
-  run _ac6_scan 'db push'
+  run _ac6_scan 'db push' 'sync-event-store-indexes.sh'
   assert_output ""
   assert_success
 }

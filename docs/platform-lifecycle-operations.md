@@ -441,17 +441,62 @@ nothing. It is never executed by this story, by CI, or against any real box.
 
 ---
 
-## 7. Local stack safety (AXI-1952)
+## 7. Local stack safety (AXI-1952, hardened AXI-1971)
 
-- **Compose v2 is required** — the root `Makefile` refuses with a clear
-  `$(error)` (not a silent fallback to the legacy `docker-compose` v1 binary,
-  which has a known data-corrupting bug against modern image config) when no
-  usable `docker compose` is found, **for any goal that actually touches
-  Docker Compose** (AXI-1955 fix (a) — `make help` and every Terraform/seed/
-  deploy-prod target need no Docker at all and work without it). A literal
-  `DOCKER_COMPOSE=docker-compose` override (command line OR environment) is
-  also rejected (AXI-1955 fix (b)) — only `DOCKER_COMPOSE="docker compose"`
-  (or leaving it unset, letting `make` probe for v2 itself) is accepted.
+- **Compose v2 is required, resolved through ONE shared resolver** —
+  `scripts/lib/compose-resolve.sh` (AXI-1971, FR54). The root `Makefile` and
+  every LOCAL-dev-stack script that runs Compose (`wt-up.sh`, `wt-down.sh`,
+  `wt-migrate.sh`, `ensure-shared-infra.sh`, `enable-llm-planner.sh`,
+  `sync-event-store-indexes.sh`, `analytics/test/e2e-analytics.sh`) call it
+  instead of each hardcoding `docker compose` independently (verified
+  repo-wide, not just this list — `tests/compose-call-sites.bats`'s
+  UT-INFRA-519/606 scan EVERY tracked shell script and Makefile via
+  `git ls-files`, with an explicit, one-line-reasoned exclusion list rather
+  than an inclusion list, so a brand-new file is checked by default).
+  Resolution refuses — printing one line naming what was found and the
+  remedy, running nothing — whenever:
+  - no usable `docker compose` (v2) is found at all;
+  - a `DOCKER_COMPOSE` override is not literally shaped like a Compose v2
+    command — an **allow-shape** (basename `docker`, immediately followed
+    by the literal word `compose`, then optional arguments), not a
+    deny-list: a deny-list only ever covers forms someone already thought
+    of, which is exactly how `DOCKER_COMPOSE=/usr/bin/docker-compose` and
+    `DOCKER_COMPOSE="docker-compose -f x"` (AXI-1955 follow-up) and, later,
+    leading/trailing whitespace, a `sudo`/`env VAR=…` prefix, and any other
+    non-Compose override (AXI-1971 review bounce #1) all slipped an
+    earlier, narrower check.
+
+  **Scripts that invoke Compose but are deliberately NOT resolver-routed**
+  (excluded from the UT-INFRA-519/606 scan, each for a stated reason — see
+  `tests/compose-call-sites.bats`'s header comment for the authoritative,
+  one-line-per-file list): scripts that run on the PRODUCTION box over
+  SSM/SSH or ship a literal command string to one (`asset-sync.sh`,
+  `deploy-prod.sh`, `roll-service.sh`, `reset-admin-password.sh`,
+  `pull-on-vm.sh`, `platform-debug.sh`, `ssm-exec.sh`,
+  `providers/aws/onbox/boot.sh`, `providers/aws/scripts/power.sh` /
+  `power-up-all.sh`); `providers/onprem/scripts/install.sh` (installs onto a
+  customer's target machine, never run against this repo's own dev stack);
+  and `scripts/seed-environment.sh`, which is a known, flagged exception —
+  it hardcodes `docker compose` literally with **no v1 fallback** (so it
+  cannot reach the legacy binary, only error loudly if v2 is absent) but is
+  not yet resolver-routed; it is out of this story's file ownership and is
+  a follow-up, not a defect of the class this story closes.
+
+  The Makefile's own guard still only fires **for a goal that actually
+  touches Docker Compose** (AXI-1955 fix (a) — `make help` and every
+  Terraform/seed/deploy-prod target need no Docker at all and work without
+  it); it now forwards `DOCKER_COMPOSE` into the resolver explicitly (a
+  command-line `make … DOCKER_COMPOSE=…` is not part of `make`'s own process
+  environment otherwise) and `override`s the result back, normalizing
+  whatever it resolved to for every Compose macro below it in the file.
+  **Requires GNU Make >= 4.2** (the `.SHELLSTATUS` automatic variable this
+  guard reads). On an older `make`, any Compose-touching goal fails closed
+  with a message naming that version requirement explicitly, rather than a
+  misleading "Compose v2 not found".
+- **`make local-ps` / `make local-health` now inspect `axiome-demo`** — the
+  project `local-up`/`demo-up` actually start — not the unrelated
+  `axiome-$(LEGACY_SLUG)` project no `local-*` target starts (FR55/AC48;
+  epic AXI-1944 debt, named in the AXI-1955 follow-up list).
 - **Purge guard** (`wt_purge_guard` in `scripts/wt-common.sh`): `wt-down.sh
   --purge` only proceeds if every target resource name contains the
   worktree's own slug, no resource equals a known SHARED name, the slug
@@ -473,6 +518,32 @@ nothing. It is never executed by this story, by CI, or against any real box.
 - **`make demo-up MIGRATE=0`** skips the migration and instead prints the
   pending migrations (`wt-migrate.sh status`, read-only) before starting the
   stack anyway — useful to inspect drift without committing to a migration.
+- **`scripts/sync-event-store-indexes.sh --compose-project <p>
+  --compose-file <f> [--env-file <f>] [--service backend]`** — the ONE
+  explicit, opt-in way to sync the local event-store (MongoDB) indexes
+  (AXI-1971, FR56/AC49). Invokes the application's OWN index definitions —
+  `npx prisma db push` against axiome-back's own
+  `apps/event-service/src/prisma/schema.prisma` (`@@index([...])`), inside
+  the running backend container — rather than duplicating that list here.
+  No start, up, migrate or seed path calls it (structurally checked,
+  `tests/sync-event-store-indexes.bats`): it is an operator act, run by
+  hand, e.g. `scripts/sync-event-store-indexes.sh --compose-project
+  axiome-demo --compose-file docker-compose.demo.yml`. It refuses before
+  touching anything if: the MongoDB address THIS COMMAND was told about is
+  not local (loopback, or the `mongodb` compose-network container alias —
+  never a remote event store); a `--mongodb-url` argument carries embedded
+  credentials (secrets never belong on argv); or — checked separately,
+  right before the push — the running backend container's OWN
+  `$MONGODB_URL` (read from inside the container, host only, never the
+  full URL, so nothing credential-bearing ever reaches this process's own
+  argv/stdout/logs) is missing, unreadable, or not local either. The two
+  checks are independent on purpose: the address this command was told
+  about and the address the container will actually use when `prisma db
+  push` runs inside it can legitimately differ. It never passes
+  `--accept-data-loss` or any other data-loss-accepting flag — if Prisma
+  itself judges a change destructive it refuses non-interactively rather
+  than forcing it through, and it is idempotent (a no-op re-run is a
+  no-op).
 
 ---
 

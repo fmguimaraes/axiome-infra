@@ -122,7 +122,7 @@ fi
 
 # --- 5. Bring up the app stack ---------------------------------------------
 log "Building & starting app stack (${PROJECT})…"
-docker compose -p "${PROJECT}" --env-file "${ENV_FILE}" -f "${APP_COMPOSE}" up -d ${BUILD_FLAG}
+"${COMPOSE_ARGS[@]}" -p "${PROJECT}" --env-file "${ENV_FILE}" -f "${APP_COMPOSE}" up -d ${BUILD_FLAG}
 ok "App containers started"
 
 # --- 6. Migrations (forward-only; FR36/FR37) --------------------------------
@@ -154,7 +154,7 @@ if [ "${DO_MIGRATE}" -eq 1 ]; then
   # MIGRATE_GATE_SERVICES, this call should move inside the gate/lock and
   # this block should be deleted.
   log "Migrating control-plane schema (forward-only, no push fallback)…"
-  docker compose -p "${PROJECT}" --env-file "${ENV_FILE}" -f "${APP_COMPOSE}" \
+  "${COMPOSE_ARGS[@]}" -p "${PROJECT}" --env-file "${ENV_FILE}" -f "${APP_COMPOSE}" \
     exec -T backend sh -lc 'cd apps/control-plane && npx prisma migrate deploy --schema=src/prisma/schema.prisma' \
     || die "control-plane migration failed — see above."
   ok "Migrations applied (baseline reference data seeds on each service's own boot)."

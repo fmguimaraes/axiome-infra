@@ -26,6 +26,11 @@ SHARED_NET="axiome-shared-net"
 
 log() { printf '\033[36m[ensure-shared]\033[0m %s\n' "$*"; }
 
+# AXI-1971 (FR54): the one shared Compose v2 resolver — see scripts/lib/compose-resolve.sh.
+# shellcheck source=./lib/compose-resolve.sh
+. "${INFRA_DIR}/scripts/lib/compose-resolve.sh"
+compose_resolve || { echo "${COMPOSE_RESOLVE_ERROR}" >&2; exit 1; }
+
 # 1. External network the app stacks attach to.
 if ! docker network inspect "${SHARED_NET}" >/dev/null 2>&1; then
   log "creating network ${SHARED_NET}"
@@ -34,7 +39,7 @@ fi
 
 # 2. Start (or start-missing) all shared services and wait for their healthchecks.
 log "bringing up shared stack and waiting for health…"
-docker compose -p "${SHARED_PROJECT}" -f "${SHARED_COMPOSE}" up -d --wait
+"${COMPOSE_ARGS[@]}" -p "${SHARED_PROJECT}" -f "${SHARED_COMPOSE}" up -d --wait
 
 # 3. Re-pin the restart policy on the live containers (a compose recreate resets
 #    it to 'no'). This is what makes them survive the next reboot.

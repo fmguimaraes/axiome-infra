@@ -13,6 +13,12 @@ setup() {
   export WT_MIGRATE_LOCK_FILE="${BATS_TEST_TMPDIR}/migrate.lock"
   export AXIOME_HOME="${BATS_TEST_TMPDIR}/axiome-home"
   mkdir -p "${WT_BACKUP_DIR}" "${AXIOME_HOME}"
+  # AXI-1971 (FR54): wt-migrate.sh now resolves Compose v2 through the one
+  # shared resolver (scripts/lib/compose-resolve.sh) before its own exec/run
+  # call. Set the override explicitly, same convention as
+  # tests/demo-up-migrate.bats, so these tests never depend on the docker
+  # stub answering `compose version` too.
+  export DOCKER_COMPOSE="docker compose"
 }
 
 # UT-INFRA-246 — `status` is read-only: no lock file is created, no backup
