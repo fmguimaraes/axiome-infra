@@ -9,33 +9,49 @@
 #   4. creates this worktree's Postgres DB, RabbitMQ vhost, and MinIO buckets
 #      (all idempotent) — Mongo DB / Redis index are created lazily on first use
 #   5. brings up the app stack:  docker compose -p axiome-<slug> up -d --build
-#   6. runs migrations (best-effort) and prints the resolved resources
+#   6. with --migrate: forward-only migration of the shared DB, backed up
+#      first, failing loudly on error (see wt-migrate.sh); always prints
+#      the resolved resources
 #
 # Flags:
 #   --shared-only      only bring up + health-check the shared stack, then exit
 #   --provision-only   do everything EXCEPT starting the app services (writes
 #                      .env, brings up shared, creates DB/vhost/buckets) — useful
 #                      for tests/CI that talk to the shared services directly
-#   --no-seed          skip the migrate/seed step
+#   --migrate          apply pending Prisma migrations to the ONE shared DB
+#                      (organization-service + user-service via migrate-gate,
+#                      forward-only, no schema-push fallback; backed up first —
+#                      see wt-migrate.sh). Affects every worktree. Off by default.
+#   --no-migrate       explicit no-op opt-out (same as omitting --migrate)
+#   --seed             DEPRECATED alias for --migrate (AXI-1952): the only thing
+#                      this flag ever did was trigger the migration, which then
+#                      let each service's own boot-time baseline seeding run
+#                      against a migrated schema. Kept so existing muscle-memory
+#                      (`wt-up.sh --seed`) still migrates instead of silently
+#                      doing nothing; prefer --migrate going forward.
+#   --no-seed          DEPRECATED alias for the default (no migration)
 #   --rebuild          force `up --build` to rebuild images
 #   -h | --help        this help
 set -euo pipefail
+# shellcheck source=./wt-common.sh
 . "$(cd "$(dirname "$0")" && pwd)/wt-common.sh"
 
-# DO_SEED defaults OFF (2026-09-04): every worktree now shares ONE Postgres DB
-# (axiome-localhost), and the seed step below can fall back to `prisma db push
-# --accept-data-loss`, which would DESTROY that shared DB's data if a worktree's
-# schema differs. Opt in deliberately with `--seed` only when you intend to
-# migrate the one shared DB (it affects every worktree).
-SHARED_ONLY=0; PROVISION_ONLY=0; DO_SEED=0; BUILD_FLAG="--build"
+# DO_MIGRATE defaults OFF (2026-09-04, hardened AXI-1952): every worktree now
+# shares ONE Postgres DB (axiome-localhost). Migrating it is forward-only
+# (migrate-gate; FR36) with a verified backup first (FR37) — opt in
+# deliberately with --migrate only when you intend to migrate the one shared
+# DB (it affects every worktree).
+SHARED_ONLY=0; PROVISION_ONLY=0; DO_MIGRATE=0; BUILD_FLAG="--build"
 while [ $# -gt 0 ]; do
   case "$1" in
     --shared-only)    SHARED_ONLY=1 ;;
     --provision-only) PROVISION_ONLY=1 ;;
-    --no-seed)        DO_SEED=0 ;;
-    --seed)           DO_SEED=1 ;;   # opt in: migrate the ONE shared DB (affects all worktrees)
+    --no-migrate)     DO_MIGRATE=0 ;;
+    --migrate)        DO_MIGRATE=1 ;;
+    --no-seed)        DO_MIGRATE=0 ;;   # deprecated alias, see --no-migrate
+    --seed)           DO_MIGRATE=1 ;;   # deprecated alias, see --migrate
     --rebuild)        BUILD_FLAG="--build" ;;
-    -h|--help)        sed -n '2,25p' "$0"; exit 0 ;;
+    -h|--help)        sed -n '2,32p' "$0"; exit 0 ;;
     *) die "unknown flag: $1 (try --help)" ;;
   esac
   shift
@@ -109,25 +125,41 @@ log "Building & starting app stack (${PROJECT})…"
 docker compose -p "${PROJECT}" --env-file "${ENV_FILE}" -f "${APP_COMPOSE}" up -d ${BUILD_FLAG}
 ok "App containers started"
 
-# --- 6. Migrations (best-effort) -------------------------------------------
-if [ "${DO_SEED}" -eq 1 ]; then
-  log "Applying Prisma migrations inside the backend container (best-effort)…"
-  if docker compose -p "${PROJECT}" --env-file "${ENV_FILE}" -f "${APP_COMPOSE}" \
-       exec -T backend sh -lc '
-         set -e
-         command -v npx >/dev/null 2>&1 || { echo "npx not ready yet (npm install still running?)"; exit 42; }
-         npx turbo run prisma:generate >/dev/null 2>&1 || true
-         for app in user-service organization-service control-plane; do
-           ( cd apps/$app && npx prisma migrate deploy --schema=src/prisma/schema.prisma ) \
-             || ( cd apps/$app && npx prisma db push --accept-data-loss --schema=src/prisma/schema.prisma ) || true
-         done
-         ( cd apps/event-service && npx prisma db push --schema=src/prisma/schema.prisma ) || true
-       '; then
-    ok "Migrations applied (baseline reference data seeds on service boot)"
-  else
-    warn "Migration step skipped/failed — the backend may still be running 'npm install'."
-    warn "Re-run 'scripts/wt-up.sh --no-seed' once it is up, or apply Prisma migrations by hand."
-  fi
+# --- 6. Migrations (forward-only; FR36/FR37) --------------------------------
+# A failure here is NOT swallowed: it exits this script non-zero and says
+# what failed (wt-migrate.sh / migrate-gate's own output). No schema-push
+# fallback exists on this path for organization-service or user-service.
+# event-service (MongoDB) and control-plane are out of scope for the gate
+# (decision 3's default service list is organization-service,user-service);
+# control-plane still gets its own forward-only `prisma migrate deploy`
+# below, with its push fallback removed — never silently re-added.
+if [ "${DO_MIGRATE}" -eq 1 ]; then
+  log "Migrating the shared Postgres DB (organization-service, user-service) via migrate-gate…"
+  "${WT_COMMON_DIR}/wt-migrate.sh" apply \
+    --compose-project "${PROJECT}" --compose-file "${APP_COMPOSE}" --env-file "${ENV_FILE}" --service backend \
+    || die "migration failed — see above. The app stack is up but its schema may be behind; do not treat this worktree as migrated."
+
+  # NOTE (AXI-1952): this call is OUTSIDE wt-migrate.sh's gate AND outside
+  # its flock (wt_acquire_migrate_lock) — it runs after that lock has
+  # already been released by the `wt-migrate.sh apply` call above, which
+  # is its own short-lived subprocess. This is tolerated, not an oversight:
+  # (a) control-plane is explicitly out of scope for migrate-gate's
+  # tracked-service list (decision 3, see the comment above), so there is
+  # no gate contract to run it through; (b) `prisma migrate deploy` is
+  # itself forward-only and idempotent/advisory-locked by Prisma's own
+  # migration-history table, so two worktrees racing this specific command
+  # fail safely (the loser gets Prisma's own "another migrate is already
+  # running" error, not data loss) even without wt's own lock; (c) it has
+  # no push-fallback, matching AC6. If control-plane is ever added to
+  # MIGRATE_GATE_SERVICES, this call should move inside the gate/lock and
+  # this block should be deleted.
+  log "Migrating control-plane schema (forward-only, no push fallback)…"
+  docker compose -p "${PROJECT}" --env-file "${ENV_FILE}" -f "${APP_COMPOSE}" \
+    exec -T backend sh -lc 'cd apps/control-plane && npx prisma migrate deploy --schema=src/prisma/schema.prisma' \
+    || die "control-plane migration failed — see above."
+  ok "Migrations applied (baseline reference data seeds on each service's own boot)."
+else
+  ok "Skipping migration (pass --migrate to apply pending Prisma migrations to the shared DB)."
 fi
 
 print_summary

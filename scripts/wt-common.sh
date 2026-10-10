@@ -13,6 +13,7 @@ INFRA_DIR="$(cd "${WT_COMMON_DIR}/.." && pwd)"        # axiome-infra/ (holds the
 WORKTREE_ROOT="$(cd "${INFRA_DIR}/.." && pwd)"        # the super-repo checkout (= worktree)
 
 SHARED_COMPOSE="${INFRA_DIR}/docker-compose.shared.yml"
+# shellcheck disable=SC2034  # used by wt-up.sh / wt-down.sh, which source this file
 APP_COMPOSE="${INFRA_DIR}/docker-compose.yml"
 SHARED_PROJECT="axiome-shared"
 SHARED_NET="axiome-shared-net"
@@ -222,6 +223,99 @@ wt_derive_vars() {  # $1=slug $2=offset $3=redis_db
   PG_DB="axiome"; MONGO_DB="axiome-global-axi-1233"; MQ_VHOST="axiome-global-axi-1233"
   B_UPLOADS="axiome-global-axi-1233-uploads"; B_ARTIFACTS="axiome-global-axi-1233-artifacts"; B_SYSTEM="axiome-global-axi-1233-system"
   REDIS_PREFIX="axiome:shared:"; REDIS_DB=1
+}
+
+# --- Purge guard (2026-10-02 data-loss incident; hardened AXI-1952) --------
+# Since the single-shared-data-layer change above, wt_derive_vars hands EVERY
+# worktree the SAME Postgres DB, Mongo DB, RabbitMQ vhost, bucket set and
+# Redis index/prefix. On 2026-10-02 `wt-down.sh --purge --slug
+# axiome-global-axi-1235` dropped the shared buckets and the shared Mongo
+# event store (1,485 parquet files + 1,612 uploads, no backup). A purge may
+# only destroy a resource whose name is UNIQUELY derived for the slug being
+# purged — never a value any other worktree could also compute.
+#
+# "Uniquely named for slug S" means ALL of:
+#   1. S is non-empty and matches wt_slugify's own charset [a-z0-9-] — no
+#      character that could act as a glob/regex wildcard reaches a case
+#      pattern or SQL identifier downstream, even if a future caller forgot
+#      to quote it;
+#   2. the resource's value is not literally one of the known-shared
+#      constants below, REGARDLESS of whether it happens to contain S as a
+#      substring (this is what catches "the slug the shared names were
+#      copied from", and any future `${VAR:-<shared-default>}` collapse
+#      when VAR is unset — whatever produced the value, if it lands on a
+#      known-shared constant it is refused);
+#   3. the resource's value contains S as a literal (non-glob) substring.
+# All three together — containment ALONE would let a slug that is itself a
+# prefix/substring of a shared name slip through (e.g. slug "1233" is
+# contained in "axiome-global-axi-1233").
+WT_SHARED_RESOURCE_DENYLIST=" axiome axiome-global-axi-1233 axiome-global-axi-1233-uploads axiome-global-axi-1233-artifacts axiome-global-axi-1233-system / axiome:shared: "
+
+wt_purge_guard() {  # $1=slug ; reads PG_DB MONGO_DB MQ_VHOST B_UPLOADS B_ARTIFACTS B_SYSTEM REDIS_PREFIX REDIS_DB
+  local slug="$1" bad=0 var val
+  case "${slug}" in
+    '') die "--purge refused: empty slug" ;;
+    *[!a-z0-9-]*)
+      die "--purge refused: slug '${slug}' contains a character outside [a-z0-9-] (wt_slugify's own charset) — refusing rather than risk a glob/regex metacharacter reaching a destructive command" ;;
+  esac
+  for var in PG_DB MONGO_DB MQ_VHOST B_UPLOADS B_ARTIFACTS B_SYSTEM REDIS_PREFIX; do
+    val="${!var:-}"
+    case " ${WT_SHARED_RESOURCE_DENYLIST} " in
+      *" ${val} "*)
+        warn "--purge would destroy ${var}='${val}', a SHARED resource — never purgeable regardless of slug"
+        bad=1; continue ;;
+    esac
+    case "${val}" in
+      *"${slug}"*) ;;
+      *) warn "--purge would destroy ${var}='${val}', which is NOT namespaced for slug '${slug}'"; bad=1 ;;
+    esac
+  done
+  case "${REDIS_DB:-}" in
+    0|1) warn "--purge would flush shared Redis DB index ${REDIS_DB} (0 and 1 are reserved/shared, never slug-owned)"; bad=1 ;;
+  esac
+  [ "${bad}" -eq 0 ] || die "--purge refused: one or more resources above are SHARED, not uniquely scoped to slug '${slug}' (see wt_purge_guard in wt-common.sh). Nothing was destroyed."
+}
+
+# --- Backup before any local migration (FR37) / before a machine-wide purge
+# (FR40) of the ONE shared Postgres DB. Writes a timestamped dump via
+# `docker exec` against the externally-provisioned axiome-localhost
+# container (never a bare host `pg_dump` — see wt-up.sh's own note on why
+# Postgres is not part of docker-compose.shared.yml). Removes any partial
+# file and returns non-zero on a failed OR an empty dump; never masks either
+# with `|| true`.
+WT_BACKUP_DIR="${WT_BACKUP_DIR:-${HOME}/axiome-backups}"
+WT_PG_HOST_CONTAINER="${WT_PG_HOST_CONTAINER:-axiome-localhost}"
+
+wt_backup_shared_postgres() {
+  local dump err
+  mkdir -p "${WT_BACKUP_DIR}"
+  dump="${WT_BACKUP_DIR}/axiome-localhost-$(date -u +%Y%m%dT%H%M%SZ).sql"
+  err="${dump}.err"
+  log "Backing up Postgres DB \"${PG_ADMIN_DB}\" to ${dump}"
+  if ! docker exec -T "${WT_PG_HOST_CONTAINER}" pg_dump -U "${PG_USER}" -d "${PG_ADMIN_DB}" >"${dump}" 2>"${err}"; then
+    warn "backup command failed (see ${err})"; rm -f "${dump}"; return 1
+  fi
+  if [ ! -s "${dump}" ]; then
+    warn "backup produced an empty dump"; rm -f "${dump}" "${err}"; return 1
+  fi
+  rm -f "${err}"
+  ok "Backup verified non-empty: ${dump}"
+}
+
+# --- Local concurrency lock (EC11) ------------------------------------------
+# A machine-local flock — NOT scripts/lock.sh's S3 lock (that one guards AWS
+# prod deploy/power operations, AXI-1947). This guards two local `migrate`
+# runs on the same machine from overlapping. The lock lives on an open file
+# descriptor: it is released the instant that fd closes, on ANY exit path
+# (normal return, `die`'s `exit 1`, a signal, or the process being killed
+# -9), so a killed migrate can never leave a stale lock that wedges the
+# machine — unlike a `mkdir`-style lock directory, which would.
+WT_MIGRATE_LOCK_FILE="${WT_MIGRATE_LOCK_FILE:-${REGISTRY_DIR}/wt-migrate.lock}"
+
+wt_acquire_migrate_lock() {  # $1=timeout seconds (default 60); opens fd 8 for the REST of this process
+  mkdir -p "$(dirname "${WT_MIGRATE_LOCK_FILE}")"
+  exec 8>"${WT_MIGRATE_LOCK_FILE}"
+  flock -w "${1:-60}" 8
 }
 
 # Keys wt_write_env is allowed to generate/overwrite in the per-worktree .env.

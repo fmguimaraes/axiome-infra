@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# tests/stubs/docker-compose — AXI-1952 (B1 layer 2): a PATH shim for the
+# legacy `docker-compose` v1 binary name. No test configures its STUB_RULES
+# var on purpose — every call here is UNCONFIGURED by design, so stub_main
+# records it to STUB_FAIL_LOG and exits 99 (the same
+# independent-fact mechanism as every other stub; see _common.sh). This is
+# the safety net for the 2026-10 incident: if the Makefile's v1 fallback
+# (or anything else) ever reaches for the literal name "docker-compose"
+# again, this stub — being ahead of the real binary on PATH — catches it
+# and fails the test loudly instead of silently running the real v1 binary
+# against the real local stack.
+set -euo pipefail
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_common.sh"
+# NOTE: the stub NAME passed to stub_main is "docker_compose" (underscore),
+# not the literal binary name "docker-compose" (hyphen) — _common.sh's
+# _stub_rules_file() builds an indirect-expansion variable name from this
+# string (`${NAME}_STUB_RULES`), and a hyphen is not a valid bash
+# identifier character: under this stub's own `set -e`, that indirect
+# expansion aborts the script (as a bash syntax/runtime error) BEFORE
+# _stub_record_unconfigured ever runs, silently skipping the
+# independent-fact log write. Using "docker_compose" keeps the same
+# unconfigured-by-design behaviour (see UT-INFRA-261) while staying a valid
+# identifier; the call log still clearly reads "### CALL: docker_compose".
+stub_main "docker_compose" "$@"

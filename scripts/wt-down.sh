@@ -12,26 +12,44 @@
 #           the Postgres DB, drop the Mongo DB, FLUSHDB the Redis index, delete
 #           the RabbitMQ vhost, remove the buckets, and free the registry entry.
 #           Opt-in only — never the default. Only ever touches THIS worktree's
-#           namespaced resources, never a shared instance or another worktree.
+#           namespaced resources, never a shared instance or another worktree:
+#           every target name must pass wt_purge_guard (uniquely named for the
+#           slug — see wt-common.sh) or the purge is REFUSED before anything
+#           is deleted (FR39; under the current shared data layer, always).
 #
 # --shared  Stop the SHARED stack itself (docker compose -p axiome-shared down).
 #           This is a machine-wide action — do NOT do it as part of a feature
-#           task; it stops everyone's data services. Add --purge-shared to also
-#           delete the shared volumes (destroys ALL local data). Guarded.
+#           task; it stops everyone's data services.
 #
-#   --slug <name>   target a specific worktree slug instead of the current dir
-#   -h | --help     this help
+# --purge-shared   ALSO delete the shared volumes (destroys ALL local data —
+#           every worktree's DB/Mongo/Redis/RabbitMQ/MinIO state at once).
+#           Requires --confirm <token> typed out exactly (FR40) — there is NO
+#           interactive prompt, so a piped "yes" or empty/closed stdin can
+#           never satisfy this; a missing or wrong token refuses. Takes a
+#           verified Postgres backup first; a failed/empty backup refuses too.
+#
+#   --slug <name>      target a specific worktree slug instead of the current dir
+#   --confirm <token>  the typed confirmation required by --purge-shared
+#   -h | --help        this help
 set -euo pipefail
+# shellcheck source=./wt-common.sh
 . "$(cd "$(dirname "$0")" && pwd)/wt-common.sh"
 
-PURGE=0; SHARED=0; PURGE_SHARED=0; SLUG_OVERRIDE=""
+# FR40 — the one literal string that authorizes a machine-wide purge. No
+# prompt reads it from stdin; it must be passed as `--confirm <this>` on the
+# command line (or `make shared-down PURGE=1 CONFIRM=<this>`), identically in
+# interactive and non-interactive use.
+WT_PURGE_SHARED_CONFIRM_TOKEN="DELETE-ALL-LOCAL-DATA"
+
+PURGE=0; SHARED=0; PURGE_SHARED=0; SLUG_OVERRIDE=""; CONFIRM_TOKEN=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --purge)         PURGE=1 ;;
     --shared)        SHARED=1 ;;
     --purge-shared)  SHARED=1; PURGE_SHARED=1 ;;
     --slug)          SLUG_OVERRIDE="${2:?--slug needs a value}"; shift ;;
-    -h|--help)       sed -n '2,27p' "$0"; exit 0 ;;
+    --confirm)       CONFIRM_TOKEN="${2:?--confirm needs a value}"; shift ;;
+    -h|--help)       sed -n '2,34p' "$0"; exit 0 ;;
     *) die "unknown flag: $1 (try --help)" ;;
   esac
   shift
@@ -42,6 +60,10 @@ need_docker
 # --- Shared-stack teardown (machine-wide) ----------------------------------
 if [ "${SHARED}" -eq 1 ]; then
   if [ "${PURGE_SHARED}" -eq 1 ]; then
+    [ "${CONFIRM_TOKEN}" = "${WT_PURGE_SHARED_CONFIRM_TOKEN}" ] || \
+      die "--purge-shared refused: pass --confirm ${WT_PURGE_SHARED_CONFIRM_TOKEN} (typed exactly) to proceed. There is no prompt — a piped 'yes' or empty stdin can never satisfy this. Nothing was destroyed."
+    log "Backing up the shared Postgres DB before a machine-wide purge…"
+    wt_backup_shared_postgres || die "backup failed or was empty — refusing --purge-shared (FR40). Nothing was destroyed."
     warn "About to STOP the shared stack AND DELETE all shared volumes (every worktree's data)."
     shared_compose down -v
     ok "Shared stack down; shared volumes removed."
@@ -71,6 +93,11 @@ fi
 
 wt_derive_vars "${SLUG}" "${OFFSET}" "${REDIS_DB}"
 
+# Compute and validate the FULL purge target list BEFORE the app stack even
+# goes down (FR39) — a refused purge changes nothing at all, not even the
+# non-destructive `compose down`'s informational value of "what would purge".
+[ "${PURGE}" -eq 0 ] || wt_purge_guard "${SLUG}"
+
 # A throwaway env file so compose can interpolate the app file for `down`.
 TMP_ENV="$(mktemp)"; trap 'rm -f "${TMP_ENV}"' EXIT
 wt_write_env "${TMP_ENV}" "${SLUG}" "${OFFSET}" "${REDIS_DB}"
@@ -86,6 +113,7 @@ if [ "${PURGE}" -eq 0 ]; then
 fi
 
 # --- Purge: destroy THIS worktree's data on the shared services ------------
+wt_purge_guard "${SLUG}"   # belt and braces: re-validate the WHOLE list right before the first DROP
 warn "--purge: destroying worktree '${SLUG}' data on the shared services"
 if ! shared_running; then
   warn "Shared stack not running — cannot purge DB/redis/vhost/buckets. Start it (wt-up.sh --shared-only) and re-run --purge."

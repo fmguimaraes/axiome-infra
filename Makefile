@@ -35,7 +35,21 @@ destroy:
 # via the wt-* scripts. For PARALLEL sessions call scripts/wt-up.sh directly — it
 # allocates a collision-free slug/port-offset per worktree; `make local-*` always
 # uses the one `local` slug and must not be run from two worktrees at once.
-DOCKER_COMPOSE  := $(shell docker compose version >/dev/null 2>&1 && echo "docker compose" || echo "docker-compose")
+# AXI-1952 (AC6/B1): fail CLOSED. The legacy `docker-compose` v1 binary is
+# never a silent fallback here — it has a known data-corrupting bug against
+# modern image config (`KeyError: 'ContainerConfig'`) and must never be
+# invoked against the real local/demo/shared stacks. If DOCKER_COMPOSE is
+# already set (command line or environment — `origin` sees both), that
+# value is used verbatim and the v2 probe below is skipped entirely. Only
+# when it is NOT set do we probe for `docker compose` v2 ourselves; if that
+# probe fails too, make stops with $(error) rather than falling back to the
+# legacy binary.
+ifeq ($(origin DOCKER_COMPOSE),undefined)
+DOCKER_COMPOSE := $(shell docker compose version >/dev/null 2>&1 && echo "docker compose")
+ifeq ($(strip $(DOCKER_COMPOSE)),)
+$(error Docker Compose v2 not found (`docker compose version` failed). Install Docker Compose v2, or pass DOCKER_COMPOSE="<command>" explicitly on the command line. The legacy `docker-compose` v1 binary is not supported here — see AXI-1952)
+endif
+endif
 LEGACY_SLUG     ?= local
 SHARED_PROJECT  := axiome-shared
 APP_PROJECT     := axiome-$(LEGACY_SLUG)
@@ -61,17 +75,26 @@ METABASE_SERVICES := metabase-db-init metabase
 #   SERVICE=<name>   limit a target to one service (backend, biocompute, frontend, postgres, ...)
 #   TAIL=<n>         number of log lines to show (default 200)
 #   CMD="..."        command to run inside the container (for local-exec)
+#   MIGRATE=0        demo-up: skip migrating the shared DB, print pending migrations instead (FR38)
+#   CONFIRM=<token>  shared-down PURGE=1: the typed confirmation token (FR40)
 SERVICE ?=
 TAIL    ?= 200
+MIGRATE ?= 1
+CONFIRM ?=
 
 # Start (or refresh) the shared services stack only (machine-wide).
 shared-up:
 	./scripts/wt-up.sh --shared-only
 
 # Stop the shared services stack (machine-wide — stops EVERY worktree's data
-# services). Not a feature-task action. Add PURGE=1 to also delete shared volumes.
+# services). Not a feature-task action. Add PURGE=1 to also delete shared
+# volumes — requires CONFIRM=DELETE-ALL-LOCAL-DATA (typed exactly, AXI-1952
+# FR40); without it, or with the wrong value, wt-down.sh refuses and nothing
+# is destroyed. A verified Postgres backup is taken first; a failed/empty
+# backup also refuses.
+#   make shared-down PURGE=1 CONFIRM=DELETE-ALL-LOCAL-DATA
 shared-down:
-	./scripts/wt-down.sh $(if $(PURGE),--purge-shared,--shared)
+	./scripts/wt-down.sh $(if $(PURGE),--purge-shared --confirm "$(CONFIRM)",--shared)
 
 # local-* now ALIAS the fast fixed-port demo stack (2026-09-04). The old per-
 # worktree wt-up.sh path reinstalled node_modules every start, used a PORT_OFFSET
@@ -103,7 +126,19 @@ local-restart: demo-restart
 # First `demo-up` repairs node_modules once (needs network); after that it is
 # instant. Requires the shared stack + axiome-legacydb already running.
 DEMO := $(DOCKER_COMPOSE) -p axiome-demo -f docker-compose.demo.yml
+
+# Migrates the shared DB (backed up first, forward-only, no push fallback —
+# AXI-1952 FR36-38) BEFORE the stack starts, unless MIGRATE=0, in which case
+# it prints the pending migrations instead and starts un-migrated.
+#   make demo-up                  migrate, then start
+#   make demo-up MIGRATE=0        skip migration, print what is pending, start anyway
 demo-up:                 ## start the demo stack (fixed ports, legacy demo data)
+	@if [ "$(MIGRATE)" = "0" ]; then \
+		echo "MIGRATE=0: skipping migration. Pending migrations:"; \
+		./scripts/wt-migrate.sh status --compose-project axiome-demo --compose-file docker-compose.demo.yml --service backend; \
+	else \
+		./scripts/wt-migrate.sh apply --compose-project axiome-demo --compose-file docker-compose.demo.yml --service backend --mode run; \
+	fi
 	$(DEMO) up -d
 demo-down:               ## stop the demo containers (keep them — next start is instant)
 	$(DEMO) stop

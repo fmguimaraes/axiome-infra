@@ -15,6 +15,40 @@ ranges are allocated by the lead per sibling story.
 | UT-INFRA-007 | AXI-1945 | `tests/stub_detection.bats` | An unconfigured stub call is still caught when the caller does `cmd 2>/dev/null \|\| true` (exit code swallowed). |
 | UT-INFRA-008 | AXI-1945 | `tests/stub_detection.bats` | An unconfigured stub call is still caught through a command substitution (`x="$(cmd)"`). |
 | UT-INFRA-009 | AXI-1945 | `tests/stub_detection.bats` | An unconfigured stub call is still caught through a backgrounded subshell (`( cmd & wait )`). |
+| UT-INFRA-230 | AXI-1952 | `tests/wt-purge-guard.bats` | `wt_purge_guard` allows a purge when every resource name is genuinely slug-scoped. |
+| UT-INFRA-231 | AXI-1952 | `tests/wt-purge-guard.bats` | Refuses the exact shared Postgres DB name (`axiome`), regardless of the slug. |
+| UT-INFRA-232 | AXI-1952 | `tests/wt-purge-guard.bats` | Refuses the live shared data layer (2026-10-02 incident shape) for an unrelated slug. |
+| UT-INFRA-233 | AXI-1952 | `tests/wt-purge-guard.bats` | Refuses the shared layer even for the slug its shared names were themselves copied from. |
+| UT-INFRA-234 | AXI-1952 | `tests/wt-purge-guard.bats` | Refuses when the slug is a mere substring of a shared resource name (containment alone is not ownership). |
+| UT-INFRA-235 | AXI-1952 | `tests/wt-purge-guard.bats` | Refuses when even ONE resource among an otherwise fully-scoped set is shared — validates the whole list, not "mostly fine" (FR39). |
+| UT-INFRA-236 | AXI-1952 | `tests/wt-purge-guard.bats` | Refuses the shared/reserved Redis DB indexes (0, 1) even when every other name looks scoped. |
+| UT-INFRA-237 | AXI-1952 | `tests/wt-purge-guard.bats` | Refuses an empty slug outright. |
+| UT-INFRA-238 | AXI-1952 | `tests/wt-purge-guard.bats` | Refuses a slug containing glob/regex metacharacters before any containment check runs. |
+| UT-INFRA-239 | AXI-1952 | `tests/wt-purge-guard.bats` | Refuses when a resource variable is unset (an unset-env collapse to a shared default must never read as "owned"). |
+| UT-INFRA-240 | AXI-1952 | `tests/wt-down-purge.bats` | `wt-down.sh --purge` refuses end-to-end under the live shared layer and makes no DROP/dropDatabase/FLUSHDB/delete_vhost/mc rb call. |
+| UT-INFRA-241 | AXI-1952 | `tests/wt-down-purge.bats` | A refused `--purge` changes nothing at all — not even the app stack's own `down`. |
+| UT-INFRA-242 | AXI-1952 | `tests/wt-down-purge.bats` | `--purge-shared` without `--confirm` refuses and takes no backup (FR40). |
+| UT-INFRA-243 | AXI-1952 | `tests/wt-down-purge.bats` | `--purge-shared --confirm <wrong>` refuses non-interactively (closed stdin; no prompt to satisfy). |
+| UT-INFRA-244 | AXI-1952 | `tests/wt-down-purge.bats` | `--purge-shared` with the correct token backs up BEFORE the shared `down -v` (call-log ordering). |
+| UT-INFRA-245 | AXI-1952 | `tests/wt-down-purge.bats` | `--purge-shared` refuses when the backup itself fails; `down -v` is never reached. |
+| UT-INFRA-246 | AXI-1952 | `tests/wt-migrate.bats` | `wt-migrate.sh status` is read-only: no lock file, no backup, prints migrate-gate's own PENDING lines. |
+| UT-INFRA-247 | AXI-1952 | `tests/wt-migrate.bats` | `wt-migrate.sh apply` backs up BEFORE calling migrate-gate apply (call-log ordering, FR37). |
+| UT-INFRA-248 | AXI-1952 | `tests/wt-migrate.bats` | A failed backup stops before migrate-gate is ever invoked. |
+| UT-INFRA-249 | AXI-1952 | `tests/wt-migrate.bats` | An empty backup is treated exactly like a failed one — refuses, never migrates. |
+| UT-INFRA-250 | AXI-1952 | `tests/wt-migrate.bats` | A migrate-gate apply failure exits non-zero with no further call attempted (no fallback). |
+| UT-INFRA-251 | AXI-1952 | `tests/wt-migrate.bats` | A second concurrent `apply` while the lock is held waits, then refuses without running the backup or the gate (EC11). |
+| UT-INFRA-252 | AXI-1952 | `tests/ac6-no-push-fallback.bats` | No AXI-1952-owned file contains the literal `db push` (AC6). |
+| UT-INFRA-253 | AXI-1952 | `tests/ac6-no-push-fallback.bats` | No AXI-1952-owned file contains the literal `accept-data-loss` (AC6). |
+| UT-INFRA-254 | AXI-1952 | `tests/wt-up-migrate.bats` | `wt-up.sh` without `--migrate` never invokes migrate-gate or the control-plane migration. |
+| UT-INFRA-255 | AXI-1952 | `tests/wt-up-migrate.bats` | `wt-up.sh --migrate` runs migrate-gate AFTER the app stack is started. |
+| UT-INFRA-256 | AXI-1952 | `tests/wt-up-migrate.bats` | The deprecated `--seed` alias still triggers migration (back-compat; not a silent no-op). |
+| UT-INFRA-257 | AXI-1952 | `tests/wt-up-migrate.bats` | A migration failure makes `wt-up.sh --migrate` exit non-zero. |
+| UT-INFRA-258 | AXI-1952 | `tests/demo-up-migrate.bats` | `make demo-up` migrates before the final `up -d` (FR38, call-log ordering). |
+| UT-INFRA-259 | AXI-1952 | `tests/demo-up-migrate.bats` | `make demo-up MIGRATE=0` skips migration and prints pending migrations instead; no backup, no apply. |
+| UT-INFRA-260 | AXI-1952 | `tests/demo-up-migrate.bats` | A migration failure aborts `make demo-up` before `up -d` is ever reached. |
+| UT-INFRA-261 | AXI-1952 | `tests/legacy-compose-safety.bats` | The `tests/stubs/docker-compose` PATH shim is unconfigured-by-design and fails loudly if anything ever calls the literal `docker-compose` binary name again (B1 layer 2). |
+| UT-INFRA-262 | AXI-1952 | `tests/legacy-compose-safety.bats` | `make` fails closed with a clear `$(error ...)` when Docker Compose v2 is unavailable and no `DOCKER_COMPOSE` override is given — no fallback to legacy `docker-compose`, no recipe line ever runs (B1 layer 3). |
+| UT-INFRA-263 | AXI-1952 | `tests/legacy-compose-safety.bats` | An explicit `DOCKER_COMPOSE` override passed on the `make` command line skips the v2 probe entirely and still works (B1 layer 1/3 interaction). |
 | UT-INFRA-100 | AXI-1947 | `tests/lock_acquire.bats` | `lock.sh acquire` on a free lock succeeds, prints the token/actor, and makes no `delete-object` call. |
 | UT-INFRA-101 | AXI-1947 | `tests/lock_acquire.bats` | `lock.sh acquire` on an already-held lock returns a distinct exit code and names the holder (AC19). |
 | UT-INFRA-102 | AXI-1947 | `tests/lock_acquire.bats` | A non-precondition `put-object` failure (e.g. AccessDenied) is a failure to acquire — never acquired, never free. |
