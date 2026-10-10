@@ -1,0 +1,49 @@
+# infra-tests — shellcheck (baseline-gated) + the bats harness (AXI-1945).
+#
+# Runs exactly `tests/run.sh` so a green run here is a green run locally.
+# Nothing in this job touches real AWS/docker/db: every script under test is
+# driven through the PATH-shim stubs in tests/stubs/ with AWS credentials
+# blanked (NFR5). bats-core/bats-support/bats-assert are vendored under
+# tests/vendor/ — no package-manager install needed for the suite itself.
+
+name: infra-tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/**'
+      - 'providers/aws/scripts/**'
+      - 'providers/aws/onbox/**'
+      - 'tests/**'
+      - 'Makefile'
+      - 'docker/**'
+      - '.github/workflows/infra-tests.yml'
+  pull_request:
+    paths:
+      - 'scripts/**'
+      - 'providers/aws/scripts/**'
+      - 'providers/aws/onbox/**'
+      - 'tests/**'
+      - 'Makefile'
+      - 'docker/**'
+      - '.github/workflows/infra-tests.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: shellcheck + bats
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install shellcheck
+        run: sudo apt-get update -y && sudo apt-get install -y shellcheck jq
+
+      - name: Make stubs + vendored bats executable
+        run: chmod +x tests/stubs/* tests/run.sh tests/run-shellcheck.sh tests/vendor/bats-core/bin/bats tests/vendor/bats-core/libexec/bats-core/*
+
+      - name: Run the test harness (shellcheck baseline + bats suite)
+        run: tests/run.sh
