@@ -63,6 +63,14 @@ ENV="$1"; ACTION="$2"
 case "$ENV" in dev|staging|production) ;; *) usage ;; esac
 case "$ACTION" in down|up|status) ;; *) usage ;; esac
 
+# FR53/AC46: this script computes epoch arithmetic with `date -u -d` further
+# down (stopped_epoch) — refuse before any change on a non-GNU `date`.
+_pd_here="$(cd "$(dirname "$0")" && pwd)"
+_pd_repo_root="${REPO_ROOT:-$(git -C "$_pd_here" rev-parse --show-toplevel 2>/dev/null || echo "${_pd_here}/../../..")}"
+# shellcheck source=../../../scripts/lib/gnu-date-check.sh
+. "${_pd_repo_root}/scripts/lib/gnu-date-check.sh"
+gnu_date_check || exit 1
+
 PROJECT="${AXIOME_PROJECT:-axiome}"
 REGION="${AWS_REGION:-eu-west-3}"
 SYSTEM_BUCKET="${AXIOME_SYSTEM_BUCKET:-${PROJECT}-${ENV}-system}"

@@ -770,6 +770,12 @@ _lock_cli_override() {
 }
 
 main() {
+  # FR53/AC46: refuse before any change on a non-GNU `date` (TTL/token
+  # arithmetic below depends on `date -d`/`%N`). Helper owned/tested by
+  # AXI-1970; this is the one line that story may add here.
+  # shellcheck source=lib/gnu-date-check.sh
+  . "${SCRIPT_DIR}/lib/gnu-date-check.sh"
+  gnu_date_check || exit 1
   [ $# -ge 2 ] || _lock_usage
   local env="$1" cmd="$2"; shift 2
   case "$cmd" in

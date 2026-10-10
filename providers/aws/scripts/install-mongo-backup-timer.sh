@@ -30,20 +30,18 @@ REPO_ROOT="$(cd "${HERE}/../../.." && pwd)"
 SSM="${REPO_ROOT}/scripts/ssm-exec.sh"
 [ -x "$SSM" ] || { echo "ERROR: ssm-exec.sh not found at ${SSM}" >&2; exit 1; }
 
-# Single-quoted heredoc-free literal: no local variable is interpolated into
-# the remote command text (NFR3 — nothing secret-shaped ever travels through
-# ssm-exec.sh's command-text channel; this command carries no secret at all).
-REMOTE_CMD='
-set -e
-test -f /opt/axiome/mongo-backup.service || { echo "mongo-backup.service not pulled yet -- run asset-sync.sh pull first"; exit 1; }
-test -f /opt/axiome/mongo-backup.timer   || { echo "mongo-backup.timer not pulled yet -- run asset-sync.sh pull first"; exit 1; }
-cp /opt/axiome/mongo-backup.service /etc/systemd/system/mongo-backup.service
-cp /opt/axiome/mongo-backup.timer   /etc/systemd/system/mongo-backup.timer
-rm -f /etc/cron.d/mongo-backup
-systemctl daemon-reload
-systemctl enable --now mongo-backup.timer
-systemctl list-timers mongo-backup.timer --no-pager
-'
+# FR52/AC45: the actual install/enable/idempotency/cron-removal-ordering
+# logic lives in its own file (providers/aws/onbox/install-mongo-backup-
+# timer-remote.sh) so it can be run and tested LOCALLY with systemctl/cron
+# stubbed, with no SSM/box involved — "test the real installer script, not
+# a fixture that prints the expected lines". Read here and sent as SSM
+# command TEXT, exactly as the previous inline heredoc string was: this
+# file is NOT shipped to the box (not in publish-manifest.txt, not an
+# aws_s3_object) and does not need to be — the box never reads it from
+# disk, it only ever executes the text SSM hands it.
+REMOTE_SCRIPT="${HERE}/../onbox/install-mongo-backup-timer-remote.sh"
+[ -f "$REMOTE_SCRIPT" ] || { echo "ERROR: ${REMOTE_SCRIPT} not found" >&2; exit 1; }
+REMOTE_CMD="$(cat "$REMOTE_SCRIPT")"
 
 echo "== installing mongo-backup.timer on ${ENV} (one-time conversion) =="
 "$SSM" -e "$ENV" -t 60 "$REMOTE_CMD"

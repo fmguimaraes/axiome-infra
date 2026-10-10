@@ -337,3 +337,26 @@ ranges are allocated by the lead per sibling story.
 | UT-INFRA-607 | AXI-1971 | `tests/sync-event-store-indexes.bats` | FR56/AC49 (review bounce #1, issue 3): accepts when the backend container's OWN `$MONGODB_URL` host (read from inside the container, never the full URL) is also local. |
 | UT-INFRA-608 | AXI-1971 | `tests/sync-event-store-indexes.bats` | FR56/AC49 (review bounce #1, issue 3): refuses when the container's own `MONGODB_URL` host is remote, even though the host-side URL this command was told about is local; `prisma db push` is never invoked. |
 | UT-INFRA-609 | AXI-1971 | `tests/sync-event-store-indexes.bats` | FR56/AC49 (review bounce #1, issue 3): refuses when reading the container's own `MONGODB_URL` host fails or returns nothing; `prisma db push` is never invoked. |
+| UT-INFRA-460 | AXI-1970 | `tests/mongo_backup_credentials.bats` | FR51/AC44: a successful `mongo-backup.sh` run never puts the Mongo password on any stub's (docker's or aws's) recorded argv. |
+| UT-INFRA-461 | AXI-1970 | `tests/mongo_backup_credentials.bats` | FR51/AC44: the mongodump credentials tempfile is removed after a successful run. |
+| UT-INFRA-462 | AXI-1970 | `tests/mongo_backup_credentials.bats` | FR51/AC44: a mongodump failure never leaks the password either, and still removes the credentials tempfile. |
+| UT-INFRA-463 | AXI-1970 | `tests/mongo_backup_credentials.bats` | FR51/AC44: the credentials tempfile is removed after the script is signalled (SIGTERM) mid-run — proves the trap is not relying solely on a bare EXIT trap. |
+| UT-INFRA-464 | AXI-1970 | `tests/mongo_backup_credentials.bats` | FR51/AC44: `docker exec`'s recorded argv carries only `--config=/dev/stdin`, never the password. |
+| UT-INFRA-465 | AXI-1970 | `tests/mongo_backup_timer_install.bats` | FR52/AC45: a fresh install copies both unit files, reloads the daemon exactly once, enables+starts the timer, and removes the cron entry. |
+| UT-INFRA-466 | AXI-1970 | `tests/mongo_backup_timer_install.bats` | FR52/AC45: a second run with no unit-file changes reports "unchanged" and skips `daemon-reload`. |
+| UT-INFRA-467 | AXI-1970 | `tests/mongo_backup_timer_install.bats` | FR52/AC45: a changed unit file is re-copied and the daemon reloaded exactly once. |
+| UT-INFRA-468 | AXI-1970 | `tests/mongo_backup_timer_install.bats` | FR52/AC45: `systemctl enable --now` failing leaves the cron entry in place and exits non-zero. |
+| UT-INFRA-469 | AXI-1970 | `tests/mongo_backup_timer_install.bats` | FR52/AC45: `enable --now` reporting success but the timer being inactive afterwards still leaves the cron entry in place (never trusts enable's exit code alone). |
+| UT-INFRA-470 | AXI-1970 | `tests/mongo_backup_timer_install.bats` | FR52/AC45: an already-absent cron entry does not fail the installer. |
+| UT-INFRA-471 | AXI-1970 | `tests/mongo_backup_timer_install.bats` | FR52/AC45: missing source unit files refuse before any `systemctl` call or cron removal. |
+| UT-INFRA-472 | AXI-1970 | `tests/mongo_backup_timer_install.bats` | FR52/AC45: mutation-checked pairing with UT-INFRA-468/469 — cron removal never happens before `systemctl enable` is called (confirmed failing against the pre-fix "remove cron unconditionally" ordering). |
+| UT-INFRA-473 | AXI-1970 | `tests/mongo_backup_timer_install.bats` | FR52/AC45: the operator-run `install-mongo-backup-timer.sh` sends `providers/aws/onbox/install-mongo-backup-timer-remote.sh`'s own content as the SSM command text. |
+| UT-INFRA-474 | AXI-1970 | `tests/gnu_date_check.bats` | FR53/AC46: `gnu_date_check` succeeds silently on a real GNU `date`. |
+| UT-INFRA-475 | AXI-1970 | `tests/gnu_date_check.bats` | FR53/AC46: `gnu_date_check` refuses with a truthful, remedy-naming line on a BSD-shaped `date`. |
+| UT-INFRA-476 | AXI-1970 | `tests/gnu_date_check.bats` | FR53/AC46: `scripts/lock.sh`'s CLI entry point refuses on a BSD `date` before any `aws` call. |
+| UT-INFRA-477 | AXI-1970 | `tests/gnu_date_check.bats` | FR53/AC46: `power.sh` refuses on a BSD `date` before any `aws` call. |
+| UT-INFRA-478 | AXI-1970 | `tests/gnu_date_check.bats` | FR53/AC46: `power-data.sh` refuses on a BSD `date` before any `aws` call. |
+| UT-INFRA-479 | AXI-1970 | `tests/gnu_date_check.bats` | Regression guard: `power.sh status` is unaffected by the new preflight on this host's real GNU `date`. |
+| UT-INFRA-610 | AXI-1970 | `tests/mongo_backup_credentials.bats` | Review bounce #1 (Blocker 1d): `mongodump_password_config_yaml` round-trips a hostile password (`*`, `"`, `\`, `'`, `:`, `#`, trailing space) byte-for-byte through the real emitter function. |
+| UT-INFRA-611 | AXI-1970 | `tests/mongo_backup_credentials.bats` | Review bounce #1 (Blocker 1d): a password containing a literal newline is refused with a truthful, value-free message naming the variable, never printed. |
+| UT-INFRA-612 | AXI-1970 | `tests/gnu_date_check.bats` | Review bounce #1 (Blocker 2): `deploy-prod.sh` sources `lock.sh` and calls its functions directly, bypassing `lock.sh`'s own CLI preflight — refuses on a BSD `date` before any `aws`/`curl` call (confirmed failing against the pre-fix script). |

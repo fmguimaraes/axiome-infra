@@ -58,13 +58,83 @@
 # also stored as S3 object metadata at upload (power.sh's INDEPENDENT
 # verification compares against it — see power.sh's run_and_verify_backup).
 #
-# Known debt (left as-is per explicit review decision, AXI-1951 bounce #1):
-# the Mongo root password appears on `docker exec`'s argv, visible to
-# anything with `ps`/`docker inspect` access on the box. Pre-existing before
-# this story; not fixed here.
+# Password handling (FR51/AC44, AXI-1970 — closes the AXI-1951 bounce #1
+# debt item): the Mongo root password must never appear on any process's
+# argument list — not `docker exec`'s, not `mongodump`'s. `--password
+# "$MONGO_ROOT_PASSWORD"` would put it on mongodump's own argv, visible to
+# anything with `ps`/`docker top`/`docker inspect` access on the box, even
+# though `docker exec` itself never sees it either way. `--username` and
+# `--authenticationDatabase` are NOT secrets and stay on mongodump's
+# ordinary argv.
+#
+# Channel chosen: a 0600 HOST-side tempfile (mktemp under a umask-077
+# subshell — never a wider-permission file, even for an instant) holding a
+# mongodump `--config` YAML document containing ONLY `password:` — VERIFIED
+# against a real mongodump binary (mongo:7's bundled tools, review bounce
+# #1): the MongoDB Database Tools config file accepts exactly `password`,
+# `uri` and `sslPEMKeyPassword`; `username`/`authenticationDatabase` are
+# NOT accepted keys there (a prior version of this file put all three in
+# the YAML — mongodump silently ignored the two it doesn't recognise and
+# every real backup failed on a missing --username/--password, while the
+# stubbed test suite stayed green since `docker` was stubbed). See
+# `mongodump_password_config_yaml` below (quoting rules documented on it)
+# and this story's handback for the throwaway-container verification
+# transcript. Deliberately defined IN this file, not a sibling sourced
+# file: mongo-backup.sh is delivered to the box as a single standalone
+# file over two channels (see above) — a second file would need its own
+# delivery entry in both, which this fix does not need.
+#
+# The YAML file is handed to mongodump as `--config=/dev/stdin`, with the
+# container's fd 0 (via `docker exec -i`) redirected FROM that host file —
+# so the only things that ever appear on an argv, anywhere, are the
+# literal strings `--username`, the (non-secret) user, `--authentication
+# Database`, `admin`, `--config=/dev/stdin`, `exec`, `-i`, `axiome-mongo`,
+# `mongodump`, `--archive`, `--gzip`. The password is file content, read
+# once by mongodump over its own stdin; nothing is ever written INTO the
+# container's filesystem (no `docker cp`/second command that would be one
+# more place the secret could leak or be left behind). `trap` removes the
+# tempfile on every exit path — the normal EXIT trap below, and explicit
+# INT/TERM handlers, since a bare `trap ... EXIT` is not guaranteed to run
+# for every signal.
 #
 # Restore procedure: docs/restore-procedures.md.
 set -euo pipefail
+
+# mongodump_password_config_yaml <password> — prints a mongodump --config
+# YAML document on stdout containing ONLY `password:` (never `username`/
+# `authenticationDatabase` — see the header comment above for why those
+# stay on mongodump's ordinary argv instead). Quoting: a YAML single-quoted
+# scalar's only escape is doubling an embedded `'` (`'` -> `''`) — no
+# backslash escaping, so `"`, `\`, `:`, `#`, a leading `*` and a trailing
+# space all round-trip untouched (confirmed against PyYAML and a real
+# mongodump binary — see this story's handback). A literal newline does
+# NOT round-trip (YAML folds it to a space inside a single-quoted scalar)
+# — refused rather than silently using the wrong password. Never prints
+# the password itself, even on that refusal.
+#
+# Defined here, not sourced from a sibling file: see the header comment
+# above for why. A test sources THIS file with MONGO_BACKUP_LIB_ONLY=1 set
+# (the script returns right after this function is defined, before
+# touching the log/env file/docker — see below) so it exercises this exact
+# function, not a copy.
+mongodump_password_config_yaml() {
+  local pw="$1" escaped
+  case "$pw" in
+    *$'\n'*)
+      echo "ERROR: MONGO_ROOT_PASSWORD contains a newline, which a mongodump YAML config file cannot represent without corrupting it (YAML folds a newline inside a single-quoted scalar into a space) — refusing rather than silently using the wrong password." >&2
+      return 1
+      ;;
+  esac
+  escaped="${pw//\'/\'\'}"
+  printf "password: '%s'\n" "$escaped"
+}
+
+# Test-only seam (never set in production): let a test `source` this file
+# just to get the function above, without running the rest of the script
+# (log redirect, env sourcing, docker exec, ...).
+if [ -n "${MONGO_BACKUP_LIB_ONLY:-}" ]; then
+  return 0
+fi
 
 LOG_FILE="${MONGO_BACKUP_LOG:-/var/log/mongo-backup.log}"
 ENV_FILE="${MONGO_BACKUP_ENV_FILE:-/opt/axiome/.env}"
@@ -98,7 +168,22 @@ BUCKET="${S3_BUCKET_SYSTEM}"
 TS=$(date -u +%Y%m%dT%H%M%SZ)
 ARCHIVE="/tmp/mongo-backup-${TS}.archive.gz"
 KEY="backups/mongo/${TS}.archive.gz"
-trap 'rm -f "$ARCHIVE"' EXIT
+
+# FR51/AC44: the mongodump credentials file. Created with a umask-077
+# subshell so the restrictive mode is in force from the FIRST byte written
+# (no window where the file briefly carries wider permissions), named so a
+# test can find/assert-absent it by glob without knowing the exact mktemp
+# suffix. Removed on every exit path: the EXIT trap below (normal return,
+# `fail`'s explicit `exit 1`) AND the INT/TERM traps (a bare EXIT trap is
+# not guaranteed to fire on every signal in every bash build).
+MONGODUMP_CONFIG="$(umask 077 && mktemp "${TMPDIR:-/tmp}/mongo-backup-config.XXXXXX")"
+_cleanup() { rm -f "$ARCHIVE" "$MONGODUMP_CONFIG"; }
+trap _cleanup EXIT
+trap '_cleanup; exit 143' TERM
+trap '_cleanup; exit 130' INT
+
+mongodump_password_config_yaml "$MONGO_ROOT_PASSWORD" > "$MONGODUMP_CONFIG" \
+  || fail "could not build the mongodump credentials file"
 
 # No pipe is involved here (`>` is a redirect, not a `|`), so `set -o
 # pipefail` (part of `set -euo pipefail` above) does not change this check's
@@ -107,11 +192,18 @@ trap 'rm -f "$ARCHIVE"' EXIT
 # some bytes were already written to $ARCHIVE is still caught HERE, by the
 # exit code, never by $ARCHIVE's size — the size check below is a SEPARATE,
 # additional guard against a technically-zero-exit-but-empty-output case.
-docker exec axiome-mongo mongodump \
+#
+# `-i` + `< "$MONGODUMP_CONFIG"` wires the container's fd 0 to the host
+# tempfile's content; `--config=/dev/stdin` is the only credential-related
+# argv element on either `docker exec` or `mongodump` — see the FR51/AC44
+# header comment above for why. `--username`/`--authenticationDatabase`
+# are ordinary (non-secret) flags, same as before this story.
+docker exec -i axiome-mongo mongodump \
     --username "${MONGO_ROOT_USER:-axiome}" \
-    --password "$MONGO_ROOT_PASSWORD" \
     --authenticationDatabase admin \
-    --archive --gzip > "$ARCHIVE" || fail "mongodump failed"
+    --config=/dev/stdin \
+    --archive --gzip \
+    < "$MONGODUMP_CONFIG" > "$ARCHIVE" || fail "mongodump failed"
 
 # Non-empty, restorable-shaped check before this script ever uploads it.
 [ -s "$ARCHIVE" ] || fail "archive is empty after mongodump"

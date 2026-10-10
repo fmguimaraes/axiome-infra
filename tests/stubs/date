@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# tests/stubs/date — passes straight through to the REAL `date` binary by
+# default, so every test in the suite that does not opt in is completely
+# unaffected (most of this suite's own fixtures/scripts call `date -u
+# +FORMAT` to generate timestamps and must keep getting a real one).
+#
+# Set DATE_STUB_MODE=bsd to emulate a BSD/macOS `date`, which has neither
+# GNU's `-d`/`--date` nor `%N` (FR53/AC46: scripts/lib/gnu-date-check.sh's
+# own tests use this to prove a script refuses before any change on a
+# non-GNU date, with zero other stub calls).
+set -euo pipefail
+
+if [ "${DATE_STUB_MODE:-}" = "bsd" ]; then
+  for arg in "$@"; do
+    case "$arg" in
+      -d|--date|-d*|--date=*)
+        echo "date: illegal option -- d" >&2
+        echo "usage: date [-jnRu] [-r filename|seconds] ..." >&2
+        exit 1
+        ;;
+    esac
+  done
+fi
+
+# Passthrough uses an ABSOLUTE path (/usr/bin/date or /bin/date), never a
+# bare `date` lookup via PATH — this stub's own directory is itself first on
+# PATH while a test runs, so a bare `date` here would recurse into this
+# script instead of reaching a real date binary (review bounce #1,
+# non-blocking note).
+for real in /usr/bin/date /bin/date; do
+  [ -x "$real" ] && exec "$real" "$@"
+done
+echo "tests/stubs/date: no real 'date' binary found at /usr/bin/date or /bin/date" >&2
+exit 127

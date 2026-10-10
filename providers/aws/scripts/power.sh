@@ -47,6 +47,15 @@ while [ $# -gt 0 ]; do
 done
 [ "$SKIP_BACKUP" = "1" ] && [ "$ACTION" != "down" ] && usage
 
+# FR53/AC46: run_and_verify_backup() below computes epoch arithmetic with
+# `date -u -d` (LastModified freshness check) — refuse before any change on
+# a non-GNU `date`.
+_pw_here="$(cd "$(dirname "$0")" && pwd)"
+_pw_repo_root="${REPO_ROOT:-$(git -C "$_pw_here" rev-parse --show-toplevel 2>/dev/null || echo "${_pw_here}/../../..")}"
+# shellcheck source=../../../scripts/lib/gnu-date-check.sh
+. "${_pw_repo_root}/scripts/lib/gnu-date-check.sh"
+gnu_date_check || exit 1
+
 PROJECT="${AXIOME_PROJECT:-axiome}"
 REGION="${AWS_REGION:-eu-west-3}"
 BACKUP_SSM_WAIT="${BACKUP_SSM_WAIT:-180}"

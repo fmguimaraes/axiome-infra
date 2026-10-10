@@ -75,6 +75,14 @@ done
 
 case "${ENV}" in dev|staging|production) ;; *) echo "ERROR: --env/ENV must be dev|staging|production" >&2; exit 2 ;; esac
 
+# FR53/AC46 (AXI-1970 review bounce #1): this script sources scripts/lock.sh
+# above and calls lock_acquire_exclusive below, which uses `date -u -d`/
+# `date +%s%N` — refuse before any change (lock acquire, SSM, AWS) on a
+# non-GNU `date` rather than letting lock.sh run on a corrupt token/age.
+# shellcheck source=lib/gnu-date-check.sh
+. "${SCRIPT_DIR}/lib/gnu-date-check.sh"
+gnu_date_check || exit 1
+
 AWS_REGION="${AWS_REGION:-eu-west-3}"
 AXIOME_PROJECT="${AXIOME_PROJECT:-axiome}"
 REGISTRY_NAMESPACE="${REGISTRY_NAMESPACE:-axiome}"
