@@ -65,20 +65,21 @@ BACKUP_SSM_WAIT="${BACKUP_SSM_WAIT:-180}"
 # a new one for this box).
 command -v jq >/dev/null 2>&1 || { echo "ERROR: jq is required (brew/apt install jq)." >&2; exit 1; }
 
-# FR43 (AXI-1967): source scripts/lock.sh FIRST, for lock_require_free/
-# LOCK_RC_* only — then source _power_lib.sh SECOND so its own
-# report_init/report_section/report_line/report_finish definitions win over
-# the ones lock.sh pulls in transitively from scripts/lib/report.sh (same
-# names, different signature/behaviour; power-data.sh made the opposite
-# choice and dropped _power_lib.sh entirely — this script keeps it, so the
-# two must not collide). lock_* function names are unique to lock.sh, so
-# sourcing order does not affect them either way.
+# FR43 (AXI-1967): sources scripts/lock.sh for lock_require_free/LOCK_RC_*
+# (which pulls in scripts/lib/report.sh's report_*/report_is_secret_value
+# transitively), then _power_lib.sh for ITS OWN pl_report_*/pl_log_event
+# report shape. AXI-1973 (FR63) renamed every function in _power_lib.sh's
+# reporting section with a `pl_` prefix specifically so these two sourced
+# files never again define the same function name — sourcing order used to
+# matter here (whichever file was sourced second silently won for BOTH
+# sets of same-named functions); it no longer does.
 _pw_dir="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="${REPO_ROOT:-$(git -C "$_pw_dir" rev-parse --show-toplevel 2>/dev/null || echo "${_pw_dir}/../../..")}"
 # shellcheck source=../../../scripts/lock.sh
 . "${REPO_ROOT}/scripts/lock.sh"
-# Shared reporting/audit helpers. Reports land at the repo root of whatever
-# checkout/worktree this runs from, versioned alongside the code.
+# Shared reporting/audit helpers (this script's own pl_report_*/pl_log_event
+# shape). Reports land at the repo root of whatever checkout/worktree this
+# runs from, versioned alongside the code.
 # shellcheck source=_power_lib.sh
 . "$(cd "$(dirname "$0")" && pwd)/_power_lib.sh"
 
@@ -94,29 +95,14 @@ case "$ENV" in
 esac
 HEALTH_URL="${AXIOME_HEALTH_URL:-https://${FQDN}/api/v1/health/ready}"
 
-# --- NFR3: minimal secret-shape guard for the operator-supplied --skip-backup
-# reason. Deliberately duplicated (not sourced) from scripts/lib/report.sh's
-# _report_is_secret: that file also defines report_init/report_line/etc, and
-# this script already sources providers/aws/scripts/_power_lib.sh for ITS
-# same-named functions — sourcing both would silently let the second source
-# win and redefine the first's functions. Keeping this check local and
-# read-only (it never writes anything) avoids that collision entirely.
-# Reviewed and kept as-is at AXI-1951 bounce #1: the two report libraries
-# (_power_lib.sh here vs power-data.sh's scripts/lib/report.sh) stay split;
-# this duplication is the accepted cost of that split, not an oversight. ---
-_looks_like_secret() {
-  local s="$1" matched=0
-  shopt -s nocasematch
-  if [[ "$s" =~ password[[:space:]]*= ]] || [[ "$s" =~ secret[[:space:]]*= ]] ||
-     [[ "$s" =~ token[[:space:]]*= ]] || [[ "$s" =~ --password[[:space:]]+[^[:space:]] ]] ||
-     [[ "$s" =~ postgres(ql)?://[^[:space:]/@]+:[^[:space:]/@]+@ ]] ||
-     [[ "$s" =~ bearer[[:space:]]+[A-Za-z0-9._~+/-]{10,} ]] ||
-     [[ "$s" =~ (akia|asia)[0-9a-z]{16} ]]; then
-    matched=1
-  fi
-  shopt -u nocasematch
-  [ "$matched" -eq 1 ]
-}
+# --- NFR3/FR63: secret-shape guard for the operator-supplied --skip-backup
+# reason. AXI-1951 bounce #1 had this duplicated here (not sourced) from
+# scripts/lib/report.sh's own check, specifically to dodge the pl_report_*
+# naming collision between that file and _power_lib.sh. AXI-1973 removed
+# the collision at its source (see the sourcing comment above) — this
+# script now calls scripts/lib/report.sh's own PUBLIC
+# `report_is_secret_value` directly instead of re-implementing the check;
+# it is never shadowed by anything _power_lib.sh defines.
 
 # --- resolve the single compute instance by tag (provider default_tags) --------
 find_instance() {
@@ -222,32 +208,32 @@ case "$ACTION" in
       exit 1
     fi
 
-    report_init "$ENV" "compute-down"
-    report_section "Before"; report_line "EC2 ${IID}: $(state)"
+    pl_report_init "$ENV" "compute-down"
+    pl_report_section "Before"; pl_report_line "EC2 ${IID}: $(state)"
 
-    report_section "Backup verification (FR31)"
+    pl_report_section "Backup verification (FR31)"
     if [ "$SKIP_BACKUP" = "1" ]; then
       if [ -z "$SKIP_REASON" ]; then
         echo "ERROR: --skip-backup requires a reason" >&2
-        report_line "ABORTED: --skip-backup given with no reason."
-        report_finish
+        pl_report_line "ABORTED: --skip-backup given with no reason."
+        pl_report_finish
         exit 1
       fi
-      if _looks_like_secret "$SKIP_REASON"; then
-        echo "ERROR: --skip-backup reason looks secret-shaped (contains password=/secret=/token=/a bearer token/an AWS-style key/etc) — rephrase and retry." >&2
-        report_line "ABORTED: --skip-backup reason rejected (secret-shaped text)."
-        report_finish
+      if report_is_secret_value "$SKIP_REASON"; then
+        echo "ERROR: --skip-backup reason looks secret-shaped (a credentialed URL, a bearer token, an AWS-style access key, a JWT, a long non-hash-length hex/base64 run, or a password/secret/token-style key paired with a real-looking value) — rephrase and retry." >&2
+        pl_report_line "ABORTED: --skip-backup reason rejected (secret-shaped text)."
+        pl_report_finish
         exit 1
       fi
-      report_line "OVERRIDE skip-backup: ${SKIP_REASON}"
+      pl_report_line "OVERRIDE skip-backup: ${SKIP_REASON}"
       echo "WARNING: skipping backup verification (--skip-backup): ${SKIP_REASON}" >&2
     else
       BACKUP_KEY="$(run_and_verify_backup)" && BACKUP_RC=0 || BACKUP_RC=$?
       if [ "$BACKUP_RC" -eq 0 ] && [ -n "$BACKUP_KEY" ]; then
-        report_line "Mongo backup verified present: key=${BACKUP_KEY}."
+        pl_report_line "Mongo backup verified present: key=${BACKUP_KEY}."
       else
-        report_line "Mongo backup FAILED or could not be verified — compute NOT stopped (FR31). Re-run with --skip-backup \"<reason>\" to override (audited)."
-        report_finish
+        pl_report_line "Mongo backup FAILED or could not be verified — compute NOT stopped (FR31). Re-run with --skip-backup \"<reason>\" to override (audited)."
+        pl_report_finish
         echo "ABORT: backup not verified; compute NOT stopped. Use --skip-backup \"<reason>\" to override." >&2
         exit 1
       fi
@@ -256,17 +242,17 @@ case "$ACTION" in
     echo "stopping compute ${IID} (${ENV}) — RDS / ElastiCache / S3 / state untouched"
     aws ec2 stop-instances --region "$REGION" --instance-ids "$IID" >/dev/null
     aws ec2 wait instance-stopped --region "$REGION" --instance-ids "$IID"
-    log_event "$ENV" "EC2 ${IID}" "compute stopped"
-    report_section "Actions"
-    report_line "Stopped EC2 ${IID}. RDS / ElastiCache / S3 / state deliberately untouched."
-    report_section "After"; report_line "EC2 ${IID}: $(state)"
-    report_finish
+    pl_log_event "$ENV" "EC2 ${IID}" "compute stopped"
+    pl_report_section "Actions"
+    pl_report_line "Stopped EC2 ${IID}. RDS / ElastiCache / S3 / state deliberately untouched."
+    pl_report_section "After"; pl_report_line "EC2 ${IID}: $(state)"
+    pl_report_finish
     echo "stopped."
     ;;
 
   up)
-    report_init "$ENV" "compute-up"
-    report_section "Before"; report_line "EC2 ${IID}: $(state)"
+    pl_report_init "$ENV" "compute-up"
+    pl_report_section "Before"; pl_report_line "EC2 ${IID}: $(state)"
     start_epoch="$(date +%s)"
     echo "starting compute ${IID} (${ENV})"
     aws ec2 start-instances --region "$REGION" --instance-ids "$IID" >/dev/null
@@ -276,12 +262,12 @@ case "$ACTION" in
     # (e.g. power-up-all.sh via on-box SSM) set this to skip the public poll.
     if [ "${AXIOME_SKIP_PUBLIC_HEALTH:-0}" = "1" ]; then
       ttr=$(( $(date +%s) - start_epoch ))
-      log_event "$ENV" "EC2 ${IID}" "compute started, public health poll skipped, time-to-running ${ttr}s"
-      report_section "Actions"
-      report_line "Started EC2 ${IID}; public health poll SKIPPED (AXIOME_SKIP_PUBLIC_HEALTH=1)."
-      report_line "**time-to-running: ${ttr}s**"
-      report_section "After"; report_line "EC2 ${IID}: $(state)"
-      report_finish
+      pl_log_event "$ENV" "EC2 ${IID}" "compute started, public health poll skipped, time-to-running ${ttr}s"
+      pl_report_section "Actions"
+      pl_report_line "Started EC2 ${IID}; public health poll SKIPPED (AXIOME_SKIP_PUBLIC_HEALTH=1)."
+      pl_report_line "**time-to-running: ${ttr}s**"
+      pl_report_section "After"; pl_report_line "EC2 ${IID}: $(state)"
+      pl_report_finish
       echo "RUNNING (public health poll skipped). time-to-running: ${ttr}s"
       exit 0
     fi
@@ -291,9 +277,9 @@ case "$ACTION" in
     until curl -fsS -o /dev/null --max-time 5 "$HEALTH_URL"; do
       [ "$(date +%s)" -lt "$deadline" ] || {
         body="$(curl -sS --max-time 5 "$HEALTH_URL" 2>/dev/null || echo '(unreachable)')"
-        report_section "Actions"
-        report_line "Started EC2 ${IID} but app NOT READY after ${health_timeout}s. Last /health/ready response: ${body}"
-        report_finish
+        pl_report_section "Actions"
+        pl_report_line "Started EC2 ${IID} but app NOT READY after ${health_timeout}s. Last /health/ready response: ${body}"
+        pl_report_finish
         echo "NOT READY after ${health_timeout}s. Last /health/ready response: ${body}" >&2
         echo "check the box: ssm-exec.sh -e ${ENV} 'docker compose -f /opt/axiome/docker-compose.yml ps'" >&2
         exit 1
@@ -301,12 +287,12 @@ case "$ACTION" in
       sleep "${POWER_UP_HEALTH_POLL_INTERVAL:-5}"
     done
     ttu=$(( $(date +%s) - start_epoch ))
-    log_event "$ENV" "EC2 ${IID}" "compute started, time-to-up ${ttu}s"
-    report_section "Actions"
-    report_line "Started EC2 ${IID}; app served ${HEALTH_URL} (HTTP 200)."
-    report_line "**time-to-up: ${ttu}s**"
-    report_section "After"; report_line "EC2 ${IID}: $(state)"
-    report_finish
+    pl_log_event "$ENV" "EC2 ${IID}" "compute started, time-to-up ${ttu}s"
+    pl_report_section "Actions"
+    pl_report_line "Started EC2 ${IID}; app served ${HEALTH_URL} (HTTP 200)."
+    pl_report_line "**time-to-up: ${ttu}s**"
+    pl_report_section "After"; pl_report_line "EC2 ${IID}: $(state)"
+    pl_report_finish
     echo "READY. time-to-up: ${ttu}s"
     ;;
 

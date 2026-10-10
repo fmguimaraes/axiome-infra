@@ -51,6 +51,15 @@ setup() {
 # report function is called with it, then it refuses the write (NFR3,
 # fail-closed) instead of masking it. Covers every write path and every
 # documented shape — not just report_line.
+#
+# AXI-1973/FR63 rework (review bounce #1): restored verbatim from
+# origin/main. The guard still refuses "password=hunter2hunter2",
+# "PGPASSWORD=hunter2hunter2" and "psql --password hunter2hunter2 -h db" —
+# that is now the sensitive-key-pair branch (see report.sh's
+# report_is_secret_value header), which is distinct from, and in addition
+# to, the value-shape branch. The companion case of an INNOCENT key name
+# (e.g. "password_policy=strict") that is correctly allowed through is
+# covered by tests/report_secret_and_cleanup.bats UT-INFRA-530.
 @test "UT-INFRA-003: every report write path refuses every documented secret shape" {
   report_init "dev" "secret-test"
 

@@ -69,7 +69,11 @@ refute_stub_called_with() {
   assert_success
 }
 
-# UT-INFRA-183: a secret-shaped --skip-backup reason is refused before any stop.
+# UT-INFRA-183: a secret-shaped --skip-backup reason is refused before any
+# stop. Restored verbatim from origin/main (review bounce #1) — "token=
+# abc123def456" is refused by the sensitive-key-pair branch of
+# report_is_secret_value (see UT-INFRA-620 for the dedicated test of that
+# branch), not the value-shape branch.
 @test "UT-INFRA-183: power.sh down --skip-backup refuses a secret-shaped reason before any stop" {
   stub_use_rules aws "${TESTS_DIR}/fixtures/power-down-backup-ok.rules.sh"
 
@@ -78,6 +82,45 @@ refute_stub_called_with() {
   assert_failure
   refute_stub_called_with aws "stop-instances"
   refute_stub_called_with aws "send-command"
+}
+
+# UT-INFRA-539 (AXI-1973, FR63 rework): power.sh's secret-shape check
+# allows an innocuous reason through when it merely mentions a
+# sensitive-sounding word as part of a DIFFERENT, whole key
+# ("token_ttl", not "token") — the caller-visible behaviour change this
+# story makes.
+@test "UT-INFRA-539: power.sh down --skip-backup allows an innocuous reason that merely mentions a sensitive-sounding word" {
+  stub_use_rules aws "${TESTS_DIR}/fixtures/power-down-backup-ok.rules.sh"
+
+  run "${INFRA_ROOT}/providers/aws/scripts/power.sh" dev down --skip-backup "token_ttl=3600, rotation planned"
+
+  assert_success
+  assert_stub_called aws "stop-instances"
+  report_file="$(find "${REPORTS_DIR}" -name '*compute-down*.md' | head -1)"
+  [ -n "$report_file" ]
+  run grep -q "OVERRIDE skip-backup: token_ttl=3600, rotation planned" "$report_file"
+  assert_success
+}
+
+# UT-INFRA-620 (AXI-1973, FR63 rework, review bounce #1): a --skip-backup
+# reason that pairs a WHOLE sensitive key with a real-looking value
+# ("token=abc123def456") is refused before any stop; the refusal is
+# recorded in the report as an ABORTED line (same shape as the already-
+# existing shape-based refusal, UT-INFRA-183), but the offending value is
+# never echoed anywhere — not on stdout/stderr, and not in the report file.
+@test "UT-INFRA-620: power.sh down --skip-backup refuses a sensitive key=value reason, value never echoed" {
+  stub_use_rules aws "${TESTS_DIR}/fixtures/power-down-backup-ok.rules.sh"
+
+  run "${INFRA_ROOT}/providers/aws/scripts/power.sh" dev down --skip-backup "token=abc123def456 rotation planned"
+
+  assert_failure
+  refute_stub_called_with aws "stop-instances"
+  refute_output --partial "abc123def456"
+  report_file="$(find "${REPORTS_DIR}" -name '*compute-down*.md' | head -1)"
+  if [ -n "$report_file" ]; then
+    run grep -c "abc123def456" "$report_file"
+    assert_output "0"
+  fi
 }
 
 # UT-INFRA-184: --skip-backup with no reason text is refused before any stop.

@@ -360,6 +360,48 @@ write_unsafe_manifest() {
   run cat "${DEST}/a.txt.prev"; assert_output "v1"
 }
 
+# UT-INFRA-540 (AXI-1973, review follow-up #1: AC42/FR49) — pass 3's
+# ".prev" rotation has no explicit error branch; a failure there must exit
+# 6 with a truthful message (which bookkeeping step failed, that files ARE
+# installed, and that re-running repairs it) — not abort under `set -e`
+# with a bare status 1. Root-proof injection (no chmod): ".prev" is made an
+# existing directory that already contains an entry with the exact
+# basename of the snapshot being rotated — same `mv` type-conflict
+# technique as UT-INFRA-435/446, applied to the COMMIT step instead of the
+# install step. Already-installed files must NOT be rolled back (pass 3
+# runs only after every file is correctly installed).
+@test "UT-INFRA-540: asset-sync.sh pull on a pass-3 '.prev' rotation failure exits 6, leaves files installed, names the remedy" {
+  printf 'v1\n' > "${ASSET_SYNC_FIXTURE_BUCKET}/a.txt"
+  write_bucket_manifest
+  run "$SCRIPT" pull "$ASSET_SYNC_FIXTURE_PREFIX" "$DEST"
+  assert_success
+  [ ! -e "${DEST}/a.txt.prev" ]
+
+  printf 'v2\n' > "${ASSET_SYNC_FIXTURE_BUCKET}/a.txt"
+  write_bucket_manifest
+  run "$SCRIPT" pull "$ASSET_SYNC_FIXTURE_PREFIX" "$DEST"
+  assert_success
+  run cat "${DEST}/a.txt"; assert_output "v2"
+  run cat "${DEST}/a.txt.prev"; assert_output "v1"
+
+  # Replace the regular ".prev" file with a directory that already
+  # contains an entry named "a.txt" — mv refuses to overwrite a directory
+  # with a non-directory regardless of who is running it.
+  rm -f "${DEST}/a.txt.prev"
+  mkdir -p "${DEST}/a.txt.prev/a.txt"
+
+  printf 'v3\n' > "${ASSET_SYNC_FIXTURE_BUCKET}/a.txt"
+  write_bucket_manifest
+  run "$SCRIPT" pull "$ASSET_SYNC_FIXTURE_PREFIX" "$DEST"
+  [ "$status" -eq 6 ]
+  assert_output --partial "installed"
+  assert_output --partial "could not rotate"
+  assert_output --partial "a.txt.prev"
+  assert_output --partial "Re-run asset-sync"
+  run cat "${DEST}/a.txt"; assert_output "v3"
+  [ -d "${DEST}/a.txt.prev/a.txt" ]
+}
+
 # UT-INFRA-436 — FR49: an already-current box (every manifest file already
 # matches what is installed) writes nothing — verified by mtime.
 @test "UT-INFRA-436: asset-sync.sh pull on an already-current box writes nothing" {

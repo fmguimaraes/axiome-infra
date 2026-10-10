@@ -61,7 +61,8 @@ esac
 # "not ready yet" until its own retry budget is exhausted.
 HEALTH_PATH="/api/v1/health/ready"
 
-# Shared reporting/audit helpers (report_*, log_event, REPORTS_DIR).
+# Shared reporting/audit helpers (pl_report_*, pl_log_event, REPORTS_DIR;
+# AXI-1973 renamed these out of collision with scripts/lib/report.sh).
 # shellcheck source=_power_lib.sh
 . "${HERE}/_power_lib.sh"
 
@@ -137,40 +138,40 @@ if [ "$DRY_RUN" = "1" ] || [ "$CONFIRM" != "1" ]; then
   exit 0
 fi
 
-report_init "$ENV" "turn-on"
-report_section "Turn-on sequence"
-report_line "Actor $(aws sts get-caller-identity --query Arn --output text 2>/dev/null || echo unknown)"
+pl_report_init "$ENV" "turn-on"
+pl_report_section "Turn-on sequence"
+pl_report_line "Actor $(aws sts get-caller-identity --query Arn --output text 2>/dev/null || echo unknown)"
 
 echo
 echo "== [1/2] DATA tier up (RDS start + Redis restore) =="
 "${HERE}/power-data.sh" "$ENV" up
-report_line "Data tier: data-up completed (RDS started; Redis restored if it was absent)."
+pl_report_line "Data tier: data-up completed (RDS started; Redis restored if it was absent)."
 
 echo
 echo "== [2/2] COMPUTE up + readiness =="
 if getent hosts "$FQDN" >/dev/null 2>&1; then
   echo "  ${FQDN} resolves publicly -> using power.sh public health gate"
   "${HERE}/power.sh" "$ENV" up
-  report_line "Compute: EC2 up; public health gate passed (HTTP 200 via ${FQDN})."
+  pl_report_line "Compute: EC2 up; public health gate passed (HTTP 200 via ${FQDN})."
 else
   echo "  ${FQDN} does NOT resolve (pre-launch / no public DNS yet) -> start + ON-BOX readiness"
   AXIOME_SKIP_PUBLIC_HEALTH=1 "${HERE}/power.sh" "$ENV" up
   echo "  verifying app health ON-BOX (edge via SNI, over SSM)..."
   if onbox_ready; then
-    report_line "Compute: EC2 up; app serves ${HEALTH_PATH} = HTTP 200 ON-BOX (edge via SNI)."
-    report_line "Public FQDN ${FQDN} not yet resolvable (pre-launch DNS) — public gate intentionally skipped."
+    pl_report_line "Compute: EC2 up; app serves ${HEALTH_PATH} = HTTP 200 ON-BOX (edge via SNI)."
+    pl_report_line "Public FQDN ${FQDN} not yet resolvable (pre-launch DNS) — public gate intentionally skipped."
   else
-    report_line "Compute: EC2 up but app NOT healthy on-box — investigate (ssm-exec.sh ${ENV} 'docker compose -f /opt/axiome/docker-compose.yml ps')."
-    report_finish
+    pl_report_line "Compute: EC2 up but app NOT healthy on-box — investigate (ssm-exec.sh ${ENV} 'docker compose -f /opt/axiome/docker-compose.yml ps')."
+    pl_report_finish
     die "compute up but app not healthy on-box."
   fi
 fi
 
-report_section "Next (before un-gating terraform-cd)"
-report_line "Run: cd providers/aws && scripts/deploy.sh ${ENV} --plan-only  # expect NO changes (Redis re-adopted by id/config)"
-report_line "Only after a clean plan, allow terraform-cd apply again."
-report_finish
-log_event "$ENV" "platform" "TURN-ON completed (data + compute up)"
+pl_report_section "Next (before un-gating terraform-cd)"
+pl_report_line "Run: cd providers/aws && scripts/deploy.sh ${ENV} --plan-only  # expect NO changes (Redis re-adopted by id/config)"
+pl_report_line "Only after a clean plan, allow terraform-cd apply again."
+pl_report_finish
+pl_log_event "$ENV" "platform" "TURN-ON completed (data + compute up)"
 
 echo
 echo "TURN-ON complete for ${ENV}."

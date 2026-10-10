@@ -249,11 +249,22 @@ install_staged_files() {
 
   # Pass 3: commit. Every snapshot taken in pass 1 becomes the new
   # "<file>.prev"; a file with no snapshot (new in this manifest) correctly
-  # ends up with no ".prev" at all.
+  # ends up with no ".prev" at all. Every file listed in the manifest is
+  # ALREADY correctly installed by this point (pass 2 fully succeeded) —
+  # a failure here (AXI-1973, review follow-up #1) is bookkeeping-only and
+  # self-heals: the next run's already-current check repairs a stale
+  # manifest.sha256 the same way it already does for a failed final copy
+  # below, so this is reported with exit 6 and a truthful message rather
+  # than left to abort under `set -e` with a bare status 1.
   while IFS= read -r line; do
     [ -z "$line" ] && continue
     rel="$(manifest_rel "$line")"
-    [ -f "${snap_dir}/${rel}" ] && mv -f "${snap_dir}/${rel}" "${dest}/${rel}.prev"
+    if [ -f "${snap_dir}/${rel}" ]; then
+      mv -f "${snap_dir}/${rel}" "${dest}/${rel}.prev" || {
+        echo "FAIL asset-sync: installed ${#replaced[@]} file(s) but could not rotate the previous copy of '${rel}' into '${rel}.prev' — every listed file IS correctly installed; only this bookkeeping step failed. Re-run asset-sync to repair it." >&2
+        return 6
+      }
+    fi
   done < "${staging}/${MANIFEST_NAME}"
 
   # Every listed file is installed at this point; only the manifest copy

@@ -386,10 +386,21 @@ _lock_fetch() {
   local env="$1" name="$2" key tmpfile
   lock_env_defaults "$env" || { _LOCK_STATE="unknown"; _LOCK_ERR="bad environment"; return 1; }
   key="$(lock_key "$name")"
-  tmpfile="$(mktemp 2>/dev/null)" || { _LOCK_STATE="unknown"; _LOCK_ERR="could not create a temp file to read the lock body"; return 1; }
+  # AXI-1973/FR63, review bounce #2: axiome_create_tracked_tempfile
+  # installs the shared trap and registers the path BEFORE the file is
+  # created — a bare `tmpfile="$(mktemp)"` THEN register (the original
+  # shape here) left a real window where a TERM/INT/HUP landing between
+  # file-creation and registration found no trap (or an empty registry)
+  # and leaked the file; this closes that window rather than narrowing it.
+  # The explicit rm -f + unregister on every normal path below still fires
+  # first and keeps the registry from growing across many
+  # lock_status/lock_fetch calls in one process — the shared trap is only
+  # the fallback for an abnormal exit.
+  axiome_create_tracked_tempfile tmpfile || { _LOCK_STATE="unknown"; _LOCK_ERR="could not create a temp file to read the lock body"; return 1; }
   _aws_run aws s3api get-object --region "${_LOCK_REGION}" --output json --bucket "${_LOCK_SYSTEM_BUCKET}" --key "${key}" "${tmpfile}"
   if [ "${_AWS_RC}" -ne 0 ]; then
     rm -f "${tmpfile}"
+    axiome_unregister_cleanup "${tmpfile}"
     if _lock_is_not_found "${_AWS_OUT}"; then _LOCK_STATE="free"; return 0; fi
     _LOCK_STATE="unknown"; _LOCK_ERR="${_AWS_OUT}"
     return 1
@@ -397,10 +408,12 @@ _lock_fetch() {
   _lock_parse_metadata_etag "${_AWS_OUT}"
   if ! _lock_parse_body_file "${tmpfile}"; then
     rm -f "${tmpfile}"
+    axiome_unregister_cleanup "${tmpfile}"
     _LOCK_STATE="unknown"; _LOCK_ERR="lock object at ${key} has an empty or non-JSON body"
     return 1
   fi
   rm -f "${tmpfile}"
+  axiome_unregister_cleanup "${tmpfile}"
   _LOCK_STATE="held"
   return 0
 }
@@ -533,20 +546,19 @@ lock_override() {
 # deleted. A silently-swallowed report failure would delete the lock with
 # no record of who/why, which is exactly what FR30 forbids.
 #
-# NOTE (not this script's bug, avoided from this side anyway): report.sh's
-# report_init creates its temp buffer (`mktemp`) BEFORE report_override's
-# own secret-shaped-text check runs, so if report_init succeeds and
-# report_override is the one that refuses, that buffer is never moved or
-# removed — a leaked tempfile. report.sh exposes no cleanup for it and is
-# out of this story's ownership boundary. The pre-check below (reusing
-# report.sh's own `_report_is_secret`, already in scope from sourcing it)
-# avoids ever reaching report_init in the one case that actually triggers
-# this: a secret-shaped --reason. report_override's own check is kept as
-# defense in depth.
+# NOTE: report.sh (AXI-1973) now registers its per-run temp buffer with the
+# shared cleanup registry (scripts/lib/cleanup.sh) the moment report_init
+# creates it, so even if report_init succeeds and report_override is the
+# one that refuses, the buffer is removed on this process's exit — no
+# leaked tempfile. The pre-check below (calling report.sh's PUBLIC
+# `report_is_secret_value`, already in scope from sourcing it) still avoids
+# ever reaching report_init in the one case that actually triggers this: a
+# secret-shaped --reason. report_override's own check is kept as defense in
+# depth.
 _lock_override_report() {
   local env="$1" name="$2" reason="$3" age
   age="$(_lock_age_seconds "${_LOCK_AT}")"
-  if _report_is_secret "$reason"; then
+  if report_is_secret_value "$reason"; then
     echo "ERROR: override of '${name}' ABORTED — the given --reason resembles a secret-shaped string (e.g. contains 'password=' or similar). Rephrase --reason and retry. The lock was NOT deleted." >&2
     return 1
   fi
@@ -669,14 +681,37 @@ _LOCK_PREV_EXIT_TRAP=""
 # shell-quoted; `eval "set -- $saved"` lets the shell do that unquoting for
 # us (the same mechanism `trap -p`'s output is designed to be fed back
 # into), landing the original command text in $3 — never parsed by hand.
-# shellcheck disable=SC2120 # $1../$3 below come from this function's OWN
-# `set --`, never from a caller-supplied argument.
+#
+# <rc> (rework, AXI-1973 review bounce #1 follow-up) MUST be passed and is
+# restored as `$?` with `( exit "$rc" )` immediately before the chained
+# command runs. Why: the chained command may itself be another "read $?
+# fresh at entry, exit at the end" handler — e.g.
+# scripts/lib/cleanup.sh's own _axiome_cleanup_trap_exit, when report_init
+# ran BEFORE lock_install_exit_trap so cleanup.sh's handler ends up the
+# inner, chained-to command. Without this restoration, by the time that
+# inner handler's own `local rc=$?` runs, `$?` has already been
+# overwritten by lock_release_held and the `eval "set -- ..."` call above
+# — so the inner handler would read a stale (often 0) status and silently
+# convert a real script failure into an apparent success (this is exactly
+# how deploy-prod.sh's FR16 fail-closed snapshot-failure path regressed to
+# a reported exit 0 once report.sh started installing its own chained EXIT
+# trap). `( exit "$rc" )` is the standard no-op-subshell idiom for setting
+# `$?` in the CURRENT shell without actually exiting it — but it is itself
+# a command whose exit status equals `rc`, so under this same script's own
+# `set -e` a non-zero `rc` would abort right there, before the chained
+# `eval` ever runs. `set +e` around it (save/restore, never force — same
+# idiom `_aws_run` above already uses) neutralises that.
 _lock_run_saved_exit_trap() {
   [ -n "${_LOCK_PREV_EXIT_TRAP}" ] || return 0
-  local saved="${_LOCK_PREV_EXIT_TRAP}" cmd
+  local saved="${_LOCK_PREV_EXIT_TRAP}" rc="${1:-0}" cmd was_e
   eval "set -- ${saved}"
   cmd="$3"
+  case "$-" in *e*) was_e=1 ;; *) was_e=0 ;; esac
+  set +e
+  ( exit "${rc}" )
   eval "${cmd}"
+  [ "${was_e}" = "1" ] && set -e
+  return 0
 }
 
 # The one fixed EXIT trap command every `lock_install_exit_trap` call
@@ -688,7 +723,7 @@ _lock_run_saved_exit_trap() {
 _lock_exit_trap_handler() {
   local rc=$?
   lock_release_held
-  _lock_run_saved_exit_trap
+  _lock_run_saved_exit_trap "${rc}"
   exit "${rc}"
 }
 
