@@ -72,3 +72,15 @@ setup() {
   run grep -c "### CALL: aws" "$STUB_LOG"
   assert_output "0"
 }
+
+# UT-INFRA-426 (AXI-1967, FR42): 'apply' is a valid lock name across the
+# CLI surface too — acquiring it on a free lock succeeds exactly like
+# 'deploy'/'data-tier' (dev/deploy fixture arm reused, bucket-agnostic
+# since the fixture doesn't gate on lock name).
+@test "UT-INFRA-426: lock.sh acquire accepts 'apply' as a valid lock name" {
+  stub_use_rules aws "${TESTS_DIR}/fixtures/lock-acquire-exclusive.rules.sh"
+
+  run "${INFRA_ROOT}/scripts/lock.sh" dev acquire apply --operation "terraform apply run=1"
+
+  refute_output --partial "unknown lock name"
+}

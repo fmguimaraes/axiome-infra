@@ -56,9 +56,14 @@ refute_stub_called_with() {
 
 # UT-INFRA-208: up run with nothing ever parked (no prior down) — RDS/Redis
 # are already available, park-state.env does not exist, and there is no
-# recorded lock token, so no lock-release attempt (no get-object/delete-object
-# at all) is made; up still succeeds.
-@test "UT-INFRA-208: power-data.sh up with nothing parked succeeds and never attempts a lock release" {
+# recorded lock token, so no lock-RELEASE attempt (no get-object/
+# delete-object on locks/data-tier.json specifically) is made; up still
+# succeeds. Updated for AXI-1967: `up` now ALSO does a pre-mutation FR43
+# check that deploy/apply are free (lock_require_free, which DOES call
+# get-object on locks/deploy.json and locks/apply.json) — "no get-object at
+# all" is no longer true and would be the wrong claim; the real invariant
+# this test protects is still "data-tier's own lock is never touched here".
+@test "UT-INFRA-208: power-data.sh up with nothing parked succeeds and never attempts a data-tier lock release" {
   stub_use_rules aws "${TESTS_DIR}/fixtures/power-data-up-without-down.rules.sh"
   export DATA_UP_TIMEOUT=5
   export DATA_UP_POLL_INTERVAL=1
@@ -67,7 +72,7 @@ refute_stub_called_with() {
 
   assert_success
   assert_output --partial "data tier UP (verified)"
-  refute_stub_called_with aws "get-object"
+  refute_stub_called_with aws "locks/data-tier.json"
   refute_stub_called_with aws "delete-object"
 }
 
@@ -75,8 +80,11 @@ refute_stub_called_with() {
 # lock — a stale park-state.env with a real-looking token still exists, so
 # release IS attempted (get-object), but the lock is already free so
 # lock_release refuses WITHOUT ever calling delete-object; up still succeeds
-# overall and park-state is left for the operator to inspect.
-@test "UT-INFRA-209: power-data.sh up after an override attempts release, refuses cleanly, still succeeds" {
+# overall. Updated for AXI-1967/FR44 (AC36): `up` no longer just leaves the
+# stale park-state record forever — once it sees the release was refused
+# BECAUSE the lock is already free (not some other failure) and both tiers
+# are verified available, it clears the record (`aws s3 rm`).
+@test "UT-INFRA-209: power-data.sh up after an override attempts release, refuses cleanly, clears the stale park-state (FR44)" {
   stub_use_rules aws "${TESTS_DIR}/fixtures/power-data-up-after-override.rules.sh"
   export DATA_UP_TIMEOUT=5
   export DATA_UP_POLL_INTERVAL=1
@@ -85,6 +93,40 @@ refute_stub_called_with() {
 
   assert_success
   assert_output --partial "lock is not held"
+  assert_output --partial "clearing the stale park-state record"
   assert_stub_called aws "get-object"
+  assert_stub_called aws "rm"
   refute_stub_called_with aws "delete-object"
+}
+
+# UT-INFRA-418 (AXI-1967, FR43): deploy is held — up must refuse BEFORE any
+# RDS/Redis mutation, and must NEVER touch (release) the data-tier lock —
+# that lock belongs to the earlier `down`, not to this `up` call.
+@test "UT-INFRA-418: power-data.sh up refuses when the deploy lock is held, never touching data-tier (FR43)" {
+  stub_use_rules aws "${TESTS_DIR}/fixtures/power-data-up-ok.rules.sh"
+  export POWER_DATA_FIXTURE_DEPLOY_STATE=held
+  export DATA_UP_TIMEOUT=5
+  export DATA_UP_POLL_INTERVAL=1
+
+  run "${INFRA_ROOT}/providers/aws/scripts/power-data.sh" dev up
+
+  assert_failure
+  assert_output --partial "deploy lock"
+  refute_stub_called_with aws "locks/data-tier.json"
+  refute_stub_called_with aws "start-db-instance"
+}
+
+# UT-INFRA-419 (AXI-1967, FR43): same, for the apply lock.
+@test "UT-INFRA-419: power-data.sh up refuses when the apply lock is held, never touching data-tier (FR43)" {
+  stub_use_rules aws "${TESTS_DIR}/fixtures/power-data-up-ok.rules.sh"
+  export POWER_DATA_FIXTURE_APPLY_STATE=held
+  export DATA_UP_TIMEOUT=5
+  export DATA_UP_POLL_INTERVAL=1
+
+  run "${INFRA_ROOT}/providers/aws/scripts/power-data.sh" dev up
+
+  assert_failure
+  assert_output --partial "apply lock"
+  refute_stub_called_with aws "locks/data-tier.json"
+  refute_stub_called_with aws "start-db-instance"
 }

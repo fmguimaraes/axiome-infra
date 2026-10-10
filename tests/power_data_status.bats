@@ -36,3 +36,21 @@ setup() {
   assert_success
   assert_output --partial "data-tier: FREE"
 }
+
+# UT-INFRA-420 (AXI-1967, FR44/AC36): a park-state record left behind by an
+# operator 'override' (lock FREE, record PRESENT) is surfaced as a
+# PRESENT record plus an explicit WARNING naming 'up' as the remedy — this
+# fixture's park-state.env always carries a token, so this pins both the
+# PRESENT line and the WARNING together (status never just reports the
+# lock as FREE and stays silent about the stale record).
+@test "UT-INFRA-420: power-data.sh status warns when the lock is free but a park-state record remains (FR44)" {
+  stub_use_rules aws "${TESTS_DIR}/fixtures/power-data-status.rules.sh"
+
+  run "${INFRA_ROOT}/providers/aws/scripts/power-data.sh" dev status
+
+  assert_success
+  assert_output --partial "park-state record: PRESENT"
+  assert_output --partial "token=t"
+  assert_output --partial "WARNING: the data-tier lock is FREE but a park-state record remains"
+  assert_output --partial "dev up' to verify both tiers and clear this record (FR44)"
+}

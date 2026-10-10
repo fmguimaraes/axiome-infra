@@ -69,14 +69,24 @@ assert_stub_not_called_substring() {
   assert_stub_not_called_substring "describe-images"
 }
 
-# UT-INFRA-333 — FR29/AC20: a held/unknown data-tier lock refuses a deploy
-# before the deploy lock is even attempted.
-@test "UT-INFRA-333: deploy-prod.sh refuses when the data-tier lock is held" {
+# UT-INFRA-333 (CHANGED by AXI-1967, FR42/FR43) — a held/unknown data-tier
+# lock refuses a deploy, but the ORDER changed: FR43 requires acquire-then-
+# check (acquire the deploy lock FIRST, then verify data-tier/apply free),
+# not the old check-then-acquire (which left a window where two operations
+# could both see the others free and both proceed). So this now DOES touch
+# locks/deploy.json — it is acquired, then released when data-tier is found
+# held, leaving nothing behind. See UT-INFRA-408 for the replacement
+# assertion; this test id is kept (not deleted) with its assertions updated
+# to match, per the "list any you change and why" instruction.
+@test "UT-INFRA-333: deploy-prod.sh acquires then releases the deploy lock when data-tier is held (FR43)" {
   export DEPLOY_FIXTURE_DATATIER_STATE=held
   run "$SCRIPT"
   assert_failure
   assert_output --partial "data-tier"
-  assert_stub_not_called_substring "locks/deploy.json"
+  run grep -F "locks/deploy.json" "$STUB_LOG"
+  assert_success
+  assert_stub_called aws "delete-object"
+  assert_stub_not_called_substring "describe-images"
 }
 
 # UT-INFRA-334 — EC13: a frontend deploy skips the migrate/snapshot/baseline

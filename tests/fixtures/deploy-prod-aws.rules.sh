@@ -102,6 +102,28 @@ stub_respond() {
       echo "An error occurred (404) when calling the GetObject operation: Not Found"
       return 254 ;;
 
+    *"get-object"*"locks/apply.json"*)
+      # AXI-1967 (FR42/FR43): same race-file/state shape as data-tier above,
+      # for the new apply lock. DEPLOY_FIXTURE_APPLY_STATE free|held
+      # (default free); DEPLOY_FIXTURE_APPLY_STATE_RACE_FILE simulates an
+      # apply starting BETWEEN the two lock_require_free calls.
+      local a_race_file="${DEPLOY_FIXTURE_APPLY_STATE_RACE_FILE:-}" a_state="${DEPLOY_FIXTURE_APPLY_STATE:-free}"
+      if [ -n "${a_race_file}" ]; then
+        local an=0
+        [ -f "${a_race_file}" ] && an="$(cat "${a_race_file}")"
+        an=$((an + 1))
+        printf '%s' "${an}" > "${a_race_file}"
+        [ "${an}" -gt 1 ] && a_state="held"
+      fi
+      if [ "${a_state}" = "held" ]; then
+        local a_outfile="${argv##* }"
+        printf '%s' '{"name":"apply","actor":"ci-apply@example.com","operation":"terraform apply run=1","host":"h","acquired_at":"2026-10-10T00:00:00Z","token":"t"}' > "${a_outfile}"
+        echo '{"ETag":"\"ap\""}'
+        return 0
+      fi
+      echo "An error occurred (404) when calling the GetObject operation: Not Found"
+      return 254 ;;
+
     *"put-object"*"locks/deploy.json"*)
       if [ "${DEPLOY_FIXTURE_DEPLOY_LOCK_STATE:-free}" = "held" ]; then
         echo "An error occurred (PreconditionFailed) when calling the PutObject operation: At least one of the pre-conditions you specified did not hold"

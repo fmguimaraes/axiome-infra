@@ -7,6 +7,12 @@ load 'helpers/setup'
 setup() {
   stub_setup
   export REPO_ROOT="${INFRA_ROOT}"
+  # AXI-1967: power.sh now also sources scripts/lock.sh (for the new
+  # deploy/apply FR43 checks below), which transitively sources
+  # scripts/lib/report.sh — that file resolves ITS OWN REPORT_REPO_ROOT via
+  # `git rev-parse` unless already set. Pre-set it (same pattern as
+  # REPO_ROOT above) so this never needs an unconfigured git stub call.
+  export REPORT_REPO_ROOT="${INFRA_ROOT}"
   export POWER_NO_COMMIT=1
   export REPORTS_DIR="${BATS_TEST_TMPDIR}/reports"
 }
@@ -117,5 +123,33 @@ refute_stub_called_with() {
 
   assert_failure
   assert_output --partial "checksum mismatch"
+  refute_stub_called_with aws "stop-instances"
+}
+
+# UT-INFRA-414 (AXI-1967, FR43): power.sh down has no lock of its own — it
+# only checks deploy/apply are free, BEFORE the FR31 backup step (no
+# head-object/stop-instances call is ever reached).
+@test "UT-INFRA-414: power.sh down refuses to stop compute when the deploy lock is held (FR43)" {
+  stub_use_rules aws "${TESTS_DIR}/fixtures/power-down-backup-ok.rules.sh"
+  export POWER_FIXTURE_DEPLOY_STATE=held
+
+  run "${INFRA_ROOT}/providers/aws/scripts/power.sh" dev down
+
+  assert_failure
+  assert_output --partial "deploy lock"
+  refute_stub_called_with aws "head-object"
+  refute_stub_called_with aws "stop-instances"
+}
+
+# UT-INFRA-415 (AXI-1967, FR43): same, for the apply lock.
+@test "UT-INFRA-415: power.sh down refuses to stop compute when the apply lock is held (FR43)" {
+  stub_use_rules aws "${TESTS_DIR}/fixtures/power-down-backup-ok.rules.sh"
+  export POWER_FIXTURE_APPLY_STATE=held
+
+  run "${INFRA_ROOT}/providers/aws/scripts/power.sh" dev down
+
+  assert_failure
+  assert_output --partial "apply lock"
+  refute_stub_called_with aws "head-object"
   refute_stub_called_with aws "stop-instances"
 }

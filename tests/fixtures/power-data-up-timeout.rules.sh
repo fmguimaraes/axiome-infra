@@ -9,6 +9,14 @@ stub_respond() {
       echo "arn:aws:iam::111111111111:user/test-actor"
       return 0
       ;;
+    *"get-object"*"locks/deploy.json"*)
+      echo "An error occurred (404) when calling the GetObject operation: Not Found"
+      return 254
+      ;;
+    *"get-object"*"locks/apply.json"*)
+      echo "An error occurred (404) when calling the GetObject operation: Not Found"
+      return 254
+      ;;
     *"start-db-instance"*)
       return 0
       ;;

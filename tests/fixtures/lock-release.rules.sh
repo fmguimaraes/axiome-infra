@@ -56,6 +56,18 @@ stub_respond() {
       return 254
       ;;
 
+    # production / apply — AXI-1967: the terraform-cd "Release apply lock"
+    # step's own target (UT-INFRA-425). Caller holds the token ("mytoken"),
+    # conditional delete succeeds.
+    *"get-object"*"axiome-production-system"*"locks/apply.json"*)
+      printf '%s' '{"name":"apply","actor":"me","operation":"terraform apply run=1","host":"h","acquired_at":"2026-10-10T10:00:00Z","token":"mytoken"}' > "${outfile}"
+      echo '{"ETag":"\"etag-prod-apply\""}'
+      return 0
+      ;;
+    *"delete-object"*"axiome-production-system"*"locks/apply.json"*)
+      return 0
+      ;;
+
     *)
       return 99
       ;;

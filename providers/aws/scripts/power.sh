@@ -56,6 +56,18 @@ BACKUP_SSM_WAIT="${BACKUP_SSM_WAIT:-180}"
 # a new one for this box).
 command -v jq >/dev/null 2>&1 || { echo "ERROR: jq is required (brew/apt install jq)." >&2; exit 1; }
 
+# FR43 (AXI-1967): source scripts/lock.sh FIRST, for lock_require_free/
+# LOCK_RC_* only — then source _power_lib.sh SECOND so its own
+# report_init/report_section/report_line/report_finish definitions win over
+# the ones lock.sh pulls in transitively from scripts/lib/report.sh (same
+# names, different signature/behaviour; power-data.sh made the opposite
+# choice and dropped _power_lib.sh entirely — this script keeps it, so the
+# two must not collide). lock_* function names are unique to lock.sh, so
+# sourcing order does not affect them either way.
+_pw_dir="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="${REPO_ROOT:-$(git -C "$_pw_dir" rev-parse --show-toplevel 2>/dev/null || echo "${_pw_dir}/../../..")}"
+# shellcheck source=../../../scripts/lock.sh
+. "${REPO_ROOT}/scripts/lock.sh"
 # Shared reporting/audit helpers. Reports land at the repo root of whatever
 # checkout/worktree this runs from, versioned alongside the code.
 # shellcheck source=_power_lib.sh
@@ -189,6 +201,18 @@ case "$ACTION" in
     ;;
 
   down)
+    # FR43 (AXI-1967): compute power-down has no lock of its own — it only
+    # refuses when deploy or apply is held, checked BEFORE the backup step
+    # (before anything else in this action).
+    if ! lock_require_free "$ENV" deploy; then
+      echo "ABORT: the deploy lock for ${ENV} is held — refusing to stop compute while a deploy is in progress." >&2
+      exit 1
+    fi
+    if ! lock_require_free "$ENV" apply; then
+      echo "ABORT: the apply lock for ${ENV} is held — refusing to stop compute while a Terraform apply is in progress." >&2
+      exit 1
+    fi
+
     report_init "$ENV" "compute-down"
     report_section "Before"; report_line "EC2 ${IID}: $(state)"
 
