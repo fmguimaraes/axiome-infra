@@ -78,6 +78,25 @@ services:
     mem_limit: 512m
     cpus: 0.5
 
+  # AXI-1950 (epic AXI-1944 decision 2/3/4, FR10, AC7): one-shot migration gate.
+  # `restart: "no"` — a failing gate must not restart-loop; it stays Exited(1)
+  # so `docker compose ps` / `logs migrate` shows the operator exactly why the
+  # backend containers below never started. No local service dependency: both
+  # database URLs point at the external RDS/Neon instance, not a container.
+  migrate:
+    image: ${ECR_REGISTRY}/axiome/backend:${BACKEND_IMAGE_TAG}
+    container_name: axiome-migrate
+    restart: "no"
+    command: ["migrate-gate", "apply"]
+    environment:
+      NODE_ENV: production
+      ORGANIZATION_DATABASE_URL: ${ORGANIZATION_DATABASE_URL}
+      USER_DATABASE_URL: ${USER_DATABASE_URL}
+    networks:
+      - axiome
+    mem_limit: 256m
+    cpus: 0.5
+
   gateway:
     image: ${ECR_REGISTRY}/axiome/backend:${BACKEND_IMAGE_TAG}
     container_name: axiome-gateway
@@ -98,12 +117,18 @@ services:
       ORGANIZATION_SERVICE_URL: http://organization-service:3004
       EVENT_SERVICE_URL: http://event-service:3003
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       rabbitmq:
         condition: service_healthy
       redis:
         condition: service_healthy
     networks:
       - axiome
+    # AXI-1950: kept on /health/live (AXI-1949's pure liveness route, no RPC,
+    # no dependency on any backing service) — per the AXI-1949 learning,
+    # pointing a container healthcheck at /health or /health/ready turns a
+    # degraded backing service into a gateway restart-loop.
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/v1/health/live"]
       interval: 30s
@@ -127,10 +152,23 @@ services:
       USER_DATABASE_URL: ${USER_DATABASE_URL}
       JWT_SECRET: ${JWT_SECRET}
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       rabbitmq:
         condition: service_healthy
     networks:
       - axiome
+    # AXI-1950 (FR27/AC18): /health/live is a pure liveness route (AXI-1948)
+    # with no database query — a down database must not fail this and trigger
+    # a restart loop (AXI-1949 learning). Readiness is covered separately by
+    # the gateway's /health/ready, polled by deploy/power-up (AC18), not by
+    # this container healthcheck.
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3002/api/v1/health/live"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
     mem_limit: 512m
     cpus: 0.5
 
@@ -156,10 +194,26 @@ services:
       BIO_COMPUTE_URL: http://biocompute:8000
       CALLBACK_BASE_URL: http://organization-service:3004
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       rabbitmq:
         condition: service_healthy
     networks:
       - axiome
+    # AXI-1950 (FR27/AC18): organization-service ships no /health/live route
+    # (AXI-1948/AXI-1949 only added one to gateway/user-service/event-service).
+    # Its /health always returns HTTP 200 even when the body reports
+    # 'unhealthy' (no @Res status-code wiring here, unlike the gateway) — so
+    # as a container healthcheck this behaves as liveness-only today, same
+    # risk profile as /health/live elsewhere. Documented follow-up: it still
+    # runs one `SELECT 1` per probe, unlike the zero-cost /health/live used
+    # on the other three services.
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3004/api/v1/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
     mem_limit: 512m
     cpus: 0.5
 
@@ -177,10 +231,19 @@ services:
       MONGODB_URL: ${MONGODB_URL}
       JWT_SECRET: ${JWT_SECRET}
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       rabbitmq:
         condition: service_healthy
     networks:
       - axiome
+    # AXI-1950: /health/live — pure liveness (AXI-1948), no event-store ping.
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3003/api/v1/health/live"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
     mem_limit: 384m
     cpus: 0.5
 

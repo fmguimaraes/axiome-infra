@@ -62,3 +62,32 @@ ranges are allocated by the lead per sibling story.
 | UT-INFRA-405 | AXI-1947 | `tests/lock_lib_and_misc.bats` | `lock_install_exit_trap`'s handler preserves the original exit status (`exit 7` still exits 7) across release + restored trap (bounce #2). |
 | UT-INFRA-406 | AXI-1947 | `tests/lock_lib_and_misc.bats` | Calling `lock_install_exit_trap` twice does not self-chain the handler — exactly one delete-object call (bounce #2). |
 | UT-INFRA-407 | AXI-1947 | `tests/lock_status.bats` | `lock.sh status`'s get-object call passes `--output json` explicitly, independent of `AWS_DEFAULT_OUTPUT` (bounce #2). |
+| UT-INFRA-130 | AXI-1950 | `tests/asset-sync.bats` | `asset-sync.sh pull` installs every manifest-listed file into dest-dir (FR11/AC9). |
+| UT-INFRA-131 | AXI-1950 | `tests/asset-sync.bats` | A re-pull with a changed file keeps the previous copy as `<file>.prev` (FR11). |
+| UT-INFRA-132 | AXI-1950 | `tests/asset-sync.bats` | A checksum mismatch installs nothing and exits non-zero (EC9). |
+| UT-INFRA-133 | AXI-1950 | `tests/asset-sync.bats` | An invalid `docker-compose.yml` installs nothing and exits non-zero (EC9). |
+| UT-INFRA-134 | AXI-1950 | `tests/asset-sync.bats` | An unreachable manifest/bucket keeps existing assets and exits a defined code (EC6 spirit). |
+| UT-INFRA-135 | AXI-1950 | `tests/asset-sync.bats` | A manifest-listed file that cannot be fetched keeps existing assets, same exit code as a missing manifest. |
+| UT-INFRA-136 | AXI-1950 | `tests/asset-sync.bats` | `asset-sync.sh publish` builds a manifest.sha256 with the correct sha256 per listed file. |
+| UT-INFRA-137 | AXI-1950 | `tests/asset-sync.bats` | `publish` uploads every manifest-source file plus the manifest itself. |
+| UT-INFRA-138 | AXI-1950 | `tests/asset-sync.bats` | A usage error exits 1 without ever calling `aws`. |
+| UT-INFRA-139 | AXI-1950 | `tests/refresh-env.bats` | Every decision-5 preserved key keeps its existing value against a differing SSM value (EC5). |
+| UT-INFRA-140 | AXI-1950 | `tests/refresh-env.bats` | A non-preserved key takes the new SSM value. |
+| UT-INFRA-141 | AXI-1950 | `tests/refresh-env.bats` | SSM unreachable keeps `.env` byte-identical, warns, exits non-zero (EC6). |
+| UT-INFRA-142 | AXI-1950 | `tests/refresh-env.bats` | An empty SSM result is treated as unreachable — file kept. |
+| UT-INFRA-143 | AXI-1950 | `tests/refresh-env.bats` | A required key coming back empty keeps `.env`, warns, exits non-zero. |
+| UT-INFRA-144 | AXI-1950 | `tests/refresh-env.bats` | No secret value is ever printed to stdout/stderr (NFR3). |
+| UT-INFRA-145 | AXI-1950 | `tests/refresh-env.bats` | The temp file is written in the same directory and installed via rename (atomicity). |
+| UT-INFRA-146 | AXI-1950 | `tests/refresh-env.bats` | No temp file is left behind after a successful refresh. |
+| UT-INFRA-147 | AXI-1950 | `tests/refresh-env.bats` | No temp file is ever created when SSM is unreachable. |
+| UT-INFRA-148 | AXI-1950 | `tests/refresh-env.bats` | A missing env-file argument is a usage error, no `aws` call. |
+| UT-INFRA-149 | AXI-1950 | `tests/boot.bats` | `boot.sh` runs asset-sync pull, then `.env` refresh, then `docker compose up -d`, in order (FR10/FR11/FR12). |
+| UT-INFRA-150 | AXI-1950 | `tests/boot.bats` | A failed asset-sync pull does not block refresh-env or compose up (EC6 spirit). |
+| UT-INFRA-151 | AXI-1950 | `tests/boot.bats` | A failed `.env` refresh does not block compose up (EC6). |
+| UT-INFRA-152 | AXI-1950 | `tests/boot.bats` | A failing migrate gate (surfaced via `docker compose up -d` exit code) is surfaced as `boot.sh`'s own failure, never swallowed. |
+| UT-INFRA-153 | AXI-1950 | `tests/boot.bats` | A missing `ONBOX_S3_PREFIX` fails fast before anything runs. |
+| UT-INFRA-154 | AXI-1950 | `tests/compose-structure.bats` | The compose `migrate` service runs the gate with `restart: "no"` (FR10). |
+| UT-INFRA-155 | AXI-1950 | `tests/compose-structure.bats` | gateway/user-service/organization-service/event-service all depend on `migrate` completing successfully (FR10/AC7). |
+| UT-INFRA-156 | AXI-1950 | `tests/compose-structure.bats` | `biocompute` does not depend on `migrate` (different schema/database). |
+| UT-INFRA-157 | AXI-1950 | `tests/compose-structure.bats` | Every backend service container declares a healthcheck (FR27/AC18). |
+| UT-INFRA-158 | AXI-1950 | `tests/compose-structure.bats` | The gateway healthcheck still targets `/health/live`. |

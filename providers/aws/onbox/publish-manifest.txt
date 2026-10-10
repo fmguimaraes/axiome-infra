@@ -1,0 +1,11 @@
+# providers/aws/onbox/publish-manifest.txt — AXI-1950 (epic AXI-1944 decision 8).
+# Consumed by scripts/asset-sync.sh's `publish` mode. One "<repo-relative-
+# source>:<box-relative-dest>" entry per line. Blank lines and lines
+# starting with # are ignored. Terraform (aws_s3_object, modules/compute-ec2
+# and modules/compute) publishes the SAME four files declaratively — this
+# file only drives the script's own publish mode (operator/CI use outside a
+# terraform apply); keep both lists in sync if either changes.
+providers/aws/onbox/docker-compose.yml:docker-compose.yml
+providers/aws/onbox/boot.sh:scripts/boot.sh
+scripts/asset-sync.sh:scripts/asset-sync.sh
+scripts/refresh-env.sh:scripts/refresh-env.sh

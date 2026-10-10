@@ -70,6 +70,60 @@ resource "aws_iam_access_key" "lightsail_runtime" {
   user = aws_iam_user.lightsail_runtime.name
 }
 
+# On-box asset channel (AXI-1950, epic AXI-1944 decision 8, FR11/AC9) — same
+# declarative publish pattern as modules/compute-ec2. init.sh.tftpl is shared
+# by both modules (see its own header comment), so the Lightsail path's
+# cloud-init bootstrap (step 7) needs these objects to exist too, or a fresh
+# Lightsail dev box would fail its first boot the moment this story's
+# init.sh.tftpl change lands. The existing `s3:::${naming_prefix}-*` wildcard
+# grant below already covers reading `onbox/*` from the system bucket.
+locals {
+  onbox_compose_path     = "${path.module}/../../onbox/docker-compose.yml"
+  onbox_boot_sh_path     = "${path.module}/../../onbox/boot.sh"
+  onbox_asset_sync_path  = "${path.module}/../../scripts/asset-sync.sh"
+  onbox_refresh_env_path = "${path.module}/../../scripts/refresh-env.sh"
+}
+
+resource "aws_s3_object" "onbox_compose" {
+  bucket      = "${var.naming_prefix}-system"
+  key         = "onbox/docker-compose.yml"
+  source      = local.onbox_compose_path
+  source_hash = filemd5(local.onbox_compose_path)
+}
+
+resource "aws_s3_object" "onbox_boot_sh" {
+  bucket      = "${var.naming_prefix}-system"
+  key         = "onbox/scripts/boot.sh"
+  source      = local.onbox_boot_sh_path
+  source_hash = filemd5(local.onbox_boot_sh_path)
+}
+
+resource "aws_s3_object" "onbox_asset_sync" {
+  bucket      = "${var.naming_prefix}-system"
+  key         = "onbox/scripts/asset-sync.sh"
+  source      = local.onbox_asset_sync_path
+  source_hash = filemd5(local.onbox_asset_sync_path)
+}
+
+resource "aws_s3_object" "onbox_refresh_env" {
+  bucket      = "${var.naming_prefix}-system"
+  key         = "onbox/scripts/refresh-env.sh"
+  source      = local.onbox_refresh_env_path
+  source_hash = filemd5(local.onbox_refresh_env_path)
+}
+
+resource "aws_s3_object" "onbox_manifest" {
+  bucket = "${var.naming_prefix}-system"
+  key    = "onbox/manifest.sha256"
+  content = join("\n", [
+    "${filesha256(local.onbox_compose_path)}  docker-compose.yml",
+    "${filesha256(local.onbox_boot_sh_path)}  scripts/boot.sh",
+    "${filesha256(local.onbox_asset_sync_path)}  scripts/asset-sync.sh",
+    "${filesha256(local.onbox_refresh_env_path)}  scripts/refresh-env.sh",
+    "",
+  ])
+}
+
 # Cloud-init user_data renders the deploy stack onto the VM at first boot.
 locals {
   caddyfile = templatefile("${path.module}/../../cloud-init/Caddyfile.tftpl", {
@@ -77,7 +131,7 @@ locals {
     behind_proxy = var.behind_proxy
   })
 
-  docker_compose_yml = file("${path.module}/../../cloud-init/docker-compose.yml")
+  docker_compose_yml = file(local.onbox_compose_path)
 
   # Per-image-tag env lines baked into cloud-init when `var.use_ssm_image_tags`
   # is false (legacy). When true, these lines are omitted and the tags come
@@ -88,6 +142,8 @@ locals {
     FRONTEND_IMAGE_TAG=${var.frontend_image_tag}
   EOT
 
+  # docker-compose.yml is deliberately NOT a template var (AXI-1950,
+  # decision 8) — it reaches the box via the on-box asset sync above.
   cloud_init = templatefile("${path.module}/../../cloud-init/init.sh.tftpl", {
     aws_region            = var.aws_region
     aws_access_key_id     = aws_iam_access_key.lightsail_runtime.id
@@ -97,7 +153,6 @@ locals {
     fqdn                  = var.fqdn
     environment           = var.environment
     project_name          = var.naming_prefix
-    docker_compose_yml    = local.docker_compose_yml
     caddyfile             = local.caddyfile
     legacy_image_tag_env  = local.legacy_image_tag_env
     # Legacy Lightsail path has no CloudWatch sink; empty value skips the agent block.
@@ -168,6 +223,16 @@ resource "terraform_data" "user_data_hash" {
 }
 
 resource "aws_lightsail_instance" "main" {
+  # cloud-init's bootstrap (init.sh.tftpl step 7) fetches the on-box asset
+  # channel from S3 at first boot — it must already exist (AXI-1950).
+  depends_on = [
+    aws_s3_object.onbox_compose,
+    aws_s3_object.onbox_boot_sh,
+    aws_s3_object.onbox_asset_sync,
+    aws_s3_object.onbox_refresh_env,
+    aws_s3_object.onbox_manifest,
+  ]
+
   name              = "${var.naming_prefix}-vm"
   availability_zone = var.availability_zone
   blueprint_id      = var.blueprint_id

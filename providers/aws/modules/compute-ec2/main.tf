@@ -15,6 +15,64 @@ resource "aws_s3_object" "mongo_backup_script" {
   source_hash = filemd5("${path.module}/../../scripts/mongo-backup.sh")
 }
 
+# On-box asset channel (AXI-1950, epic AXI-1944 decision 8, FR11/AC9). Published
+# declaratively, same channel/pattern as mongo_backup_script above, so a change to
+# any of these four files reaches an EXISTING box via scripts/asset-sync.sh's pull
+# mode (run by scripts/boot.sh on every boot, and by an operator's one-time
+# conversion step) — WITHOUT a user_data change and WITHOUT touching aws_instance,
+# so it never triggers the instance stop/start that a user_data edit would.
+# cloud-init's own first-boot bootstrap (cloud-init/init.sh.tftpl step 7) also
+# depends on these objects already existing — see aws_instance.main's depends_on.
+locals {
+  onbox_compose_path     = "${path.module}/../../onbox/docker-compose.yml"
+  onbox_boot_sh_path     = "${path.module}/../../onbox/boot.sh"
+  onbox_asset_sync_path  = "${path.module}/../../scripts/asset-sync.sh"
+  onbox_refresh_env_path = "${path.module}/../../scripts/refresh-env.sh"
+}
+
+resource "aws_s3_object" "onbox_compose" {
+  bucket      = "${var.naming_prefix}-system"
+  key         = "onbox/docker-compose.yml"
+  source      = local.onbox_compose_path
+  source_hash = filemd5(local.onbox_compose_path)
+}
+
+resource "aws_s3_object" "onbox_boot_sh" {
+  bucket      = "${var.naming_prefix}-system"
+  key         = "onbox/scripts/boot.sh"
+  source      = local.onbox_boot_sh_path
+  source_hash = filemd5(local.onbox_boot_sh_path)
+}
+
+resource "aws_s3_object" "onbox_asset_sync" {
+  bucket      = "${var.naming_prefix}-system"
+  key         = "onbox/scripts/asset-sync.sh"
+  source      = local.onbox_asset_sync_path
+  source_hash = filemd5(local.onbox_asset_sync_path)
+}
+
+resource "aws_s3_object" "onbox_refresh_env" {
+  bucket      = "${var.naming_prefix}-system"
+  key         = "onbox/scripts/refresh-env.sh"
+  source      = local.onbox_refresh_env_path
+  source_hash = filemd5(local.onbox_refresh_env_path)
+}
+
+# manifest.sha256 format matches scripts/asset-sync.sh's own publish mode
+# exactly ("<sha256>  <relpath>", one per line) so the same pull-mode
+# verification code path works whether Terraform or an operator published.
+resource "aws_s3_object" "onbox_manifest" {
+  bucket = "${var.naming_prefix}-system"
+  key    = "onbox/manifest.sha256"
+  content = join("\n", [
+    "${filesha256(local.onbox_compose_path)}  docker-compose.yml",
+    "${filesha256(local.onbox_boot_sh_path)}  scripts/boot.sh",
+    "${filesha256(local.onbox_asset_sync_path)}  scripts/asset-sync.sh",
+    "${filesha256(local.onbox_refresh_env_path)}  scripts/refresh-env.sh",
+    "",
+  ])
+}
+
 data "aws_ami" "ubuntu" {
   most_recent = true
   owners      = ["099720109477"] # Canonical
@@ -222,7 +280,10 @@ locals {
     behind_proxy = false
   })
 
-  docker_compose_yml = file("${path.module}/../../cloud-init/docker-compose.yml")
+  # Still read here (not just by the aws_s3_object above) so a future
+  # consumer of the rendered compose content (e.g. a qualification record)
+  # has it without re-reading the file — kept as a named local for that.
+  docker_compose_yml = file(local.onbox_compose_path)
 
   legacy_image_tag_env = var.use_ssm_image_tags ? "" : <<-EOT
     BACKEND_IMAGE_TAG=${var.backend_image_tag}
@@ -230,6 +291,10 @@ locals {
     FRONTEND_IMAGE_TAG=${var.frontend_image_tag}
   EOT
 
+  # docker-compose.yml is deliberately NOT a template var here — it is no
+  # longer inlined into user_data (AXI-1950, decision 8); it reaches the box
+  # via the on-box asset sync (aws_s3_object.onbox_* above +
+  # scripts/asset-sync.sh), which init.sh.tftpl's step 7 bootstraps.
   cloud_init = templatefile("${path.module}/../../cloud-init/init.sh.tftpl", {
     aws_region            = var.aws_region
     aws_access_key_id     = aws_iam_access_key.runtime.id
@@ -239,7 +304,6 @@ locals {
     fqdn                  = var.fqdn
     environment           = var.environment
     project_name          = var.naming_prefix
-    docker_compose_yml    = local.docker_compose_yml
     caddyfile             = local.caddyfile
     legacy_image_tag_env  = local.legacy_image_tag_env
     cloudwatch_log_group  = local.log_group_name
@@ -285,9 +349,17 @@ resource "aws_vpc_security_group_egress_rule" "all" {
 }
 
 resource "aws_instance" "main" {
-  # cloud-init (below) fetches the mongo-backup script from S3 at boot — it must
-  # already exist for a greenfield / rebuild-from-IaC create (FR4).
-  depends_on = [aws_s3_object.mongo_backup_script]
+  # cloud-init (below) fetches the mongo-backup script AND the on-box asset
+  # channel from S3 at boot — all of it must already exist for a greenfield /
+  # rebuild-from-IaC create (FR4; AXI-1950 adds the onbox_* objects).
+  depends_on = [
+    aws_s3_object.mongo_backup_script,
+    aws_s3_object.onbox_compose,
+    aws_s3_object.onbox_boot_sh,
+    aws_s3_object.onbox_asset_sync,
+    aws_s3_object.onbox_refresh_env,
+    aws_s3_object.onbox_manifest,
+  ]
 
   ami                    = data.aws_ami.ubuntu.id
   instance_type          = var.instance_type

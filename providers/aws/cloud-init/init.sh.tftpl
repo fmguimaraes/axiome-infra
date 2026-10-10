@@ -101,21 +101,37 @@ chmod 600 /opt/axiome/.env
 aws ecr get-login-password --region ${aws_region} \
     | docker login --username AWS --password-stdin ${ecr_registry}
 
-# 7. Write docker-compose.yml + Caddyfile to /opt/axiome
-cat > /opt/axiome/docker-compose.yml <<'COMPOSE_EOF'
-${docker_compose_yml}
-COMPOSE_EOF
+# 7. Bootstrap the on-box asset sync (AXI-1950, epic AXI-1944 decision 8,
+# FR11/AC9). docker-compose.yml itself is no longer inlined into user_data —
+# it is published declaratively to the onbox S3 channel (modules/compute-ec2,
+# modules/compute, same pattern as mongo-backup.sh below) and pulled here,
+# with checksum verification, by scripts/asset-sync.sh. The bootstrap fetch of
+# asset-sync.sh itself uses the same single-file `aws s3 cp` pattern as the
+# mongo-backup script below. A fresh box has no prior copy to fall back to, so
+# this step is NOT swallowed here (set -e applies) — every later boot instead
+# goes through scripts/boot.sh (delivered by the pull below), which treats
+# the same failure as non-fatal (EC6) and reuses whatever is already on disk.
+mkdir -p /opt/axiome/scripts
+aws s3 cp "s3://${project_name}-system/onbox/scripts/asset-sync.sh" /opt/axiome/scripts/asset-sync.sh
+chmod 700 /opt/axiome/scripts/asset-sync.sh
+/opt/axiome/scripts/asset-sync.sh pull "s3://${project_name}-system/onbox" /opt/axiome
 
 cat > /opt/axiome/Caddyfile <<'CADDY_EOF'
 ${caddyfile}
 CADDY_EOF
 
-# 8. Pull and start the stack
+# 8. Pull images. The stack is brought up by scripts/boot.sh (delivered in
+# step 7 above) via the systemd unit below — every start path (first boot,
+# reboot, manual `docker compose up -d`) now runs the same
+# sync -> refresh-env -> `docker compose up -d` chain, and `up -d` is where
+# the migrate-gate one-shot (FR10) actually runs.
 cd /opt/axiome
 docker compose pull
-docker compose up -d
 
-# 9. Install systemd unit so docker-compose comes back on reboot
+# 9. Install systemd unit so the full boot chain comes back on reboot
+# (FR10/FR12). ExecStart is the on-box wrapper, not a bare `docker compose
+# up -d`, so a reboot also re-syncs assets and refreshes .env, not just the
+# containers.
 cat > /etc/systemd/system/axiome.service <<'SVC_EOF'
 [Unit]
 Description=Axiome docker-compose stack
@@ -126,7 +142,10 @@ After=docker.service network-online.target
 Type=oneshot
 RemainAfterExit=yes
 WorkingDirectory=/opt/axiome
-ExecStart=/usr/bin/docker compose up -d
+Environment=AXIOME_DIR=/opt/axiome
+Environment=ONBOX_S3_PREFIX=s3://${project_name}-system/onbox
+Environment=SSM_PARAMETER_PREFIX=${ssm_parameter_prefix}
+ExecStart=/opt/axiome/scripts/boot.sh
 ExecStop=/usr/bin/docker compose down
 TimeoutStartSec=300
 
@@ -135,7 +154,7 @@ WantedBy=multi-user.target
 SVC_EOF
 
 systemctl daemon-reload
-systemctl enable axiome.service
+systemctl enable --now axiome.service
 
 # 10. Cron: weekly docker prune to prevent disk fill
 cat > /etc/cron.weekly/docker-prune <<'CRON_EOF'
