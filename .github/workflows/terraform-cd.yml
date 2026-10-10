@@ -15,6 +15,39 @@
 #
 # Only after BOTH gates does apply-production run `terraform apply`.
 #
+# A THIRD gate (AXI-1947, FR29/AC20) sits in both jobs: "Check data-tier
+# lock" runs scripts/lock.sh production status data-tier. Exit 0 (FREE) lets
+# the job continue; HELD(1) or UNDETERMINED(2) fails the step — Actions fails
+# the job on any non-zero step exit by default, so no extra wrapper is
+# needed. It runs AFTER "Export provider credentials" (it needs the AWS
+# creds that step exports to $GITHUB_ENV) and BEFORE the terraform
+# plan/apply step in EACH job — state can change while apply-production
+# waits on manual approval, so it is re-checked immediately before apply,
+# not just once in ci-gate. ci-gate's ordering today is:
+#   checkout -> setup-terraform -> fmt -check -> validate -> export-creds ->
+#   [NEW] check data-tier lock -> terraform plan
+# i.e. the lock check runs AFTER fmt/validate, so while terraform-cd is red
+# at `fmt` (see axiome-docs dev-epic-context "Lead notes") this check never
+# runs at all — it starts running the moment fmt is fixed, in the same
+# position relative to fmt/validate. This story does not touch any .tf file
+# and does not fix the fmt failure (not this story's call).
+# FR29 names only `terraform-cd` and "the deploy" as the things that must
+# refuse on a held data-tier lock; it does not ask terraform-cd to refuse on
+# a held DEPLOY lock, so this workflow checks `data-tier` only (the deploy
+# lock is enforced by the deploy/power scripts themselves, AXI-1951/AXI-1954).
+#
+# IMPORTANT — these two checks are POINT-IN-TIME READS, not a held lock:
+# this workflow never calls `lock.sh ... acquire`, so it holds no lock of
+# its own for the duration of `terraform apply`. A `power-data.sh` park
+# that starts AFTER apply-production's "Check data-tier lock" step has
+# already passed is therefore NOT blocked by this workflow — there is a
+# window, between that check and `terraform apply` actually finishing,
+# during which a park can still begin. Closing that window means the PARK
+# side must itself refuse to proceed while an apply may be running (e.g. by
+# acquiring/checking the `deploy` lock, or an equivalent), which is a design
+# problem for AXI-1951 to solve, not something this story's read-only check
+# can provide on its own.
+#
 # workflow_dispatch remains for manual plan/apply (plan_only input).
 #
 # dev/staging images.tfvars commits are EXCLUDED from the push trigger: they do not
@@ -93,6 +126,9 @@ jobs:
           # published and the guided-analysis LLM arm stays unconfigured in prod.
           guided_analysis_anthropic_api_key: ${{ secrets.GUIDED_ANALYSIS_ANTHROPIC_API_KEY }}
 
+      - name: Check data-tier lock (AC20, FR29)
+        run: bash scripts/lock.sh production status data-tier
+
       - name: terraform plan (production)
         env:
           PROVIDER: ${{ vars.PROVIDER || vars.REGISTRY_PROVIDER || 'aws' }}
@@ -128,6 +164,12 @@ jobs:
           # GUIDED_ANALYSIS_ANTHROPIC_API_KEY (SecureString). Empty = parameter not
           # published and the guided-analysis LLM arm stays unconfigured in prod.
           guided_analysis_anthropic_api_key: ${{ secrets.GUIDED_ANALYSIS_ANTHROPIC_API_KEY }}
+
+      # Re-checked here, immediately before apply: ci-gate's check (above)
+      # can be minutes/hours stale by the time a human approves the
+      # `production` environment's required reviewer gate.
+      - name: Check data-tier lock (AC20, FR29)
+        run: bash scripts/lock.sh production status data-tier
 
       - name: Deploy production
         env:
