@@ -19,10 +19,27 @@
 #   -r REGION    AWS region. Default: eu-west-3 (or $AWS_REGION).
 #   -f FILE      Run the contents of a local script FILE on the host.
 #   -i ID        Target a specific instance id (skips Name-tag lookup).
-#   -t SECONDS   Max seconds to wait for completion. Default: 120.
+#   -t SECONDS   Max seconds to wait for completion. Default: 900.
 #
 # The target instance is found by its Name tag `axiome-<env>-ec2` unless -i is given.
-# Exits with the remote command's effective status (non-zero on Failed/TimedOut).
+#
+# FR20 (AXI-1953, epic AXI-1944): the wait has three outcomes, with three
+# distinct exit codes so a caller can branch without parsing stderr:
+#   - exit 0  — the invocation reached Success before the wait expired.
+#   - exit 1  — the invocation reached a terminal Failed/Cancelled/TimedOut
+#               before the wait expired (a real, known remote failure).
+#   - exit 2  — the wait expired before any terminal state (the remote
+#               command may still be running). This script CANCELS the
+#               command (`aws ssm cancel-command`) and prints
+#               "status: INDETERMINATE" instead of claiming Failed or
+#               Success. A caller (the deploy) MUST treat exit 2 the same
+#               as a failure for the purpose of leaving `:stable` unchanged
+#               — never advance `:stable` on an indeterminate result — and
+#               may use the distinct code to decide a re-roll-to-previous-
+#               tag is not safe to attempt blindly (the remote state is
+#               unknown, not known-bad).
+# Env SSM_EXEC_POLL_INTERVAL overrides the poll sleep (default 2s; tests set
+# it to 0 for a fast, deterministic indeterminate path).
 #
 # SECURITY: the command text is stored in SSM command history + CloudTrail. Do NOT
 # pass secrets as literals. To use a secret on the box, fetch it there from SSM
@@ -35,7 +52,8 @@ ENVIRONMENT="production"
 REGION="${AWS_REGION:-eu-west-3}"
 INSTANCE_ID=""
 SCRIPT_FILE=""
-WAIT_SECONDS=120
+WAIT_SECONDS=900
+POLL_INTERVAL="${SSM_EXEC_POLL_INTERVAL:-2}"
 
 while getopts "e:r:f:i:t:h" opt; do
   case "${opt}" in
@@ -44,11 +62,18 @@ while getopts "e:r:f:i:t:h" opt; do
     f) SCRIPT_FILE="${OPTARG}" ;;
     i) INSTANCE_ID="${OPTARG}" ;;
     t) WAIT_SECONDS="${OPTARG}" ;;
-    h) sed -n '2,40p' "$0"; exit 0 ;;
-    *) echo "Unknown option. Run: $0 -h" >&2; exit 2 ;;
+    h) sed -n '2,42p' "$0"; exit 0 ;;
+    *) echo "Unknown option. Run: $0 -h" >&2; exit 1 ;;
   esac
 done
 shift $((OPTIND - 1))
+
+case "${WAIT_SECONDS}" in
+  ''|*[!0-9]*|0)
+    echo "ERROR: -t must be a positive integer (seconds), got '${WAIT_SECONDS}'." >&2
+    exit 1
+    ;;
+esac
 
 command -v jq >/dev/null 2>&1 || { echo "ERROR: jq is required (brew/apt install jq)." >&2; exit 1; }
 
@@ -62,7 +87,7 @@ elif [ -n "${1:-}" ]; then
   REMOTE_CMD="$1"
 else
   echo "ERROR: no command given. Run: $0 -h" >&2
-  exit 2
+  exit 1
 fi
 
 # Find the instance by Name tag unless one was supplied.
@@ -92,7 +117,7 @@ COMMAND_ID=$(aws ssm send-command --region "${REGION}" \
 DEADLINE=$((SECONDS + WAIT_SECONDS))
 STATUS="Pending"
 while [ ${SECONDS} -lt ${DEADLINE} ]; do
-  sleep 2
+  sleep "${POLL_INTERVAL}"
   STATUS=$(aws ssm get-command-invocation --region "${REGION}" \
     --command-id "${COMMAND_ID}" --instance-id "${INSTANCE_ID}" \
     --query 'Status' --output text 2>/dev/null || echo "Pending")
@@ -100,6 +125,21 @@ while [ ${SECONDS} -lt ${DEADLINE} ]; do
     Success|Failed|Cancelled|TimedOut) break ;;
   esac
 done
+
+# FR20: the wait expired before a terminal state — the remote command may
+# still be running. Cancel it and report INDETERMINATE rather than guessing
+# Success or Failed; a cancel-command failure (e.g. it already finished a
+# moment ago) must not change that verdict.
+case "${STATUS}" in
+  Success|Failed|Cancelled|TimedOut) ;;
+  *)
+    echo "==> wait expired after ${WAIT_SECONDS}s — cancelling command ${COMMAND_ID}" >&2
+    aws ssm cancel-command --region "${REGION}" \
+      --command-id "${COMMAND_ID}" --instance-ids "${INSTANCE_ID}" >/dev/null 2>&1 || true
+    echo "==> status: INDETERMINATE (wait expired; remote command cancelled, final state unknown)" >&2
+    exit 2
+    ;;
+esac
 
 OUT=$(aws ssm get-command-invocation --region "${REGION}" \
   --command-id "${COMMAND_ID}" --instance-id "${INSTANCE_ID}" \

@@ -3,8 +3,14 @@
 #
 # Usage:
 #   pull-on-vm.sh dev
-#   pull-on-vm.sh staging
-#   pull-on-vm.sh production
+#
+# FR13 (AXI-1953, epic AXI-1944, AC27): this script is a full, unguarded
+# `docker compose pull && docker compose up -d` over plain SSH with no
+# migration gate of its own — acceptable only for `dev`, which has no
+# production data and is rebuilt freely. It REFUSES `staging` and
+# `production` outright; those environments are rolled only through
+# scripts/roll-service.sh (which does run the gate — see that script's
+# header) via scripts/ssm-exec.sh or the deploy path, never this one.
 #
 # Env vars (auto-discovered when missing):
 #   INSTANCE_IP          VM IP. Default: terraform output -raw lightsail_static_ip
@@ -16,13 +22,18 @@ set -euo pipefail
 
 ENVIRONMENT="${1:-}"
 if [ -z "${ENVIRONMENT}" ]; then
-  echo "Usage: $0 <dev|staging|production>" >&2
+  echo "Usage: $0 <dev>" >&2
   exit 1
 fi
 
 case "${ENVIRONMENT}" in
-  dev|staging|production) ;;
-  *) echo "ERROR: environment must be dev, staging, or production" >&2; exit 1 ;;
+  dev) ;;
+  staging|production)
+    echo "REFUSE: pull-on-vm.sh has no migration gate and must never run against '${ENVIRONMENT}'." >&2
+    echo "Roll '${ENVIRONMENT}' through scripts/roll-service.sh (via ssm-exec.sh or the deploy path) instead." >&2
+    exit 1
+    ;;
+  *) echo "ERROR: environment must be dev" >&2; exit 1 ;;
 esac
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

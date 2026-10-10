@@ -125,3 +125,52 @@ ranges are allocated by the lead per sibling story.
 | UT-INFRA-156 | AXI-1950 | `tests/compose-structure.bats` | `biocompute` does not depend on `migrate` (different schema/database). |
 | UT-INFRA-157 | AXI-1950 | `tests/compose-structure.bats` | Every backend service container declares a healthcheck (FR27/AC18). |
 | UT-INFRA-158 | AXI-1950 | `tests/compose-structure.bats` | The gateway healthcheck still targets `/health/live`. |
+| UT-INFRA-280 | AXI-1953 | `tests/roll-service.bats` | A backend roll pulls and ups the four backend targets through the gate and reports completion (FR18). |
+| UT-INFRA-281 | AXI-1953 | `tests/roll-service.bats` | A migration-gate failure exits non-zero, never claims completion, and surfaces the migrate container's own log (AC2). |
+| UT-INFRA-282 | AXI-1953 | `tests/roll-service.bats` | A backend roll never passes `--no-deps` (the migrate dependency must stay in force) (FR18). |
+| UT-INFRA-283 | AXI-1953 | `tests/roll-service.bats` | A box whose compose lacks `migrate` refuses before any docker call and names the asset-sync command (NFR7/AC8). |
+| UT-INFRA-284 | AXI-1953 | `tests/roll-service.bats` | A biocompute roll is not gated, even with no `migrate` service in compose (EC13). |
+| UT-INFRA-285 | AXI-1953 | `tests/roll-service.bats` | A frontend roll is not gated either (EC13). |
+| UT-INFRA-286 | AXI-1953 | `tests/roll-service.bats` | A missing `ENV_FILE` fails fast before any docker call. |
+| UT-INFRA-287 | AXI-1953 | `tests/roll-service.bats` | An existing `KEY` in `ENV_FILE` is updated in place. |
+| UT-INFRA-288 | AXI-1953 | `tests/roll-service.bats` | A `KEY` absent from `ENV_FILE` is appended. |
+| UT-INFRA-289 | AXI-1953 | `tests/roll-service.bats` | A repeat roll with the same inputs is idempotent (NFR1). |
+| UT-INFRA-290 | AXI-1953 | `tests/roll-service.bats` | `refresh-env.sh` is invoked with `SSM_PARAMETER_PREFIX` when configured and present (FR12). |
+| UT-INFRA-291 | AXI-1953 | `tests/roll-service.bats` | The roll skips `refresh-env.sh` (warns, non-fatal) when `SSM_PARAMETER_PREFIX` is unset. |
+| UT-INFRA-292 | AXI-1953 | `tests/roll-service.bats` | The roll skips a missing `refresh-env.sh` on an un-converted box without failing (non-fatal). |
+| UT-INFRA-293 | AXI-1953 | `tests/roll-service.bats` | An unknown `SERVICE` value is a usage error, no docker call. |
+| UT-INFRA-294 | AXI-1953 | `tests/ssm-exec.bats` | The documented default wait is 900s (FR20). |
+| UT-INFRA-295 | AXI-1953 | `tests/ssm-exec.bats` | A command reaching `Success` within the wait exits 0 and never calls `cancel-command`. |
+| UT-INFRA-296 | AXI-1953 | `tests/ssm-exec.bats` | A command reaching `Failed` within the wait exits non-zero, reported as `Failed`, never `INDETERMINATE`. |
+| UT-INFRA-297 | AXI-1953 | `tests/ssm-exec.bats` | A wait that expires before any terminal state cancels the command and reports `INDETERMINATE` (FR20). |
+| UT-INFRA-298 | AXI-1953 | `tests/ssm-exec.bats` | A `cancel-command` failure does not change the verdict — still `INDETERMINATE`, still non-zero (fail-closed). |
+| UT-INFRA-299 | AXI-1953 | `tests/ssm-exec.bats` | An explicit `-i` instance id still skips the `describe-instances` lookup (regression). |
+| UT-INFRA-300 | AXI-1953 | `tests/ssm-exec.bats` | No command given is a usage error before any `aws` call. |
+| UT-INFRA-301 | AXI-1953 | `tests/pull-on-vm.bats` | `pull-on-vm.sh production` refuses and never calls `ssh` (FR13/AC27). |
+| UT-INFRA-302 | AXI-1953 | `tests/pull-on-vm.bats` | `pull-on-vm.sh staging` refuses the same way (FR13). |
+| UT-INFRA-303 | AXI-1953 | `tests/pull-on-vm.bats` | `pull-on-vm.sh dev` proceeds over `ssh`. |
+| UT-INFRA-304 | AXI-1953 | `tests/pull-on-vm.bats` | An unknown environment name is still rejected. |
+| UT-INFRA-305 | AXI-1953 | `tests/pull-on-vm.bats` | No argument is a usage error, no `ssh` call. |
+| UT-INFRA-306 | AXI-1953 | `tests/dev-auto-promote-workflow.bats` | The roll step still runs `scripts/roll-service.sh` as the single gated start path (FR13/AC27). |
+| UT-INFRA-307 | AXI-1953 | `tests/dev-auto-promote-workflow.bats` | The roll step passes `SSM_PARAMETER_PREFIX` through to the remote `roll-service.sh` (FR12). |
+| UT-INFRA-308 | AXI-1953 | `tests/dev-auto-promote-workflow.bats` | No `run:` step passes `--no-deps` to docker compose anywhere in the workflow. |
+| UT-INFRA-309 | AXI-1953 | `tests/dev-auto-promote-workflow.bats` | The trigger is unchanged: only `repository_dispatch: image-published` starts a roll. |
+| UT-INFRA-310 | AXI-1953 | `tests/roll-service.bats` | `require_migrate_service` is not fooled by a `migrate:` key outside the `services:` block (review bounce #1). |
+| UT-INFRA-311 | AXI-1953 | `tests/roll-service.bats` | A successful backend roll prints this run's `MIGRATION_FACTS` lines, unprefixed (review bounce #1, FR14). |
+| UT-INFRA-312 | AXI-1953 | `tests/roll-service.bats` | A previous run's facts line is never surfaced — only the `--since`-scoped read is used (review bounce #1). |
+| UT-INFRA-313 | AXI-1953 | `tests/roll-service.bats` | A gate that passed but whose facts log read fails reports `MIGRATION_FACTS_UNAVAILABLE` (review bounce #1). |
+| UT-INFRA-314 | AXI-1953 | `tests/roll-service.bats` | A gate that passed but has no facts line at all also reports `MIGRATION_FACTS_UNAVAILABLE` (review bounce #1). |
+| UT-INFRA-315 | AXI-1953 | `tests/roll-service.bats` | A non-backend roll never attempts to read migrate facts (review bounce #1). |
+| UT-INFRA-316 | AXI-1953 | `tests/ssm-exec.bats` | A non-numeric `-t` is rejected before any `aws` call (review bounce #1). |
+| UT-INFRA-317 | AXI-1953 | `tests/ssm-exec.bats` | A zero `-t` is rejected before any `aws` call (review bounce #1). |
+| UT-INFRA-318 | AXI-1953 | `tests/generate-qualification-record.bats` | A two-service `MIGRATION_FACTS_LINES` input renders a per-service IQ table and summary (review bounce #1, FR14). |
+| UT-INFRA-319 | AXI-1953 | `tests/generate-qualification-record.bats` | Every service reporting `APPLIED=0` states plainly that no migration ran, never implying one was qualified (review bounce #1). |
+| UT-INFRA-320 | AXI-1953 | `tests/generate-qualification-record.bats` | **Overruns into AXI-1954's reserved range.** The legacy single-value path (`SCHEMA_VERSION`/`PRE_COUNTS`/`POST_COUNTS`) still works unchanged for `scripts/migrate-data.sh` (review bounce #1). |
+| UT-INFRA-321 | AXI-1953 | `tests/generate-qualification-record.bats` | **Overruns into AXI-1954's reserved range.** An unparseable `MIGRATION_FACTS_LINES` entry fails closed (exit non-zero), never a silent SKIP (review bounce #1, NFR2). |
+| UT-INFRA-322 | AXI-1953 | `tests/dev-auto-promote-workflow.bats` | **Overruns into AXI-1954's reserved range.** The "Emit Qualification Record" step builds a record when migrations were applied (review bounce #1). |
+| UT-INFRA-323 | AXI-1953 | `tests/dev-auto-promote-workflow.bats` | **Overruns into AXI-1954's reserved range.** The step passes and states plainly when nothing was pending (all services `APPLIED=0`) (review bounce #1). |
+| UT-INFRA-324 | AXI-1953 | `tests/dev-auto-promote-workflow.bats` | **Overruns into AXI-1954's reserved range.** The step fails when facts are unavailable, distinct from both pass cases (review bounce #1). |
+| UT-INFRA-325 | AXI-1953 | `tests/dev-auto-promote-workflow.bats` | **Overruns into AXI-1954's reserved range.** The step passes with "nothing to qualify" on a non-backend roll and never calls the generator (review bounce #1). |
+| UT-INFRA-326 | AXI-1953 | `tests/dev-auto-promote-workflow.bats` | **Overruns into AXI-1954's reserved range (coordinator-authorized, review bounce #2).** The "Roll service on dev VM" step fails when the remote roll fails (no `pipefail`, a failed `ssh | tee` previously left the step green). |
+| UT-INFRA-327 | AXI-1953 | `tests/dev-auto-promote-workflow.bats` | **Overruns into AXI-1954's reserved range (coordinator-authorized, review bounce #2).** Static check: the roll step declares `shell: bash` explicitly. |
+| UT-INFRA-328 | AXI-1953 | `tests/dev-auto-promote-workflow.bats` | **Overruns into AXI-1954's reserved range (coordinator-authorized, review bounce #2).** The "Emit Qualification Record" step refuses a failed roll by its own logic even when a facts line is present. |

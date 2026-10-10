@@ -88,30 +88,84 @@ jobs:
           KEY: ${{ steps.key.outputs.name }}
           IMAGE_TAG: ${{ github.event.client_payload.image_tag }}
           SERVICE: ${{ github.event.client_payload.service }}
+        # AXI-1953 (FR12/FR18): roll-service.sh runs the migration gate via
+        # the on-box compose dependency graph (no --no-deps) before any
+        # backend container is swapped, and refreshes /opt/axiome/.env from
+        # SSM_PARAMETER_PREFIX after recording the new image tag — this is
+        # the only start path dev-auto-promote uses (FR13/AC27); it carries
+        # no second, ungated `docker compose up -d` of its own.
+        # review bounce #1: `emit_migration_facts()`'s warning line
+        # (MIGRATION_FACTS_UNAVAILABLE:) is printed to STDERR, and a plain
+        # `ssh ... | tee` only pipes the remote's STDOUT — its stderr goes
+        # to the runner's own stderr and would never reach roll-output.log,
+        # silently hiding that warning from the next step. `2>&1` before the
+        # pipe merges them so roll-output.log carries everything this run
+        # printed, same as before the merge for the job's own console log.
+        # review bounce #2 (required): a step with no `shell:` key runs as
+        # `bash -e {0}` — WITHOUT `pipefail` — so `ssh ... | tee` reported
+        # `tee`'s exit status (always 0 here), not the remote roll's. A
+        # failed roll therefore left this step green. Both `shell: bash`
+        # (which makes GitHub Actions run it as `bash --noprofile --norc -eo
+        # pipefail {0}`) AND an explicit `set -euo pipefail` as the first
+        # line are set, deliberately not relying on either alone.
+        shell: bash
         run: |
+          set -euo pipefail
           ssh -o StrictHostKeyChecking=accept-new "${DEV_USER}@${DEV_HOST}" \
-            "KEY='${KEY}' IMAGE_TAG='${IMAGE_TAG}' SERVICE='${SERVICE}' bash -s" \
+            "KEY='${KEY}' IMAGE_TAG='${IMAGE_TAG}' SERVICE='${SERVICE}' SSM_PARAMETER_PREFIX='${SSM_PARAMETER_PREFIX}' bash -s" \
             < scripts/roll-service.sh \
-            | tee roll-output.log
+            2>&1 | tee roll-output.log
 
       - name: Emit Qualification Record
         env:
           IMAGE_TAG: ${{ github.event.client_payload.image_tag }}
+        # AXI-1953 (review bounce #1): a roll now gates/migrates MULTIPLE
+        # services (organization-service, user-service via the compose
+        # dependency graph), not one — roll-service.sh's emit_migration_facts()
+        # already scopes its output to THIS run (docker compose logs --since,
+        # --no-log-prefix; see roll-service.sh), so every MIGRATION_FACTS/
+        # MIGRATION_FACTS_OVERRIDE line in roll-output.log belongs to this
+        # roll. Collect ALL of them (one per service) into
+        # MIGRATION_FACTS_LINES for the generator's per-service record (FR14).
+        #
+        # Three distinct outcomes, by what roll-output.log contains:
+        #   - a MIGRATION_FACTS_UNAVAILABLE: line -> the gate passed and the
+        #     containers ARE serving (roll-service.sh already exited 0 for
+        #     that), but the qualification step cannot tell what schema
+        #     state they are serving. Fail THIS step (exit 1) so that gap is
+        #     loud, without rolling back already-serving containers.
+        #   - no MIGRATION_FACTS/_OVERRIDE line and no _UNAVAILABLE line ->
+        #     a biocompute/frontend roll touches no schema: nothing to
+        #     qualify, pass.
+        #   - one or more MIGRATION_FACTS/_OVERRIDE lines -> build the
+        #     per-service record; the generator itself is fail-closed on a
+        #     malformed line or a failed OQ/PQ check (unchanged).
+        #
+        # review bounce #2 (required): the roll step failing used to leave a
+        # roll-output.log that could still contain a MIGRATION_FACTS: line
+        # from a service that migrated successfully BEFORE the one that
+        # failed — this step must refuse to build a record from that, by
+        # its OWN logic too (not only by relying on the roll step's exit
+        # code, belt-and-suspenders per the roll-step pipefail fix above):
+        # a log with a `FAIL-CLOSED:` line, or without the roll's own
+        # `=== Roll complete:` success marker, is a failed/incomplete roll.
+        shell: bash
         run: |
-          # organization-service migrations (SERVICE=backend) print a MIGRATION_FACTS
-          # line (FR8/FR9, AXI-1003) — bind it into the FR14 fail-closed Qualification
-          # Record (MIPP-Hosting-Environment.md). Absent for biocompute/frontend rolls,
-          # which touch no schema — nothing to qualify then. The generator is
-          # fail-closed: a non-zero exit here fails this job too.
-          if ! grep -q '^MIGRATION_FACTS:' roll-output.log; then
+          set -euo pipefail
+          if grep -q 'FAIL-CLOSED:' roll-output.log || ! grep -q '^=== Roll complete:' roll-output.log; then
+            echo "::error::roll-output.log shows a failed or incomplete roll (no '=== Roll complete:' marker, or a FAIL-CLOSED line) — refusing to qualify it."
+            exit 1
+          fi
+          if grep -q '^MIGRATION_FACTS_UNAVAILABLE:' roll-output.log; then
+            echo "::error::$(grep '^MIGRATION_FACTS_UNAVAILABLE:' roll-output.log | tail -1)"
+            exit 1
+          fi
+          if ! grep -qE '^(MIGRATION_FACTS:|MIGRATION_FACTS_OVERRIDE:)' roll-output.log; then
             echo "No MIGRATION_FACTS line (non-schema roll) — nothing to qualify."
             exit 0
           fi
-          FACTS="$(grep '^MIGRATION_FACTS:' roll-output.log | tail -1)"
-          SCHEMA_VERSION="$(echo "${FACTS}" | grep -oP 'SCHEMA_VERSION=\K\S+')"
-          PRE_COUNTS="$(echo "${FACTS}" | grep -oP 'PRE_COUNTS=\K\S+')"
-          POST_COUNTS="$(echo "${FACTS}" | grep -oP 'POST_COUNTS=\K\S+')"
-          SCHEMA_VERSION="${SCHEMA_VERSION}" PRE_COUNTS="${PRE_COUNTS}" POST_COUNTS="${POST_COUNTS}" \
+          MIGRATION_FACTS_LINES="$(grep -E '^(MIGRATION_FACTS:|MIGRATION_FACTS_OVERRIDE:)' roll-output.log)"
+          MIGRATION_FACTS_LINES="${MIGRATION_FACTS_LINES}" \
             IMAGE_TAG="${IMAGE_TAG}" GATEWAY_URL="https://${DEV_HOST}" \
             bash scripts/generate-qualification-record.sh aws dev
 
