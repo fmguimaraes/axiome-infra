@@ -184,3 +184,256 @@ EOF
   assert_output --partial "usage:"
   assert_stub_not_called aws
 }
+
+# ---------------------------------------------------------------------------
+# AXI-1969 (FR48/FR49/AC41/AC42) — manifest path validation and all-or-
+# nothing install, below. UT-INFRA-430..439.
+# ---------------------------------------------------------------------------
+
+# Writes a one-line manifest naming exactly <rel> (sha is irrelevant — path
+# validation happens before any checksum is read), replacing whatever
+# write_bucket_manifest would have built.
+write_unsafe_manifest() {
+  local rel="$1"
+  printf '%s  %s\n' "$(printf 'x' | sha256sum | awk '{print $1}')" "$rel" \
+    > "${ASSET_SYNC_FIXTURE_BUCKET}/manifest.sha256"
+}
+
+# UT-INFRA-430 — AC41: a manifest entry "../x" is rejected as a whole —
+# exit non-zero, nothing fetched beyond the manifest itself, nothing
+# installed, the offending entry named.
+@test "UT-INFRA-430: asset-sync.sh pull rejects a manifest entry '../x'" {
+  mkdir -p "$ASSET_SYNC_FIXTURE_BUCKET"
+  write_unsafe_manifest "../x"
+  run "$SCRIPT" pull "$ASSET_SYNC_FIXTURE_PREFIX" "$DEST"
+  [ "$status" -eq 5 ]
+  assert_output --partial "unsafe path"
+  assert_output --partial "../x"
+  [ -z "$(find "$DEST" -mindepth 1 2>/dev/null)" ]
+}
+
+# UT-INFRA-431 — AC41: an absolute manifest entry "/etc/x" is rejected the
+# same way.
+@test "UT-INFRA-431: asset-sync.sh pull rejects a manifest entry '/etc/x'" {
+  mkdir -p "$ASSET_SYNC_FIXTURE_BUCKET"
+  write_unsafe_manifest "/etc/x"
+  run "$SCRIPT" pull "$ASSET_SYNC_FIXTURE_PREFIX" "$DEST"
+  [ "$status" -eq 5 ]
+  assert_output --partial "unsafe path"
+  assert_output --partial "/etc/x"
+  [ -z "$(find "$DEST" -mindepth 1 2>/dev/null)" ]
+}
+
+# UT-INFRA-432 — AC41: a manifest entry that resolves outside the install
+# root via a buried ".." segment ("a/../../b") is rejected the same way.
+@test "UT-INFRA-432: asset-sync.sh pull rejects a manifest entry 'a/../../b'" {
+  mkdir -p "$ASSET_SYNC_FIXTURE_BUCKET"
+  write_unsafe_manifest "a/../../b"
+  run "$SCRIPT" pull "$ASSET_SYNC_FIXTURE_PREFIX" "$DEST"
+  [ "$status" -eq 5 ]
+  assert_output --partial "unsafe path"
+  assert_output --partial "a/../../b"
+  [ -z "$(find "$DEST" -mindepth 1 2>/dev/null)" ]
+}
+
+# UT-INFRA-433 — FR48: an empty manifest path is rejected the same way.
+@test "UT-INFRA-433: asset-sync.sh pull rejects a manifest entry with an empty path" {
+  mkdir -p "$ASSET_SYNC_FIXTURE_BUCKET"
+  write_unsafe_manifest ""
+  run "$SCRIPT" pull "$ASSET_SYNC_FIXTURE_PREFIX" "$DEST"
+  [ "$status" -eq 5 ]
+  assert_output --partial "unsafe path"
+  [ -z "$(find "$DEST" -mindepth 1 2>/dev/null)" ]
+}
+
+# UT-INFRA-434 — FR48: the WHOLE manifest is validated before any listed
+# file is fetched — a manifest with two safe entries and one unsafe entry
+# never fetches even the safe ones (only the manifest.sha256 download
+# itself is recorded against the aws stub).
+@test "UT-INFRA-434: asset-sync.sh pull fetches no listed file when any manifest path is unsafe" {
+  seed_bucket
+  {
+    printf '%s  %s\n' "$(sha256sum "${ASSET_SYNC_FIXTURE_BUCKET}/docker-compose.yml" | awk '{print $1}')" "docker-compose.yml"
+    printf '%s  %s\n' "$(sha256sum "${ASSET_SYNC_FIXTURE_BUCKET}/scripts/boot.sh" | awk '{print $1}')" "scripts/boot.sh"
+    printf '%s  %s\n' "$(printf 'x' | sha256sum | awk '{print $1}')" "../escape"
+  } > "${ASSET_SYNC_FIXTURE_BUCKET}/manifest.sha256"
+  run "$SCRIPT" pull "$ASSET_SYNC_FIXTURE_PREFIX" "$DEST"
+  [ "$status" -eq 5 ]
+  assert_output --partial "../escape"
+  [ -z "$(find "$DEST" -mindepth 1 2>/dev/null)" ]
+  refute_output --partial "docker-compose.yml"
+  run grep -c '^### CALL: aws$' "$STUB_LOG"
+  assert_output "1"
+}
+
+# UT-INFRA-435 — AC42: a manifest of three files where the third fails to
+# install — all three end up at their previous copy (the first two
+# actually replaced then rolled back; the third was never touched),
+# verified by content, and the sync exits non-zero naming the restore.
+#
+# The failure injection is root-proof (review follow-up #5): rather than
+# relying on a permission bit (meaningless to uid 0), the THIRD entry's
+# destination is made an existing directory that already contains an
+# entry with the same basename as the file being installed — `mv` refuses
+# to overwrite a directory with a non-directory regardless of who is
+# running it (a plain type conflict, verified empirically: see the story's
+# handback for the exact `mv` behaviour this relies on).
+@test "UT-INFRA-435: asset-sync.sh pull on a mid-install failure restores every already-installed file" {
+  mkdir -p "${ASSET_SYNC_FIXTURE_BUCKET}"
+  printf 'a-old\n' > "${ASSET_SYNC_FIXTURE_BUCKET}/a.txt"
+  printf 'b-old\n' > "${ASSET_SYNC_FIXTURE_BUCKET}/b.txt"
+  write_bucket_manifest
+  run "$SCRIPT" pull "$ASSET_SYNC_FIXTURE_PREFIX" "$DEST"
+  assert_success
+  run cat "${DEST}/a.txt"; assert_output "a-old"
+  run cat "${DEST}/b.txt"; assert_output "b-old"
+
+  printf 'a-new\n' > "${ASSET_SYNC_FIXTURE_BUCKET}/a.txt"
+  printf 'b-new\n' > "${ASSET_SYNC_FIXTURE_BUCKET}/b.txt"
+  mkdir -p "${ASSET_SYNC_FIXTURE_BUCKET}/locked"
+  printf 'c-new\n' > "${ASSET_SYNC_FIXTURE_BUCKET}/locked/c.txt"
+  write_bucket_manifest
+  # mv staged .../locked/c.txt -> "$DEST/locked/c.txt" will try to move the
+  # staged file INTO this existing directory under its own basename
+  # ("c.txt"), which already exists there as a directory -> type conflict.
+  mkdir -p "${DEST}/locked/c.txt/c.txt"
+  run "$SCRIPT" pull "$ASSET_SYNC_FIXTURE_PREFIX" "$DEST"
+  [ "$status" -eq 6 ]
+  assert_output --partial "restoring"
+  run cat "${DEST}/a.txt"; assert_output "a-old"
+  run cat "${DEST}/b.txt"; assert_output "b-old"
+  [ ! -e "${DEST}/a.txt.prev" ]
+  [ ! -e "${DEST}/b.txt.prev" ]
+  [ -d "${DEST}/locked/c.txt/c.txt" ]
+}
+
+# UT-INFRA-445 — AXI-1969 review follow-up #1: an already-current box
+# whose files all match but whose installed manifest.sha256 bookkeeping
+# copy is stale (e.g. a prior run's final write failed) gets ONLY that
+# bookkeeping copy repaired — no asset file is rewritten.
+@test "UT-INFRA-445: asset-sync.sh pull repairs a stale manifest.sha256 when every file already matches" {
+  seed_bucket
+  run "$SCRIPT" pull "$ASSET_SYNC_FIXTURE_PREFIX" "$DEST"
+  assert_success
+  local before
+  before="$(stat -c %Y "${DEST}/scripts/boot.sh")"
+  # Corrupt only the installed bookkeeping copy — no bucket change, no
+  # asset file touched.
+  printf '# stale\n' >> "${DEST}/manifest.sha256"
+  run "$SCRIPT" pull "$ASSET_SYNC_FIXTURE_PREFIX" "$DEST"
+  assert_success
+  assert_output --partial "repaired stale"
+  run cmp "${ASSET_SYNC_FIXTURE_BUCKET}/manifest.sha256" "${DEST}/manifest.sha256"
+  assert_success
+  local after
+  after="$(stat -c %Y "${DEST}/scripts/boot.sh")"
+  [ "$before" = "$after" ]
+}
+
+# UT-INFRA-446 — AXI-1969 review follow-up #2: a mid-install failure must
+# not disturb a "<file>.prev" that already existed from an EARLIER,
+# successful run — only the live file is rolled back to ITS pre-this-run
+# content; the older ".prev" keeps its own (even older) content untouched.
+@test "UT-INFRA-446: asset-sync.sh pull on a mid-install failure never touches a pre-existing .prev" {
+  mkdir -p "${ASSET_SYNC_FIXTURE_BUCKET}"
+  printf 'v1\n' > "${ASSET_SYNC_FIXTURE_BUCKET}/a.txt"
+  write_bucket_manifest
+  run "$SCRIPT" pull "$ASSET_SYNC_FIXTURE_PREFIX" "$DEST"
+  assert_success
+  [ ! -e "${DEST}/a.txt.prev" ]
+
+  printf 'v2\n' > "${ASSET_SYNC_FIXTURE_BUCKET}/a.txt"
+  write_bucket_manifest
+  run "$SCRIPT" pull "$ASSET_SYNC_FIXTURE_PREFIX" "$DEST"
+  assert_success
+  run cat "${DEST}/a.txt"; assert_output "v2"
+  run cat "${DEST}/a.txt.prev"; assert_output "v1"
+
+  printf 'v3\n' > "${ASSET_SYNC_FIXTURE_BUCKET}/a.txt"
+  mkdir -p "${ASSET_SYNC_FIXTURE_BUCKET}/locked"
+  printf 'c\n' > "${ASSET_SYNC_FIXTURE_BUCKET}/locked/c.txt"
+  write_bucket_manifest
+  mkdir -p "${DEST}/locked/c.txt/c.txt"
+  run "$SCRIPT" pull "$ASSET_SYNC_FIXTURE_PREFIX" "$DEST"
+  [ "$status" -eq 6 ]
+  run cat "${DEST}/a.txt"; assert_output "v2"
+  run cat "${DEST}/a.txt.prev"; assert_output "v1"
+}
+
+# UT-INFRA-436 — FR49: an already-current box (every manifest file already
+# matches what is installed) writes nothing — verified by mtime.
+@test "UT-INFRA-436: asset-sync.sh pull on an already-current box writes nothing" {
+  seed_bucket
+  run "$SCRIPT" pull "$ASSET_SYNC_FIXTURE_PREFIX" "$DEST"
+  assert_success
+  local before after
+  before="$(stat -c %Y "${DEST}/scripts/boot.sh")"
+  sleep 1
+  run "$SCRIPT" pull "$ASSET_SYNC_FIXTURE_PREFIX" "$DEST"
+  assert_success
+  assert_output --partial "already current"
+  after="$(stat -c %Y "${DEST}/scripts/boot.sh")"
+  [ "$before" = "$after" ]
+  [ ! -e "${DEST}/scripts/boot.sh.prev" ]
+}
+
+# UT-INFRA-437 — FR49: the staging directory is removed on a successful
+# pull — no `.onbox-staging.*` entry is left under dest-dir.
+@test "UT-INFRA-437: asset-sync.sh pull removes its staging directory on success" {
+  seed_bucket
+  run "$SCRIPT" pull "$ASSET_SYNC_FIXTURE_PREFIX" "$DEST"
+  assert_success
+  run find "$DEST" -maxdepth 1 -name '.onbox-staging.*'
+  assert_output ""
+}
+
+# UT-INFRA-438 — FR49: the staging directory is removed on a refused pull
+# (checksum mismatch) too — not only on success.
+@test "UT-INFRA-438: asset-sync.sh pull removes its staging directory on refusal" {
+  seed_bucket
+  sed -i 's/.*scripts\/boot.sh/0000000000000000000000000000000000000000000000000000000000000000  scripts\/boot.sh/' \
+    "${ASSET_SYNC_FIXTURE_BUCKET}/manifest.sha256"
+  run "$SCRIPT" pull "$ASSET_SYNC_FIXTURE_PREFIX" "$DEST"
+  assert_failure
+  run find "$DEST" -maxdepth 1 -name '.onbox-staging.*'
+  assert_output ""
+}
+
+# UT-INFRA-439 — FR49: the staging directory is removed even on an
+# unexpected abort (the process killed mid-run) — exercises the EXIT trap
+# itself, not just the handled failure returns above.
+@test "UT-INFRA-439: asset-sync.sh pull removes its staging directory on an aborted run" {
+  mkdir -p "$ASSET_SYNC_FIXTURE_BUCKET"
+  local i
+  for i in $(seq 1 40); do
+    printf 'content-%d\n' "$i" > "${ASSET_SYNC_FIXTURE_BUCKET}/file-${i}.txt"
+  done
+  write_bucket_manifest
+
+  # setsid gives the script its own process group — a bare `kill -TERM
+  # "$pid"` only signals the top-level script process, never the
+  # grandchild it may be mid-fork/exec on (here, the aws-stub call inside
+  # fetch_manifest). Under load that grandchild can outlive the killed
+  # parent, finish moments later, and RECREATE the staging dir (with just
+  # that one file) after the trap already removed it — a flaky false
+  # negative, not a real defect. Signaling the whole process group (`kill
+  # -TERM -- "-$pid"`) kills every descendant together, matching how a
+  # real abort (systemd/OOM tearing down the whole process tree) behaves.
+  setsid "$SCRIPT" pull "$ASSET_SYNC_FIXTURE_PREFIX" "$DEST" &
+  local pid=$!
+  local tries=0
+  while [ -z "$(find "$DEST" -maxdepth 1 -name '.onbox-staging.*' 2>/dev/null)" ]; do
+    tries=$((tries + 1))
+    if [ "$tries" -gt 1000 ]; then
+      kill -TERM -- "-$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      fail "staging directory never appeared — cannot exercise the abort path"
+    fi
+    sleep 0.005
+  done
+  kill -TERM -- "-$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+
+  run find "$DEST" -maxdepth 1 -name '.onbox-staging.*'
+  assert_output ""
+}

@@ -116,6 +116,27 @@ ranges are allocated by the lead per sibling story.
 | UT-INFRA-147 | AXI-1950 | `tests/refresh-env.bats` | No temp file is ever created when SSM is unreachable. |
 | UT-INFRA-148 | AXI-1950 | `tests/refresh-env.bats` | A missing env-file argument is a usage error, no `aws` call. |
 | UT-INFRA-149 | AXI-1950 | `tests/boot.bats` | `boot.sh` runs asset-sync pull, then `.env` refresh, then `docker compose up -d`, in order (FR10/FR11/FR12). |
+| UT-INFRA-430 | AXI-1969 | `tests/asset-sync.bats` | A manifest entry `../x` is rejected as a whole: exit 5, nothing installed, the entry named (FR48/AC41). |
+| UT-INFRA-431 | AXI-1969 | `tests/asset-sync.bats` | A manifest entry `/etc/x` (absolute) is rejected the same way (FR48/AC41). |
+| UT-INFRA-432 | AXI-1969 | `tests/asset-sync.bats` | A manifest entry `a/../../b` (buried `..`) is rejected the same way (FR48/AC41). |
+| UT-INFRA-433 | AXI-1969 | `tests/asset-sync.bats` | A manifest entry with an empty path is rejected the same way (FR48). |
+| UT-INFRA-434 | AXI-1969 | `tests/asset-sync.bats` | The whole manifest is validated before any listed file is fetched — one unsafe entry stops even the safe ones from being fetched (FR48). |
+| UT-INFRA-435 | AXI-1969 | `tests/asset-sync.bats` | A mid-install failure (third file's destination path is blocked by a type conflict — root-proof, unlike `chmod 000`) restores every already-installed file to its previous copy, verified by content (FR49/AC42). |
+| UT-INFRA-436 | AXI-1969 | `tests/asset-sync.bats` | An already-current box writes nothing, verified by mtime (FR49/AC42). |
+| UT-INFRA-437 | AXI-1969 | `tests/asset-sync.bats` | The staging directory is removed on a successful pull (FR49). |
+| UT-INFRA-438 | AXI-1969 | `tests/asset-sync.bats` | The staging directory is removed on a refused pull (checksum mismatch) too (FR49). |
+| UT-INFRA-439 | AXI-1969 | `tests/asset-sync.bats` | The staging directory is removed even when the process is aborted mid-run (SIGTERM, EXIT trap) (FR49). |
+| UT-INFRA-440 | AXI-1969 | `tests/refresh-env.bats` | An SSM value containing a literal newline is refused: exit 4, `.env` kept byte-identical, the parameter named, its value never printed (FR50/AC43). |
+| UT-INFRA-441 | AXI-1969 | `tests/refresh-env.bats` | Same refusal for a value containing a literal tab (FR50/AC43). |
+| UT-INFRA-442 | AXI-1969 | `tests/refresh-env.bats` | The refusal fires even when the bad value belongs to a decision-5 preserved key (FR50). |
+| UT-INFRA-443 | AXI-1969 | `tests/refresh-env.bats` | No false positive: an ordinary SSM result (no newline/tab) still refreshes normally after the `--output json`/`jq` rewrite. |
+| UT-INFRA-444 | AXI-1969 | `tests/refresh-env.bats` | No temp file is left behind when a value is refused (same contract as the SSM-unreachable path). |
+| UT-INFRA-445 | AXI-1969 | `tests/asset-sync.bats` | Review follow-up #1: files already match but the installed `manifest.sha256` is stale — only that bookkeeping copy is repaired, no asset file rewritten. |
+| UT-INFRA-446 | AXI-1969 | `tests/asset-sync.bats` | Review follow-up #2: a mid-install failure never disturbs a `.prev` that already existed from an earlier successful run (verified by content). |
+| UT-INFRA-448 | AXI-1969 | `tests/refresh-env.bats` | Review follow-up #3: a bare carriage return is refused the same way as a newline/tab (exit 4). |
+| UT-INFRA-449 | AXI-1969 | `tests/refresh-env.bats` | Review follow-up #3: a CRLF pair is refused the same way. |
+| UT-INFRA-450 | AXI-1969 | `tests/refresh-env.bats` | Review follow-up #4: with `jq` genuinely absent from `PATH` (not faked), exits 1, names the missing tool, makes no `aws` call, `.env` byte-identical. |
+| UT-INFRA-451 | AXI-1969 | `tests/refresh-env.bats` | Review follow-up #4: a value containing `"`, `'`, `$`, `#`, `=`, a space, a backslash, and a non-ASCII character round-trips byte-for-byte into `.env`. |
 | UT-INFRA-150 | AXI-1950 | `tests/boot.bats` | A failed asset-sync pull does not block refresh-env or compose up (EC6 spirit). |
 | UT-INFRA-151 | AXI-1950 | `tests/boot.bats` | A failed `.env` refresh does not block compose up (EC6). |
 | UT-INFRA-152 | AXI-1950 | `tests/boot.bats` | A failing migrate gate (surfaced via `docker compose up -d` exit code) is surfaced as `boot.sh`'s own failure, never swallowed. |

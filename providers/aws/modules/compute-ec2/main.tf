@@ -318,11 +318,6 @@ locals {
     behind_proxy = false
   })
 
-  # Still read here (not just by the aws_s3_object above) so a future
-  # consumer of the rendered compose content (e.g. a qualification record)
-  # has it without re-reading the file — kept as a named local for that.
-  docker_compose_yml = file(local.onbox_compose_path)
-
   legacy_image_tag_env = var.use_ssm_image_tags ? "" : <<-EOT
     BACKEND_IMAGE_TAG=${var.backend_image_tag}
     BIOCOMPUTE_IMAGE_TAG=${var.biocompute_image_tag}

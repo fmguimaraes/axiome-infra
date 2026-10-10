@@ -159,3 +159,167 @@ ssm_tsv() {
   assert_output --partial "usage:"
   assert_stub_not_called aws
 }
+
+# ---------------------------------------------------------------------------
+# AXI-1969 (FR50/AC43) — a newline/tab inside an SSM value is detected and
+# refused, never silently corrupting .env. UT-INFRA-440..447.
+# ---------------------------------------------------------------------------
+
+# UT-INFRA-440 — AC43: a parameter value containing a literal newline is
+# refused — the previous .env is kept byte-identical, the parameter is
+# named, exit is the dedicated non-zero code (4), and the value itself
+# never appears in any output.
+@test "UT-INFRA-440: refresh-env.sh refuses an SSM value containing a newline" {
+  local before after
+  before="$(sha256sum "$ENV_FILE")"
+  export REFRESH_ENV_FIXTURE_SSM_JSON='{"Parameters":[{"Name":"/axiome/prod/JWT_SECRET","Value":"bad\nvalue-marker"},{"Name":"/axiome/prod/ECR_REGISTRY","Value":"999999999999.dkr.ecr.eu-west-3.amazonaws.com"}]}'
+  run "$SCRIPT" "$ENV_FILE"
+  [ "$status" -eq 4 ]
+  assert_output --partial "JWT_SECRET"
+  refute_output --partial "bad"
+  refute_output --partial "value-marker"
+  after="$(sha256sum "$ENV_FILE")"
+  [ "$before" = "$after" ]
+}
+
+# UT-INFRA-441 — AC43 (tab variant): same refusal for a value containing a
+# literal tab instead of a newline.
+@test "UT-INFRA-441: refresh-env.sh refuses an SSM value containing a tab" {
+  local before after
+  before="$(sha256sum "$ENV_FILE")"
+  export REFRESH_ENV_FIXTURE_SSM_JSON='{"Parameters":[{"Name":"/axiome/prod/JWT_SECRET","Value":"bad\tvalue-marker"},{"Name":"/axiome/prod/ECR_REGISTRY","Value":"999999999999.dkr.ecr.eu-west-3.amazonaws.com"}]}'
+  run "$SCRIPT" "$ENV_FILE"
+  [ "$status" -eq 4 ]
+  assert_output --partial "JWT_SECRET"
+  refute_output --partial "bad"
+  refute_output --partial "value-marker"
+  after="$(sha256sum "$ENV_FILE")"
+  [ "$before" = "$after" ]
+}
+
+# UT-INFRA-442 — the refusal fires even when the bad value belongs to a
+# preserved key (decision 5) — the box must never trust a malformed SSM
+# response just because the key would have been ignored anyway.
+@test "UT-INFRA-442: refresh-env.sh refuses a newline even on a preserved key's value" {
+  local before after
+  before="$(sha256sum "$ENV_FILE")"
+  export REFRESH_ENV_FIXTURE_SSM_JSON='{"Parameters":[{"Name":"/axiome/prod/BACKEND_IMAGE_TAG","Value":"sha-bad\nextra-marker"},{"Name":"/axiome/prod/ECR_REGISTRY","Value":"999999999999.dkr.ecr.eu-west-3.amazonaws.com"}]}'
+  run "$SCRIPT" "$ENV_FILE"
+  [ "$status" -eq 4 ]
+  assert_output --partial "BACKEND_IMAGE_TAG"
+  refute_output --partial "extra-marker"
+  after="$(sha256sum "$ENV_FILE")"
+  [ "$before" = "$after" ]
+}
+
+# UT-INFRA-443 — no newline/tab anywhere: the refresh proceeds normally
+# (the detection has no false positive on ordinary values).
+@test "UT-INFRA-443: refresh-env.sh refreshes normally when no value has a newline or tab" {
+  export REFRESH_ENV_FIXTURE_SSM_TSV="$(ssm_tsv)"
+  run "$SCRIPT" "$ENV_FILE"
+  assert_success
+  run grep '^JWT_SECRET=' "$ENV_FILE"
+  assert_output "JWT_SECRET=new-secret-value"
+}
+
+# UT-INFRA-444 — no temp file is left behind when a value is refused (the
+# decision to keep the old file is made before any write begins, same
+# contract as the SSM-unreachable path, UT-INFRA-147).
+@test "UT-INFRA-444: refresh-env.sh creates no temp file when a value is refused" {
+  export REFRESH_ENV_FIXTURE_SSM_JSON='{"Parameters":[{"Name":"/axiome/prod/JWT_SECRET","Value":"bad\nvalue"}]}'
+  run "$SCRIPT" "$ENV_FILE"
+  [ "$status" -eq 4 ]
+  run find "$(dirname "$ENV_FILE")" -maxdepth 1 -name '*.tmp.*'
+  assert_output ""
+}
+
+# UT-INFRA-448 — AXI-1969 review follow-up #3: a bare carriage return
+# (no accompanying newline) is refused the same way as a newline/tab.
+@test "UT-INFRA-448: refresh-env.sh refuses an SSM value containing a bare carriage return" {
+  local before after
+  before="$(sha256sum "$ENV_FILE")"
+  export REFRESH_ENV_FIXTURE_SSM_JSON='{"Parameters":[{"Name":"/axiome/prod/JWT_SECRET","Value":"bad\rvalue-marker"},{"Name":"/axiome/prod/ECR_REGISTRY","Value":"999999999999.dkr.ecr.eu-west-3.amazonaws.com"}]}'
+  run "$SCRIPT" "$ENV_FILE"
+  [ "$status" -eq 4 ]
+  assert_output --partial "JWT_SECRET"
+  refute_output --partial "bad"
+  refute_output --partial "value-marker"
+  after="$(sha256sum "$ENV_FILE")"
+  [ "$before" = "$after" ]
+}
+
+# UT-INFRA-449 — same refusal for a CRLF pair.
+@test "UT-INFRA-449: refresh-env.sh refuses an SSM value containing CRLF" {
+  local before after
+  before="$(sha256sum "$ENV_FILE")"
+  export REFRESH_ENV_FIXTURE_SSM_JSON='{"Parameters":[{"Name":"/axiome/prod/JWT_SECRET","Value":"bad\r\nvalue-marker"},{"Name":"/axiome/prod/ECR_REGISTRY","Value":"999999999999.dkr.ecr.eu-west-3.amazonaws.com"}]}'
+  run "$SCRIPT" "$ENV_FILE"
+  [ "$status" -eq 4 ]
+  assert_output --partial "JWT_SECRET"
+  refute_output --partial "bad"
+  refute_output --partial "value-marker"
+  after="$(sha256sum "$ENV_FILE")"
+  [ "$before" = "$after" ]
+}
+
+# make_path_without_jq <path> — builds (in BATS_TEST_TMPDIR) a single
+# mirror directory of symlinks to every executable reachable on <path>
+# EXCEPT any named "jq", in PATH order (so a real tool is never removed
+# or faked — only mirrored or, for the one name under test, omitted), and
+# prints that mirror directory's path. A single `ln -s dir/* mirror/`
+# per original PATH directory, not a per-file loop, keeps this fast
+# (~1500 entries on a typical dev box's /usr/bin alone).
+make_path_without_jq() {
+  local mirror="${BATS_TEST_TMPDIR}/path-without-jq" dirs=() dir
+  mkdir -p "$mirror"
+  IFS=':' read -ra dirs <<< "$1"
+  for dir in "${dirs[@]}"; do
+    [ -d "$dir" ] || continue
+    ln -s "${dir}"/* "${mirror}/" 2>/dev/null || true
+  done
+  rm -f "${mirror}/jq"
+  printf '%s' "$mirror"
+}
+
+# UT-INFRA-450 — AXI-1969 review follow-up #4: with no `jq` reachable on
+# PATH at all (not a fake/broken jq — simply absent), refresh-env.sh exits
+# 1, names the missing tool, makes no `aws` call, and leaves .env
+# byte-identical.
+@test "UT-INFRA-450: refresh-env.sh exits 1 and keeps .env byte-identical when jq is unavailable" {
+  local before after
+  before="$(sha256sum "$ENV_FILE")"
+  PATH="$(make_path_without_jq "$PATH")"
+  run "$SCRIPT" "$ENV_FILE"
+  [ "$status" -eq 1 ]
+  assert_output --partial "jq is required"
+  assert_stub_not_called aws
+  after="$(sha256sum "$ENV_FILE")"
+  [ "$before" = "$after" ]
+}
+
+# UT-INFRA-451 — AXI-1969 review follow-up #4: a value containing a
+# double quote, single quote, dollar sign, hash, equals sign, space,
+# backslash, and a non-ASCII character round-trips byte-for-byte into the
+# written KEY=VALUE line (the JSON fixture is built by `jq -n --arg`,
+# which is trusted to encode correctly — this test is of the SCRIPT's own
+# decode path, fetch_ssm's `.Name + "=" + .Value` raw concatenation).
+@test "UT-INFRA-451: refresh-env.sh writes an odd-character SSM value byte-for-byte" {
+  local raw_value ssm_json
+  raw_value="$(printf 'dq=%s_sq=%s_dollar=%s_hash=%s_eq=%s_sp=[%s]_bs=%s_nonascii=%s' '"' "'" '$' '#' '=' ' ' '\' 'é')"
+  # Every other non-preserved key the fixture ENV_FILE already carries must
+  # still come back non-empty, or compose_new_env refuses before ever
+  # reaching ODD_KEY (UT-INFRA-143's contract) — include them alongside.
+  ssm_json="$(jq -n \
+    --arg odd_name "/axiome/prod/ODD_KEY" --arg odd_value "$raw_value" \
+    '{Parameters: [
+      {Name: $odd_name, Value: $odd_value},
+      {Name: "/axiome/prod/ORGANIZATION_DATABASE_URL", Value: "postgres://new-host/organization_svc"},
+      {Name: "/axiome/prod/USER_DATABASE_URL", Value: "postgres://new-host/user_svc"},
+      {Name: "/axiome/prod/JWT_SECRET", Value: "new-secret-value"}
+    ]}')"
+  export REFRESH_ENV_FIXTURE_SSM_JSON="$ssm_json"
+  run "$SCRIPT" "$ENV_FILE"
+  assert_success
+  run grep '^ODD_KEY=' "$ENV_FILE"
+  assert_output "ODD_KEY=${raw_value}"
+}
