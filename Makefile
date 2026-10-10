@@ -44,10 +44,33 @@ destroy:
 # when it is NOT set do we probe for `docker compose` v2 ourselves; if that
 # probe fails too, make stops with $(error) rather than falling back to the
 # legacy binary.
+#
+# AXI-1955 fix (a): the probe/error above used to run for EVERY goal,
+# including `make help` and every Terraform/seed/deploy-prod target — a
+# machine with no Docker installed at all could not even run `make help`.
+# It is now gated on the goal(s) actually requested: only a goal whose
+# recipe touches Docker Compose ($(DOCKER_COMPOSE_TARGETS) below — every
+# target whose recipe references $(APP)/$(SHARED)/$(DEMO)/
+# $(ANALYTICS_COMPOSE)) triggers the probe/error below.
+#
+# AXI-1955 fix (b): a `DOCKER_COMPOSE=docker-compose` override (command
+# line or environment) used to be accepted verbatim — silently selecting
+# the same unsupported v1 binary this guard exists to keep out. It is now
+# rejected with the same clear $(error), whether set on the command line
+# or in the environment (both read the same way via `origin`).
+DOCKER_COMPOSE_TARGETS := local-up local-up-fg local-down local-restart \
+	demo-up demo-down demo-restart demo-logs demo-rm \
+	local-logs local-tail local-ps local-health local-shell local-exec local-debug local-inspect \
+	analytics-up analytics-down analytics-logs analytics-ps analytics-role
+ifneq ($(strip $(filter $(DOCKER_COMPOSE_TARGETS),$(MAKECMDGOALS))),)
 ifeq ($(origin DOCKER_COMPOSE),undefined)
 DOCKER_COMPOSE := $(shell docker compose version >/dev/null 2>&1 && echo "docker compose")
 ifeq ($(strip $(DOCKER_COMPOSE)),)
 $(error Docker Compose v2 not found (`docker compose version` failed). Install Docker Compose v2, or pass DOCKER_COMPOSE="<command>" explicitly on the command line. The legacy `docker-compose` v1 binary is not supported here — see AXI-1952)
+endif
+endif
+ifeq ($(strip $(DOCKER_COMPOSE)),docker-compose)
+$(error DOCKER_COMPOSE="docker-compose" names the legacy v1 binary, which is NOT supported here (AXI-1952/AXI-1955) — it has a known data-corrupting bug against modern image config (`KeyError: 'ContainerConfig'`) and must never be invoked against the real local/demo/shared stacks. Pass DOCKER_COMPOSE="docker compose" (v2) instead, or unset DOCKER_COMPOSE to let make probe for v2 itself.)
 endif
 endif
 LEGACY_SLUG     ?= local
@@ -288,25 +311,40 @@ validate:
 	terraform validate
 
 help:
-	@echo "Local stack (solo dev — slug '$(LEGACY_SLUG)'; for parallel sessions use scripts/wt-up.sh):"
+	@echo "Local stack — fixed-port demo stack, project 'axiome-demo' (local-* ALIASES demo-*;"
+	@echo "for an isolated per-worktree stack instead, call scripts/wt-up.sh/wt-down.sh directly):"
 	@echo "  make shared-up                    start the shared services stack only (machine-wide)"
-	@echo "  make shared-down [PURGE=1]        stop the shared stack (PURGE=1 also deletes its volumes)"
-	@echo "  make local-up                     shared + this slug's app services (DB/vhost/buckets + migrate)"
-	@echo "  make local-up-fg                  app services in foreground (streams logs)"
-	@echo "  make local-up SERVICE=backend     provision, then (re)build only one app service"
-	@echo "  make local-down                   stop this slug's app stack (keeps shared + data)"
-	@echo "  make local-purge                  stop + destroy this slug's DB/redis/vhost/buckets"
-	@echo "  make local-restart [SERVICE=x]    restart all or one app service"
+	@echo "  make shared-down [PURGE=1 CONFIRM=<token>]"
+	@echo "                                    stop the shared stack. PURGE=1 ALSO deletes its"
+	@echo "                                    volumes (every worktree's data) and REQUIRES"
+	@echo "                                    CONFIRM=DELETE-ALL-LOCAL-DATA typed exactly — a"
+	@echo "                                    missing/wrong token refuses, nothing is destroyed;"
+	@echo "                                    a verified Postgres backup is taken first and a"
+	@echo "                                    failed/empty backup also refuses (FR40, AXI-1952)"
+	@echo "  make local-up [MIGRATE=0]         = demo-up: migrate the shared DB (backed up first,"
+	@echo "                                    forward-only, no push fallback), THEN start the"
+	@echo "                                    fixed-port demo stack (frontend :5173, API :3000,"
+	@echo "                                    biocompute :8000). MIGRATE=0 skips the migration"
+	@echo "                                    and prints pending migrations instead, then starts"
+	@echo "                                    un-migrated anyway (FR38, AXI-1952). Requires the"
+	@echo "                                    shared stack + axiome-legacydb already running."
+	@echo "  make local-up-fg [SERVICE=x]      app services in foreground (streams logs)"
+	@echo "  make local-down                   stop the demo containers (keeps them — instant restart)"
+	@echo "  make local-purge                  DISABLED — would destroy the shared axiome-localhost"
+	@echo "                                    DB; use 'make demo-rm' to remove containers only"
+	@echo "  make local-restart [SERVICE=x]    restart all or one demo service"
 	@echo ""
 	@echo "Debugging:"
 	@echo "  make local-logs [SERVICE=x] [TAIL=500]   follow logs"
 	@echo "  make local-tail [SERVICE=x] [TAIL=500]   print last N log lines and exit"
-	@echo "  make local-ps                            list containers"
-	@echo "  make local-health                        show service health"
-	@echo "  make local-stats                         live CPU/mem/io usage"
+	@echo "  make local-ps                            list app + shared containers"
+	@echo "  make local-health                        show service health (container Status column)"
+	@echo "  make local-stats                         live CPU/mem/io usage (docker stats)"
 	@echo "  make local-shell SERVICE=backend         open a shell in a container"
 	@echo "  make local-exec SERVICE=backend CMD=\"...\"  run a one-off command"
 	@echo "  make local-debug [SERVICE=x]             foreground + verbose log levels"
+	@echo "  make local-inspect                       backend with Node inspector attached"
+	@echo "                                            (gateway:9229 user:9230 event:9231 org:9232)"
 	@echo ""
 	@echo "Analytics (Metabase read layer — run 'make shared-up' first):"
 	@echo "  make analytics-up                start Metabase overlay (http://localhost:3001)"
@@ -321,6 +359,26 @@ help:
 	@echo "  make seed                        seed the local stack to its known baseline"
 	@echo "  make seed-env ENV=staging        seed a deployed environment via SSM"
 	@echo ""
-	@echo "Production deploy (authoritative — AXI-1349):"
-	@echo "  make deploy-prod ENV=production TAG=<sha>            advance :stable + roll + migrate + health-check"
-	@echo "  make deploy-prod ENV=production TAG=<sha> DRY_RUN=1  print the plan, mutate nothing"
+	@echo "Production deploy (authoritative — AXI-1349/AXI-1954):"
+	@echo "  make deploy-prod ENV=production TAG=<sha> [SERVICE=backend|frontend|biocompute]"
+	@echo "                                    lock -> preflight (gate state, box reachable) ->"
+	@echo "                                    pre-deploy RDS snapshot if migrations pending ->"
+	@echo "                                    roll over SSM (old containers serve until the"
+	@echo "                                    migration gate passes on the new image) -> poll"
+	@echo "                                    readiness -> advance ECR :stable (LAST mutation,"
+	@echo "                                    only on PASS) -> read-only baseline check (warn"
+	@echo "                                    only). Fails closed; restores the previous tag on"
+	@echo "                                    a roll/readiness failure. See docs/platform-"
+	@echo "                                    lifecycle-operations.md for every refusal."
+	@echo "  make deploy-prod ENV=production TAG=<sha> DRY_RUN=1   print the plan, mutate nothing"
+	@echo ""
+	@echo "Other lifecycle operations — scripts, not Make targets (see"
+	@echo "docs/platform-lifecycle-operations.md for the full runbook):"
+	@echo "  scripts/roll-service.sh         roll one service through the migration gate (the"
+	@echo "                                   mechanism deploy-prod.sh calls over SSM)"
+	@echo "  scripts/ssm-exec.sh -e <env> '<cmd>'   run a command on the box over SSM"
+	@echo "                                   (exit 0 success / 1 failed / 2 INDETERMINATE)"
+	@echo "  scripts/lock.sh <env> status|acquire|release|override   deploy/data-tier locks"
+	@echo "  providers/aws/scripts/power.sh <env> up|down|status      daily EC2 on/off"
+	@echo "  providers/aws/scripts/power-data.sh <env> up|down|status  long-idle RDS+Redis park"
+	@echo "  providers/aws/scripts/power-up-all.sh <env> [--yes]       validated one-call turn-on"

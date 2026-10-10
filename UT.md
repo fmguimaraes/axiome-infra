@@ -253,3 +253,13 @@ ranges are allocated by the lead per sibling story.
 | UT-INFRA-377 | AXI-1954 | `tests/seed-environment-check.bats` | Review bounce #1 item 4: without `--check`, the same missing-axiome-back condition still fails loudly (exit 1, `ERROR`) — a real seed run must not silently treat this as routine. |
 | UT-INFRA-378 | AXI-1954 | `tests/deploy-prod.bats` | Review bounce #1 item 5: `ecr_retag_stable` refuses to advance `:stable` when TAG's digest moved during the deploy, states the roll already succeeded, and exits non-zero. |
 | UT-INFRA-379 | AXI-1954 | `tests/deploy-prod.bats` | Review bounce #1 item 6: the data-tier lock is re-checked immediately after preflight (before snapshot/roll), catching a park started during preflight. |
+| UT-INFRA-380 | AXI-1955 | `tests/makefile-help-and-compose-gate.bats` | `make help` succeeds with no `docker` binary reachable on PATH at all (fix a). |
+| UT-INFRA-381 | AXI-1955 | `tests/makefile-help-and-compose-gate.bats` | `make demo-up` still fails closed with the documented message when no docker v2 is on PATH (fix a, narrowed not removed). |
+| UT-INFRA-382 | AXI-1955 | `tests/makefile-help-and-compose-gate.bats` | A command-line `DOCKER_COMPOSE=docker-compose` (legacy v1) override is rejected with a clear message (fix b). |
+| UT-INFRA-383 | AXI-1955 | `tests/makefile-help-and-compose-gate.bats` | Same rejection from an environment `DOCKER_COMPOSE=docker-compose`, not just the command line (fix b). |
+| UT-INFRA-384 | AXI-1955 | `tests/makefile-help-and-compose-gate.bats` | An explicit `DOCKER_COMPOSE="docker compose"` (v2) override is still accepted and skips the probe. |
+| UT-INFRA-385 | AXI-1955 | `tests/makefile-help-and-compose-gate.bats` | A non-Docker goal (`make plan`) also needs no docker on PATH and never probes/errors. |
+| UT-INFRA-386 | AXI-1955 | `tests/doc-truth.bats` | FR41/AC33: every Makefile target whose recipe drives Docker Compose is covered by the `DOCKER_COMPOSE_TARGETS` gate list — a future target added without updating that list is caught. |
+| UT-INFRA-387 | AXI-1955 | `tests/doc-truth.bats` | FR41/AC33: every `scripts/**`/`providers/aws/scripts/**` path named in this story's runbooks actually exists on disk. |
+| UT-INFRA-388 | AXI-1955 | `tests/doc-truth.bats` | FR41/AC33: a curated set of refusal/contract strings quoted verbatim in the runbook exist verbatim in the script named alongside them. |
+| UT-INFRA-389 | AXI-1955 | `tests/doc-truth.bats` | FR41/AC33: the AWS CLI minimum versions quoted in the runbook match `scripts/lock.sh`'s own `LOCK_MIN_AWS_CLI_PUT`/`LOCK_MIN_AWS_CLI_DELETE` constants. |

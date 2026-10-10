@@ -105,10 +105,17 @@ and the header of [`scripts/deploy-prod.sh`](../scripts/deploy-prod.sh).
 
 ## 5. Rollback & health
 
-- **App rollback:** the deploy health-check **auto-rolls `:stable` back** to the
-  prior image on failure. To roll back later, re-run the deploy with the previous
+- **App rollback:** `:stable` is only advanced **after** the readiness check
+  passes, so there is no `:stable`-level rollback to perform. A deploy that
+  **fails** readiness restores itself automatically mid-run — re-rolls the box
+  to the **prior tag** (`:stable` is left untouched, since it was never
+  advanced) — but never reverts the schema (forward-only migration gate; see
+  [migration-authoring-guide.md](migration-authoring-guide.md)). To roll back
+  **manually** later (e.g. a deploy that passed health checks but regressed
+  after `:stable` already advanced), re-run the deploy with the previous
   known-good `<sha>` (same `SERVICE`).
-- **Health paths** (prod, polled ~5 min): backend `GET /api/v1/health`, bio-compute
+- **Health paths** (prod, polled ~5 min): backend `GET /api/v1/health/ready`
+  (the real readiness check, not the always-200 liveness probe), bio-compute
   `GET /api/v1/version`, frontend `GET /` — see
   [deployment.md](deployment.md#health-checks).
 - **Verify a running deploy** with the on-box helpers:

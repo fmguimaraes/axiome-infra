@@ -10,9 +10,12 @@
 # covers both shell and YAML) so this story's own explanatory prose (e.g.
 # this file's docstring, or the "no longer falls back" comments in Makefile/
 # wt-up.sh) does not trip itself. Excluded: tests/** (fixtures/specs
-# legitimately reference these strings to test for their absence), .git,
-# and scripts/roll-service.sh — AXI-1953 is concurrently cleaning that file
-# and owns it; it is not touched here.
+# legitimately reference these strings to test for their absence) and .git.
+# AXI-1955: the scripts/roll-service.sh exclusion (AXI-1952 debt) is dropped
+# — AXI-1953 already rewrote that script to delegate migration to the
+# compose gate and it carries neither literal today (verified by this test
+# itself: it now fails loudly, not vacuously, if either literal reappears
+# anywhere, roll-service.sh included).
 
 load 'helpers/setup'
 
@@ -29,7 +32,6 @@ _ac6_scan() {
     -E "$pattern" "${INFRA_ROOT}" \
     --exclude-dir=tests --exclude-dir=.git \
     2>/dev/null \
-  | grep -v "^${INFRA_ROOT}/scripts/roll-service.sh:" \
   | awk -F: '{
       line=$0
       sub(/^[^:]*:[^:]*:/, "", line)

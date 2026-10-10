@@ -68,27 +68,40 @@ make deploy-prod ENV=production TAG=<sha> SERVICE=frontend DRY_RUN=1       # pri
 # equivalently: scripts/deploy-prod.sh --tag <sha> --service frontend|biocompute [--dry-run]
 ```
 
-`make deploy-prod` (→ [`scripts/deploy-prod.sh`](../scripts/deploy-prod.sh)) does, in order:
+**Rewritten end-to-end by AXI-1954 (epic AXI-1944) — this section describes the
+CURRENT `scripts/deploy-prod.sh`; the full operator runbook (every refusal,
+the migration gate, locks, baselining, restore behaviour) lives in
+[`platform-lifecycle-operations.md` §3](../docs/platform-lifecycle-operations.md#3-deploy-scriptsdeploy-prodsh--make-deploy-prod).**
+`make deploy-prod` does, in order:
 
-1. **Preflight** — verifies `axiome/<service>:<sha>` exists in ECR (`axiome/backend`,
-   `axiome/frontend`, or `axiome/biocompute`), resolves its digest, and captures
-   the current `:stable` digest for rollback. Fails closed (nothing deployed) if
-   the source image is missing.
-2. **Advance `:stable`** — a server-side manifest retag (no docker pull) so prod
-   pulls the chosen image. Idempotent (a no-op if `:stable` already points there).
-3. **Roll the box** — pipes [`scripts/roll-service.sh`](../scripts/roll-service.sh)
-   over [`scripts/ssm-exec.sh -e production`](../scripts/ssm-exec.sh): `docker
-   compose pull` → `prisma migrate deploy` (baselining first if `_prisma_migrations`
-   is absent — a no-op for frontend/bio-compute, which have no Prisma schema of
-   their own) → `up -d`. **Fails closed** — a failed migration never swaps the
-   image; the old containers keep serving.
-4. **Health-check** — polls the service's health URL until 2xx (see
-   [Health Checks](#health-checks) below for the per-service path — the script's
-   own default is backend-shaped `/api/v1/health`; the gated CD workflow overrides
-   `HEALTH_URL` for frontend/bio-compute, see below). On an unhealthy result it
-   **auto-rolls `:stable` back** to the prior image (so the prior image keeps
-   serving) and aborts non-zero.
-5. **Record** — writes `reports/<ts>-production-deploy-<service>.md` + a row in
+1. **Locks** — refuses if the `data-tier` lock is held/unknown (a park may be
+   in progress); acquires the `deploy` lock (auto-released on exit).
+2. **Preflight** — verifies `axiome/<service>:<sha>` exists in ECR and
+   resolves its digest; for backend, also reads `migrate-gate status` on the
+   box (read-only) to learn pending migrations and the box's current tag.
+   Fails closed if the source image is missing, the box is unreachable, or
+   the box predates the AXI-1950 asset-sync conversion (names the one-time
+   conversion command).
+3. **Pre-deploy RDS snapshot** — backend, pending migrations, production
+   only — taken and verified `available` BEFORE anything is migrated.
+4. **Roll the box** — [`scripts/roll-service.sh`](../scripts/roll-service.sh)
+   over [`scripts/ssm-exec.sh -e production`](../scripts/ssm-exec.sh):
+   `docker compose pull` then `up -d`, which runs the baked-in migration
+   gate (`migrate-gate apply`, `axiome-back docker/migrate-gate/`) against the
+   NEW image BEFORE swapping any backend container — the OLD containers keep
+   serving until the gate passes. **No baselining happens automatically** —
+   a ledger-less service REFUSES and the deploy restores the previous tag;
+   baselining is a separate, explicit operator act (see the runbook §2).
+5. **Readiness poll** — backend polls the JSON `/api/v1/health/ready`
+   endpoint (`services[].reason` on a 503); frontend/bio-compute poll their
+   own 2xx path. On failure, the previous tag is restored and confirmed; the
+   schema is NOT reverted (the gate is forward-only) — see the runbook for
+   the exact "schema may be ahead" wording this prints.
+6. **Advance `:stable`** — the LAST mutation, only on readiness PASS, and only
+   if the tag's digest has not moved since preflight.
+7. **Read-only baseline verification** (`seed-environment.sh --check`,
+   backend only) — warning only, never rolls back.
+8. **Record** — writes `reports/<ts>-production-deploy-<service>.md` + a row in
    `reports/deploy-operations.md` (SHA + digest + timestamp + actor).
 
 Prereqs: AWS creds; `aws` CLI (+ Session Manager plugin for interactive sessions
@@ -101,10 +114,23 @@ secret as a literal to SSM — the on-box roll fetches everything from
 `axiome-bio-compute` per the service being deployed) that passed CI's scan/test
 gates. Its tag is the 8-char commit SHA.
 
-**Rollback:** the health-check step auto-rolls `:stable` back to the prior image
-on failure. To roll back manually later, re-run `make deploy-prod` with the
-previous known-good `<sha>` (and the same `SERVICE`); for schema (backend only),
-restore the pre-deploy RDS snapshot (see the catch-up plan).
+**Rollback:** `:stable` is only ever advanced **after** the readiness poll
+passes, so there is never a `:stable`-level rollback to perform. If readiness
+fails first, `deploy-prod.sh` itself restores automatically: it re-rolls the
+box to the **prior tag** (`restore_previous_tag`, via `roll-service.sh`) —
+`:stable` is left untouched the whole time, since it was never advanced. This
+restore only reverts the running image, never the schema (the migration gate
+is forward-only, see
+[`migration-authoring-guide.md`](migration-authoring-guide.md)) — a migration
+that already applied stays applied, which is the "schema may now be ahead of
+the restored image" caveat the script prints
+(`report_rollback_caveat`/`Migrations may have PARTIALLY applied before this
+failure`/`The migration gate completed successfully before this failure`, see
+[`platform-lifecycle-operations.md §3`](platform-lifecycle-operations.md#3-deploy-scriptsdeploy-prodsh--make-deploy-prod)).
+To roll back **manually** later (e.g. after `:stable` already advanced on a
+deploy that looked healthy but regressed), re-run `make deploy-prod` with the
+previous known-good `<sha>` (and the same `SERVICE`); for schema issues
+(backend only), restore the pre-deploy RDS snapshot (see the catch-up plan).
 
 ### Gated one-click CD (AXI-1349, FR13; AXI-1350, FR14/AC19)
 
@@ -157,8 +183,13 @@ workflow, [`.github/workflows/deploy-production.yml`](../.github/workflows/deplo
 
 ### Rollback
 
-**Production:** re-run `make deploy-prod ENV=production TAG=<previous-good-sha>` (the
-health-check step also auto-rolls back on a failed deploy). For dev/staging on the
+**Production:** re-run `make deploy-prod ENV=production TAG=<previous-good-sha>` for a
+manual rollback (e.g. after `:stable` already advanced on a deploy that passed
+health checks but regressed later). A **failed** deploy restores itself
+automatically mid-run (re-roll to the prior tag, see
+[Rollback](#the-real-production-deploy--one-command-axi-1349fr12-axi-1350fr14ac19)
+above) — `:stable` is never advanced until after readiness passes, so there is
+no `:stable` state to roll back in that case. For dev/staging on the
 Scaleway provider:
 
 1. Go to Actions → "Promote" → Run workflow
@@ -191,8 +222,8 @@ FQDN (`https://platform.axiomebio.com`), polled up to `HEALTH_RETRIES` (default
 
 | Service | Endpoint | Expected | Notes |
 |---------|----------|----------|-------|
-| Backend | GET `/api/v1/health` | 200 OK | `deploy-prod.sh`'s own default (no override needed) |
-| Frontend | GET `/` | 200 OK | Static SPA has no dedicated health endpoint; a 2xx on the root document is the signal. `HEALTH_URL` override in `deploy-production.yml`. |
+| Backend | GET `/api/v1/health/ready` | 200 OK | **Disagreement fixed (AXI-1955): this doc previously said `/api/v1/health`.** `deploy-prod.sh`'s own `default_health_path()` uses the real readiness check (`/api/v1/health/ready`) for the backend specifically — a 503 is treated as "not ready yet" and retried, not a hard failure, until `HEALTH_RETRIES` is exhausted. No override needed. |
+| Frontend | GET `/` | 200 OK | Static SPA has no dedicated health endpoint; a 2xx on the root document is the signal. `HEALTH_URL` override in `deploy-production.yml`. `default_health_path()`'s non-backend fallback is the plain `/api/v1/health` path, but the frontend overrides it to `/` anyway. |
 | Bio-compute | GET `/api/v1/version` | 200 OK | `HEALTH_URL` override in `deploy-production.yml`. |
 
 ## Required GitHub Secrets

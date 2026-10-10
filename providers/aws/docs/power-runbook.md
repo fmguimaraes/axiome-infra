@@ -44,9 +44,12 @@ make turn-on ENV=production YES=1
    snapshot is the only copy of the Redis data — no snapshot, no run.
 3. **Ordering** — data tier is brought up and waited-healthy **first**, then
    compute, so the app never starts against a cold DB/Redis.
-4. **App readiness** — `power-up` blocks on `https://<fqdn>/api/v1/health/live`
-   returning 200 through the public edge (CloudFront → Caddy → gateway) and records
-   **time-to-up**. A stack that starts but never serves fails the run (non-zero).
+4. **App readiness** — `power-up` blocks on `https://<fqdn>/api/v1/health/ready`
+   (the real readiness check, not the always-200 liveness probe) returning 200
+   through the public edge (CloudFront → Caddy → gateway) — or, pre-launch
+   when the FQDN has no public DNS yet, the same path checked on-box over SSM
+   (`power-up-all.sh`'s `onbox_ready`) — and records **time-to-up**. A stack
+   that starts but never serves fails the run (non-zero).
 5. **State re-adoption** — the run ends by telling you to confirm
    `terraform plan` shows **no changes** (Redis recreated with the same id/config)
    **before** un-gating terraform-cd.
@@ -67,11 +70,32 @@ volume (Mongo/Rabbit/local-Redis docker volumes) survives a stop, so no data
 moves. On boot the enabled `axiome.service` systemd unit runs `docker compose up
 -d` against images already on EBS — no ECR pull.
 
+### Backup verification before every `power-down` (FR31, AXI-1951)
+
+`power-down` runs the on-box Mongo backup over SSM FIRST, then independently
+**verifies** it — not just the on-box script's own claim — before stopping
+anything: the object must exist (`head-object`), be non-empty, have a
+`LastModified` not earlier than when this backup run was issued, and carry an
+S3 `sha256` metadata value matching the backup script's own reported
+checksum. Any `ssm-exec.sh` non-zero result (INDETERMINATE included) refuses
+the stop. Override with `--skip-backup "<reason>"` — the reason must be
+non-empty and must not look secret-shaped; it is written to the audit report
+before the stop proceeds. `BACKUP_SSM_WAIT` (default 180s) bounds the backup
+command itself.
+
 ### Time-to-up — the commercial number
 
-`up` blocks until `https://<fqdn>/api/v1/health/live` returns 200 (through
-CloudFront → Caddy → gateway) and prints elapsed seconds; the value is also
-logged to `reports/`.
+**Disagreement fixed (AXI-1955): this doc previously said `/api/v1/health/live`;
+`scripts/power.sh`'s own default (`HEALTH_URL`) is `/api/v1/health/ready`** — the
+real readiness check (database + schema + every backing service), not the
+always-200 liveness probe. `up` blocks until
+`https://<fqdn>/api/v1/health/ready` returns 200 (through CloudFront → Caddy
+→ gateway) and prints elapsed seconds; the value is also logged to
+`reports/`. A 503 (any backing service still unhealthy) is treated exactly
+like "not up yet" and retried, never as a hard failure, until
+`POWER_UP_HEALTH_TIMEOUT_SECONDS` (default 600s) expires — at which point the
+last response body is printed so you can see which service/reason is
+blocking readiness.
 
 - **Estimated ~2–4 min.** Instance start ~30–60 s, then gateway waits on RabbitMQ
   healthy (`start_period` 90 s) before it serves — so cold-start won't beat ~90 s.
