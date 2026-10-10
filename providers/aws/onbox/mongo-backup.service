@@ -1,0 +1,8 @@
+[Unit]
+Description=Axiome Mongo (event store) backup — FR31/FR32
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/axiome/scripts/mongo-backup.sh

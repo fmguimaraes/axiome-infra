@@ -78,10 +78,27 @@ resource "aws_iam_access_key" "lightsail_runtime" {
 # init.sh.tftpl change lands. The existing `s3:::${naming_prefix}-*` wildcard
 # grant below already covers reading `onbox/*` from the system bucket.
 locals {
-  onbox_compose_path     = "${path.module}/../../onbox/docker-compose.yml"
-  onbox_boot_sh_path     = "${path.module}/../../onbox/boot.sh"
-  onbox_asset_sync_path  = "${path.module}/../../scripts/asset-sync.sh"
-  onbox_refresh_env_path = "${path.module}/../../scripts/refresh-env.sh"
+  onbox_compose_path              = "${path.module}/../../onbox/docker-compose.yml"
+  onbox_boot_sh_path              = "${path.module}/../../onbox/boot.sh"
+  onbox_asset_sync_path           = "${path.module}/../../scripts/asset-sync.sh"
+  onbox_refresh_env_path          = "${path.module}/../../scripts/refresh-env.sh"
+  onbox_mongo_backup_path         = "${path.module}/../../onbox/mongo-backup.sh"
+  onbox_mongo_backup_service_path = "${path.module}/../../onbox/mongo-backup.service"
+  onbox_mongo_backup_timer_path   = "${path.module}/../../onbox/mongo-backup.timer"
+}
+
+# FR1/FR2/FR31/FR32: mongo-backup.sh, uploaded declaratively so cloud-init
+# (shared with modules/compute-ec2 — init.sh.tftpl step 12, not touched by
+# this story) can fetch it without inlining it into user_data. This resource
+# did not exist in the Lightsail module before this story — without it,
+# cloud-init step 12's `aws s3 cp s3://.../scripts/mongo-backup.sh` has no
+# object to fetch and that step fails outright; adding it here fixes a
+# pre-existing gap as a side effect of this story's onbox/ migration.
+resource "aws_s3_object" "mongo_backup_script" {
+  bucket      = "${var.naming_prefix}-system"
+  key         = "scripts/mongo-backup.sh"
+  source      = local.onbox_mongo_backup_path
+  source_hash = filemd5(local.onbox_mongo_backup_path)
 }
 
 resource "aws_s3_object" "onbox_compose" {
@@ -112,6 +129,28 @@ resource "aws_s3_object" "onbox_refresh_env" {
   source_hash = filemd5(local.onbox_refresh_env_path)
 }
 
+# FR31/FR32 — same pattern as modules/compute-ec2; see that module's comment.
+resource "aws_s3_object" "onbox_mongo_backup" {
+  bucket      = "${var.naming_prefix}-system"
+  key         = "onbox/scripts/mongo-backup.sh"
+  source      = local.onbox_mongo_backup_path
+  source_hash = filemd5(local.onbox_mongo_backup_path)
+}
+
+resource "aws_s3_object" "onbox_mongo_backup_service" {
+  bucket      = "${var.naming_prefix}-system"
+  key         = "onbox/mongo-backup.service"
+  source      = local.onbox_mongo_backup_service_path
+  source_hash = filemd5(local.onbox_mongo_backup_service_path)
+}
+
+resource "aws_s3_object" "onbox_mongo_backup_timer" {
+  bucket      = "${var.naming_prefix}-system"
+  key         = "onbox/mongo-backup.timer"
+  source      = local.onbox_mongo_backup_timer_path
+  source_hash = filemd5(local.onbox_mongo_backup_timer_path)
+}
+
 resource "aws_s3_object" "onbox_manifest" {
   bucket = "${var.naming_prefix}-system"
   key    = "onbox/manifest.sha256"
@@ -120,6 +159,9 @@ resource "aws_s3_object" "onbox_manifest" {
     "${filesha256(local.onbox_boot_sh_path)}  scripts/boot.sh",
     "${filesha256(local.onbox_asset_sync_path)}  scripts/asset-sync.sh",
     "${filesha256(local.onbox_refresh_env_path)}  scripts/refresh-env.sh",
+    "${filesha256(local.onbox_mongo_backup_path)}  scripts/mongo-backup.sh",
+    "${filesha256(local.onbox_mongo_backup_service_path)}  mongo-backup.service",
+    "${filesha256(local.onbox_mongo_backup_timer_path)}  mongo-backup.timer",
     "",
   ])
 }
@@ -226,10 +268,14 @@ resource "aws_lightsail_instance" "main" {
   # cloud-init's bootstrap (init.sh.tftpl step 7) fetches the on-box asset
   # channel from S3 at first boot — it must already exist (AXI-1950).
   depends_on = [
+    aws_s3_object.mongo_backup_script,
     aws_s3_object.onbox_compose,
     aws_s3_object.onbox_boot_sh,
     aws_s3_object.onbox_asset_sync,
     aws_s3_object.onbox_refresh_env,
+    aws_s3_object.onbox_mongo_backup,
+    aws_s3_object.onbox_mongo_backup_service,
+    aws_s3_object.onbox_mongo_backup_timer,
     aws_s3_object.onbox_manifest,
   ]
 

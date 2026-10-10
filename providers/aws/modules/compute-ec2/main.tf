@@ -5,29 +5,35 @@
 data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
 
-# Mongo backup script (FR1/FR2), uploaded declaratively so cloud-init can fetch it
-# without inlining it into user_data (hard-capped at 16KB — see cloud-init/init.sh.tftpl
-# step 12). Encrypted at rest by the system bucket's default SSE-KMS (no override needed).
+# Mongo backup script (FR1/FR2/FR31/FR32), uploaded declaratively so
+# cloud-init can fetch it without inlining it into user_data (hard-capped at
+# 16KB — see cloud-init/init.sh.tftpl step 12). Encrypted at rest by the
+# system bucket's default SSE-KMS (no override needed). Source moved under
+# onbox/ (epic AXI-1944 decision 8) — this key and cloud-init's fetch of it
+# are UNCHANGED; only the source-of-truth path moved.
 resource "aws_s3_object" "mongo_backup_script" {
   bucket      = "${var.naming_prefix}-system"
   key         = "scripts/mongo-backup.sh"
-  source      = "${path.module}/../../scripts/mongo-backup.sh"
-  source_hash = filemd5("${path.module}/../../scripts/mongo-backup.sh")
+  source      = local.onbox_mongo_backup_path
+  source_hash = filemd5(local.onbox_mongo_backup_path)
 }
 
 # On-box asset channel (AXI-1950, epic AXI-1944 decision 8, FR11/AC9). Published
 # declaratively, same channel/pattern as mongo_backup_script above, so a change to
-# any of these four files reaches an EXISTING box via scripts/asset-sync.sh's pull
+# any of these files reaches an EXISTING box via scripts/asset-sync.sh's pull
 # mode (run by scripts/boot.sh on every boot, and by an operator's one-time
 # conversion step) — WITHOUT a user_data change and WITHOUT touching aws_instance,
 # so it never triggers the instance stop/start that a user_data edit would.
 # cloud-init's own first-boot bootstrap (cloud-init/init.sh.tftpl step 7) also
 # depends on these objects already existing — see aws_instance.main's depends_on.
 locals {
-  onbox_compose_path     = "${path.module}/../../onbox/docker-compose.yml"
-  onbox_boot_sh_path     = "${path.module}/../../onbox/boot.sh"
-  onbox_asset_sync_path  = "${path.module}/../../scripts/asset-sync.sh"
-  onbox_refresh_env_path = "${path.module}/../../scripts/refresh-env.sh"
+  onbox_compose_path              = "${path.module}/../../onbox/docker-compose.yml"
+  onbox_boot_sh_path              = "${path.module}/../../onbox/boot.sh"
+  onbox_asset_sync_path           = "${path.module}/../../scripts/asset-sync.sh"
+  onbox_refresh_env_path          = "${path.module}/../../scripts/refresh-env.sh"
+  onbox_mongo_backup_path         = "${path.module}/../../onbox/mongo-backup.sh"
+  onbox_mongo_backup_service_path = "${path.module}/../../onbox/mongo-backup.service"
+  onbox_mongo_backup_timer_path   = "${path.module}/../../onbox/mongo-backup.timer"
 }
 
 resource "aws_s3_object" "onbox_compose" {
@@ -58,6 +64,35 @@ resource "aws_s3_object" "onbox_refresh_env" {
   source_hash = filemd5(local.onbox_refresh_env_path)
 }
 
+# FR31/FR32: mongo-backup.sh itself also travels through the onbox channel
+# now (same relpath "scripts/mongo-backup.sh" that cron already invokes at
+# /opt/axiome/scripts/mongo-backup.sh — see mongo_backup_script above and
+# cloud-init/init.sh.tftpl, both unchanged), so an EXISTING, onbox-converted
+# box's copy stays current on every boot without a separate delivery path.
+# mongo-backup.timer/.service are delivered the same way but NOT installed
+# by anything in this story (providers/aws/scripts/install-mongo-backup-timer.sh
+# is the one-time operator conversion; never run by this story).
+resource "aws_s3_object" "onbox_mongo_backup" {
+  bucket      = "${var.naming_prefix}-system"
+  key         = "onbox/scripts/mongo-backup.sh"
+  source      = local.onbox_mongo_backup_path
+  source_hash = filemd5(local.onbox_mongo_backup_path)
+}
+
+resource "aws_s3_object" "onbox_mongo_backup_service" {
+  bucket      = "${var.naming_prefix}-system"
+  key         = "onbox/mongo-backup.service"
+  source      = local.onbox_mongo_backup_service_path
+  source_hash = filemd5(local.onbox_mongo_backup_service_path)
+}
+
+resource "aws_s3_object" "onbox_mongo_backup_timer" {
+  bucket      = "${var.naming_prefix}-system"
+  key         = "onbox/mongo-backup.timer"
+  source      = local.onbox_mongo_backup_timer_path
+  source_hash = filemd5(local.onbox_mongo_backup_timer_path)
+}
+
 # manifest.sha256 format matches scripts/asset-sync.sh's own publish mode
 # exactly ("<sha256>  <relpath>", one per line) so the same pull-mode
 # verification code path works whether Terraform or an operator published.
@@ -69,6 +104,9 @@ resource "aws_s3_object" "onbox_manifest" {
     "${filesha256(local.onbox_boot_sh_path)}  scripts/boot.sh",
     "${filesha256(local.onbox_asset_sync_path)}  scripts/asset-sync.sh",
     "${filesha256(local.onbox_refresh_env_path)}  scripts/refresh-env.sh",
+    "${filesha256(local.onbox_mongo_backup_path)}  scripts/mongo-backup.sh",
+    "${filesha256(local.onbox_mongo_backup_service_path)}  mongo-backup.service",
+    "${filesha256(local.onbox_mongo_backup_timer_path)}  mongo-backup.timer",
     "",
   ])
 }
@@ -358,6 +396,9 @@ resource "aws_instance" "main" {
     aws_s3_object.onbox_boot_sh,
     aws_s3_object.onbox_asset_sync,
     aws_s3_object.onbox_refresh_env,
+    aws_s3_object.onbox_mongo_backup,
+    aws_s3_object.onbox_mongo_backup_service,
+    aws_s3_object.onbox_mongo_backup_timer,
     aws_s3_object.onbox_manifest,
   ]
 

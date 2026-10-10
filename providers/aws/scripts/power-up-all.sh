@@ -55,7 +55,11 @@ case "$ENV" in
   staging)    FQDN="staging.axiomebio.com" ;;
   dev)        FQDN="dev.axiomebio.com" ;;
 esac
-HEALTH_PATH="/api/v1/health/live"
+# FR26: the power-up gate polls the real readiness endpoint, not liveness —
+# /health/ready is a 503-with-reasons while any backing service is unhealthy
+# (EC12: never a false 200), which onbox_ready's retry loop below treats as
+# "not ready yet" until its own retry budget is exhausted.
+HEALTH_PATH="/api/v1/health/ready"
 
 # Shared reporting/audit helpers (report_*, log_event, REPORTS_DIR).
 # shellcheck source=_power_lib.sh
@@ -67,18 +71,28 @@ redis_state() { aws elasticache describe-replication-groups --region "$REGION" \
 
 die() { echo "ABORT: $*" >&2; exit 1; }
 
-# On-box readiness: curl the app's liveness through the local edge with the real
-# host SNI (--resolve), via SSM. Works even when the public FQDN has no DNS yet
-# (pre-launch). Returns 0 on HTTP 200. Retries to cover container warm-up.
+# On-box readiness: curl the app's /health/ready (FR26) through the local
+# edge with the real host SNI (--resolve), via SSM. Works even when the
+# public FQDN has no DNS yet (pre-launch). Returns 0 on HTTP 200; a 503 (any
+# backing service still unhealthy, EC12) is treated as "not ready yet" and
+# retried, same as a connection failure, bounded by ONBOX_READY_RETRIES.
+# Prints the last response on the final failed try so a caller sees which
+# service/reason is blocking readiness instead of just "not ready".
 onbox_ready() {
-  local ssm="${REPO_ROOT}/scripts/ssm-exec.sh" i out
+  local ssm="${REPO_ROOT}/scripts/ssm-exec.sh" i out retries sleep_s
+  retries="${ONBOX_READY_RETRIES:-8}"
+  sleep_s="${ONBOX_READY_SLEEP:-15}"
   [ -x "$ssm" ] || { echo "  (ssm-exec.sh not found at ${ssm}; cannot on-box verify)"; return 1; }
-  for i in 1 2 3 4 5 6 7 8; do
+  for ((i = 1; i <= retries; i++)); do
     out="$("$ssm" -e "$ENV" -t 40 \
       "curl -fsS -k -o /dev/null -w 'ONBOX_HTTP=%{http_code}' --max-time 8 --resolve ${FQDN}:443:127.0.0.1 https://${FQDN}${HEALTH_PATH}" 2>/dev/null || true)"
     case "$out" in *ONBOX_HTTP=200*) return 0 ;; esac
-    echo "  on-box health not ready yet (try ${i}/8); waiting 15s..."; sleep 15
+    if [ "$i" -lt "$retries" ]; then
+      echo "  on-box /health/ready not ready yet (try ${i}/${retries}); waiting ${sleep_s}s..."
+      sleep "$sleep_s"
+    fi
   done
+  echo "  on-box /health/ready still not ready after ${retries} tries: ${out}"
   return 1
 }
 

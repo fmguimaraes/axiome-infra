@@ -9,3 +9,6 @@ providers/aws/onbox/docker-compose.yml:docker-compose.yml
 providers/aws/onbox/boot.sh:scripts/boot.sh
 scripts/asset-sync.sh:scripts/asset-sync.sh
 scripts/refresh-env.sh:scripts/refresh-env.sh
+providers/aws/onbox/mongo-backup.sh:scripts/mongo-backup.sh
+providers/aws/onbox/mongo-backup.service:mongo-backup.service
+providers/aws/onbox/mongo-backup.timer:mongo-backup.timer

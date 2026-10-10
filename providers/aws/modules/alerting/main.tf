@@ -101,6 +101,24 @@ resource "aws_db_event_subscription" "rds_backup" {
   tags             = var.tags
 }
 
+# FR35: AWS auto-restarts a stopped RDS instance after its fixed 7-day
+# maximum stopped duration. That restart is surfaced as an RDS "notification"
+# category event (e.g. RDS-EVENT-0154, "DB instance restarted [...] after
+# being stopped for 7 days") — independently of any CloudWatch metric, same
+# mechanism as the backup-events subscription above. providers/aws/scripts/
+# power-data.sh's own `status` command separately shows how long RDS has
+# been stopped, from its own recorded park time (AWS exposes no such field).
+resource "aws_db_event_subscription" "rds_auto_restart" {
+  count = var.rds_instance_id != "" ? 1 : 0
+
+  name             = "${var.naming_prefix}-rds-auto-restart"
+  sns_topic        = aws_sns_topic.alerts.arn
+  source_type      = "db-instance"
+  source_ids       = [var.rds_instance_id]
+  event_categories = ["notification"]
+  tags             = var.tags
+}
+
 # ---------------- ElastiCache ----------------
 
 resource "aws_cloudwatch_metric_alarm" "redis_engine_cpu_high" {
