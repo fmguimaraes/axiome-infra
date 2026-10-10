@@ -203,3 +203,53 @@ ranges are allocated by the lead per sibling story.
 | UT-INFRA-326 | AXI-1953 | `tests/dev-auto-promote-workflow.bats` | **Overruns into AXI-1954's reserved range (coordinator-authorized, review bounce #2).** The "Roll service on dev VM" step fails when the remote roll fails (no `pipefail`, a failed `ssh | tee` previously left the step green). |
 | UT-INFRA-327 | AXI-1953 | `tests/dev-auto-promote-workflow.bats` | **Overruns into AXI-1954's reserved range (coordinator-authorized, review bounce #2).** Static check: the roll step declares `shell: bash` explicitly. |
 | UT-INFRA-328 | AXI-1953 | `tests/dev-auto-promote-workflow.bats` | **Overruns into AXI-1954's reserved range (coordinator-authorized, review bounce #2).** The "Emit Qualification Record" step refuses a failed roll by its own logic even when a facts line is present. |
+| UT-INFRA-330 | AXI-1954 | `tests/deploy-prod.bats` | The full success path takes the deploy lock, preflights OK, rolls, passes readiness, advances `:stable` LAST, runs the baseline check, and releases the lock (FR14/AC11). |
+| UT-INFRA-331 | AXI-1954 | `tests/deploy-prod.bats` | EC1: the box is unreachable at preflight — fails closed before any mutation, `:stable` never touched, lock still released. |
+| UT-INFRA-332 | AXI-1954 | `tests/deploy-prod.bats` | FR28/AC19: a held deploy lock refuses and names the holder; no ECR call is made. |
+| UT-INFRA-333 | AXI-1954 | `tests/deploy-prod.bats` | FR29/AC20: a held/unknown data-tier lock refuses before the deploy lock is even attempted. |
+| UT-INFRA-334 | AXI-1954 | `tests/deploy-prod.bats` | EC13: a frontend (non-backend) deploy skips migrate/snapshot/baseline but still takes the lock, rolls, and advances `:stable`. |
+| UT-INFRA-335 | AXI-1954 | `tests/deploy-prod.bats` | NFR7/AC8: an unconverted box (no `migrate:` service) refuses and names the exact `asset-sync.sh` conversion command. |
+| UT-INFRA-336 | AXI-1954 | `tests/deploy-prod.bats` | Review bounce #1 item 1: a non-zero `migrate-gate status` with no ledger-less refusal line refuses WITHOUT instructing `baseline` — status-undetermined is not evidence of a ledger-less service. |
+| UT-INFRA-337 | AXI-1954 | `tests/deploy-prod.bats` | FR16/FR17: pending migrations on production take a pre-deploy RDS snapshot (and wait for it) before rolling, and prune beyond retention; pruned ids carry the `axiome-<env>-predeploy-` prefix and the newest (just-taken) one is never deleted (review bounce #1 item 7). |
+| UT-INFRA-338 | AXI-1954 | `tests/deploy-prod.bats` | FR16: no pending migrations takes no snapshot. |
+| UT-INFRA-339 | AXI-1954 | `tests/deploy-prod.bats` | A snapshot-create failure stops the deploy before migrating; no roll (`cmd-roll`) is ever attempted. |
+| UT-INFRA-340 | AXI-1954 | `tests/deploy-prod.bats` | FR18/AC12: a migration-gate failure during the roll restores the previous tag and confirms it; `:stable` never advances. |
+| UT-INFRA-341 | AXI-1954 | `tests/deploy-prod.bats` | The restore roll ALSO fails: the deploy reports loudly and names the manual recovery command; `:stable` still untouched. |
+| UT-INFRA-342 | AXI-1954 | `tests/deploy-prod.bats` | FR20: an INDETERMINATE roll result never advances `:stable` and never attempts a blind restore roll. |
+| UT-INFRA-343 | AXI-1954 | `tests/deploy-prod.bats` | AC12/FR15: a readiness failure after a successful roll restores the previous tag and confirms it; `:stable` untouched. |
+| UT-INFRA-344 | AXI-1954 | `tests/deploy-prod.bats` | AC11/FR14: `:stable` advances strictly AFTER the roll's `up -d` call in the stub log, never before (ordering). |
+| UT-INFRA-345 | AXI-1954 | `tests/deploy-prod.bats` | FR21/AC28: a read-only baseline mismatch is a warning only — the deploy still succeeds and `:stable` still advances. |
+| UT-INFRA-346 | AXI-1954 | `tests/deploy-prod.bats` | FR7: `MIGRATION_FACTS` lines from a successful roll are captured into the deploy report. |
+| UT-INFRA-347 | AXI-1954 | `tests/deploy-prod.bats` | `MIGRATION_FACTS_UNAVAILABLE` is recorded as a warning, not a deploy failure. |
+| UT-INFRA-348 | AXI-1954 | `tests/deploy-prod.bats` | `--dry-run` reports the plan and mutates nothing (no lock, no AWS/SSM mutation beyond one read-only query). |
+| UT-INFRA-349 | AXI-1954 | `tests/deploy-prod.bats` | `--dry-run` states plainly it could not determine pending migrations when the box is unreachable (NFR2, fail-closed reporting). |
+| UT-INFRA-350 | AXI-1954 | `tests/deploy-prod.bats` | Advancing `:stable` itself failing after a healthy roll is reported loudly and names that `:stable` does NOT point at the new tag. |
+| UT-INFRA-351 | AXI-1954 | `tests/deploy-prod.bats` | A missing `--tag`/`TAG` is a usage error before any `aws` call. |
+| UT-INFRA-352 | AXI-1954 | `tests/deploy-prod.bats` | An unknown `--service` is rejected before any `aws` call. |
+| UT-INFRA-353 | AXI-1954 | `tests/seed-environment-check.bats` | FR21: `seed-environment.sh --check` skips the workspace-roles write (Step 1) entirely. |
+| UT-INFRA-354 | AXI-1954 | `tests/seed-environment-check.bats` | `--check` takes a single read-only pass per entity, no settle-wait loop. |
+| UT-INFRA-355 | AXI-1954 | `tests/seed-environment-check.bats` | `--check` still exits non-zero on a mismatch — its own standalone contract is unchanged; only a caller may treat it as warning-only. |
+| UT-INFRA-356 | AXI-1954 | `tests/seed-environment-check.bats` | Without `--check`, the original settle-wait banner and `SEED OK`/`SEED FAILED` language are unchanged. |
+| UT-INFRA-357 | AXI-1954 | `tests/seed-environment-check.bats` | `--check` is documented in `--help` usage. |
+| UT-INFRA-358 | AXI-1954 | `tests/verify-deploy.bats` | FR24/FR26/AC18: `verify-deploy.sh` defaults to `/api/v1/health/ready` and passes on 200. |
+| UT-INFRA-359 | AXI-1954 | `tests/verify-deploy.bats` | A 503 is reported with the per-service reason from the readiness body, never masked behind a bare `curl -f` failure. |
+| UT-INFRA-360 | AXI-1954 | `tests/verify-deploy.bats` | `HEALTH_PATH` remains override-able. |
+| UT-INFRA-361 | AXI-1954 | `tests/verify-deploy.bats` | DNS + readiness + root-path checks all pass together when the environment is healthy. |
+| UT-INFRA-362 | AXI-1954 | `tests/deploy-production-workflow.bats` | `deploy-production.yml` has no `push`/`pull_request` trigger — only `repository_dispatch`/`workflow_dispatch` can start a run. |
+| UT-INFRA-363 | AXI-1954 | `tests/deploy-production-workflow.bats` | Every `run:` step declares `shell: bash` explicitly (epic AXI-1944 learning from AXI-1953's review bounce). |
+| UT-INFRA-364 | AXI-1954 | `tests/deploy-production-workflow.bats` | Every `run:` step's script sets `set -euo pipefail` itself. |
+| UT-INFRA-365 | AXI-1954 | `tests/deploy-production-workflow.bats` | The `environment: production` approval gate is still present and untouched. |
+| UT-INFRA-366 | AXI-1954 | `tests/deploy-prod.bats` | Review bounce #1 item 1: when the preflight output DOES carry migrate-gate's own ledger-less `REFUSE <svc>: tables exist with no migration ledger` line, the message names `baseline` + that exact service. |
+| UT-INFRA-367 | AXI-1954 | `tests/deploy-prod.bats` | Review bounce #1 item 1: a connectivity/status-undetermined error shows the verbatim preflight output and never suggests `Run: migrate-gate baseline` as the remedy (mutation-checked against the pre-fix code). |
+| UT-INFRA-368 | AXI-1954 | `tests/deploy-prod.bats` | Review bounce #1 item 1: a missing-database-URL error is treated the same as a connectivity error — never `baseline` (mutation-checked against the pre-fix code). |
+| UT-INFRA-369 | AXI-1954 | `tests/deploy-prod.bats` | Review bounce #1 item 2: `--dry-run` distinguishes "box not reachable over SSM" from "box reachable but preflight refused". |
+| UT-INFRA-370 | AXI-1954 | `tests/deploy-prod.bats` | Review bounce #1 item 3: the roll-failure report states migrations may have partially applied and that no snapshot is available when none was taken. |
+| UT-INFRA-371 | AXI-1954 | `tests/deploy-prod.bats` | Review bounce #1 item 3: the roll-failure report names the pre-deploy snapshot id as the point-in-time rollback path when one was taken. |
+| UT-INFRA-372 | AXI-1954 | `tests/deploy-prod.bats` | Review bounce #1 item 3: the INDETERMINATE-roll report states the same partial-migration risk. |
+| UT-INFRA-373 | AXI-1954 | `tests/deploy-prod.bats` | Review bounce #1 item 3: the readiness-failure report states the schema is definitely (not merely possibly) ahead of the restored image. |
+| UT-INFRA-374 | AXI-1954 | `tests/deploy-prod.bats` | Review bounce #1 item 4: a real baseline count match is recorded as OK, never MISMATCH/NOT PERFORMED. |
+| UT-INFRA-375 | AXI-1954 | `tests/deploy-prod.bats` | Review bounce #1 item 4: `seed-environment.sh --check` exiting 3 (expected counts unavailable) is recorded as `Baseline verification: NOT PERFORMED`, never MISMATCH. |
+| UT-INFRA-376 | AXI-1954 | `tests/seed-environment-check.bats` | Review bounce #1 item 4: `--check` exits a distinct code (3) with a `BASELINE CHECK NOT PERFORMED` message when expected counts cannot be derived (e.g. axiome-back not checked out). |
+| UT-INFRA-377 | AXI-1954 | `tests/seed-environment-check.bats` | Review bounce #1 item 4: without `--check`, the same missing-axiome-back condition still fails loudly (exit 1, `ERROR`) — a real seed run must not silently treat this as routine. |
+| UT-INFRA-378 | AXI-1954 | `tests/deploy-prod.bats` | Review bounce #1 item 5: `ecr_retag_stable` refuses to advance `:stable` when TAG's digest moved during the deploy, states the roll already succeeded, and exits non-zero. |
+| UT-INFRA-379 | AXI-1954 | `tests/deploy-prod.bats` | Review bounce #1 item 6: the data-tier lock is re-checked immediately after preflight (before snapshot/roll), catching a park started during preflight. |

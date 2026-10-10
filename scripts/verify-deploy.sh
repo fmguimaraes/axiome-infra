@@ -8,7 +8,9 @@
 #
 # Checks:
 #   1. DNS resolves to the provider's public IP
-#   2. https://<fqdn>/api/v1/health returns 2xx (TLS valid)
+#   2. https://<fqdn>/api/v1/health/ready returns 200 (FR24/FR26/AC18 — epic
+#      AXI-1944; a 503 is reported with the per-service reasons, never
+#      treated as a pass)
 #   3. https://<fqdn>/ returns 2xx
 #
 # Exits non-zero if any check fails.
@@ -19,7 +21,7 @@
 #   FQDN              Full domain. Default: terraform output -raw fqdn
 #   EXPECTED_IP       IP it should resolve to. Default: terraform output -raw <IP_OUTPUT>
 #   IP_OUTPUT         Terraform output key for the public IP. Default: per-provider.
-#   HEALTH_PATH       Default: /api/v1/health  (gateway uses the api/v1 URI prefix)
+#   HEALTH_PATH       Default: /api/v1/health/ready (AXI-1954; was /api/v1/health)
 #   ROOT_PATH         Default: /
 #   TIMEOUT           Per-curl timeout in seconds. Default: 10
 
@@ -43,7 +45,7 @@ else
   IP_OUTPUT="${IP_OUTPUT:-public_ip}"
 fi
 
-HEALTH_PATH="${HEALTH_PATH:-/api/v1/health}"
+HEALTH_PATH="${HEALTH_PATH:-/api/v1/health/ready}"
 ROOT_PATH="${ROOT_PATH:-/}"
 TIMEOUT="${TIMEOUT:-10}"
 
@@ -83,8 +85,31 @@ fi
 
 echo
 echo "[HTTPS]"
-check "GET ${HEALTH_PATH}" "curl -fsS --max-time ${TIMEOUT} https://${FQDN}${HEALTH_PATH} > /dev/null"
-check "GET ${ROOT_PATH}"   "curl -fsS --max-time ${TIMEOUT} https://${FQDN}${ROOT_PATH}   > /dev/null"
+
+# Readiness (FR24/FR26/AC18): a 503 is a real, informative failure — never
+# masked behind `curl -f`. Reasons come from the LAST response body, exactly
+# as the deploy gate (scripts/deploy-prod.sh) reports them.
+check_ready() {
+  local url="https://${FQDN}${HEALTH_PATH}" raw code body reasons
+  raw="$(curl -s --max-time "${TIMEOUT}" -w '\nHTTP_STATUS:%{http_code}' "${url}" 2>/dev/null || true)"
+  code="$(printf '%s' "${raw}" | sed -n 's/^HTTP_STATUS:\(.*\)$/\1/p' | tail -1)"
+  body="$(printf '%s' "${raw}" | sed '$d')"
+  if [ "${code}" = "200" ]; then
+    echo "  PASS  GET ${HEALTH_PATH} (200)"
+    PASS=$((PASS + 1))
+    return 0
+  fi
+  reasons=""
+  if command -v jq >/dev/null 2>&1; then
+    reasons="$(printf '%s' "${body}" | jq -r '.services[]? | "\(.service): \(.reason // "unknown")"' 2>/dev/null)"
+  fi
+  echo "  FAIL  GET ${HEALTH_PATH} (${code:-<no response>})"
+  [ -n "${reasons}" ] && printf '        %s\n' "${reasons}"
+  FAIL=$((FAIL + 1))
+  return 1
+}
+check_ready || true
+check "GET ${ROOT_PATH}" "curl -fsS --max-time ${TIMEOUT} https://${FQDN}${ROOT_PATH}   > /dev/null"
 
 echo
 if [ ${FAIL} -eq 0 ]; then

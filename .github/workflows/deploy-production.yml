@@ -1,34 +1,61 @@
-# Gated continuous-deployment to PRODUCTION (AXI-1349, FR13/AC17/NFR6).
+# Gated continuous-deployment to PRODUCTION (AXI-1349, FR13/AC17/NFR6; deploy
+# ORDERING/ROLLBACK re-architected under AXI-1954, epic AXI-1944, FR14-21/
+# EC1/EC13/AC11-14/18/19/28).
 #
 # Closes the promote≠deploy gap: a green `main` build can become a deployed prod
 # through a ONE-CLICK approval, without manual ECR surgery. This runs the SAME
-# authoritative deploy as `make deploy-prod` (scripts/deploy-prod.sh): advance ECR
-# :stable -> the image, roll the box over SSM (pull + `prisma migrate deploy` + up),
-# health-check, record, and fail closed (prior image keeps serving) on failure.
+# authoritative deploy as `make deploy-prod` (scripts/deploy-prod.sh), which now:
+# takes the deploy lock (refusing while held, or while the data-tier lock is
+# held/unknown) -> preflights the box (reachable? converted? ledger baselined?)
+# -> takes a pre-deploy RDS snapshot ONLY if migrations are pending (production
+# only) -> rolls the box to the IMMUTABLE SOURCE TAG, which runs the migration
+# gate on the NEW image while the OLD containers still serve -> polls
+# `/api/v1/health/ready` -> advances ECR `:stable` ONLY on PASS (the LAST
+# mutation) -> runs a read-only baseline verification (warning only) ->
+# releases the lock. A failure at any step before `:stable` advances leaves it
+# unchanged; a failure after the box's tag was written restores the tag the
+# box was serving before this run and proves it, or says plainly that it could
+# not (see scripts/deploy-prod.sh's own header for the full sequence).
 #
-# Triggers:
+# Triggers (unchanged by AXI-1954 — merging a change to this file or to any
+# script it runs does NOT start a run by itself; both triggers below require
+# an explicit external action):
 #   * repository_dispatch (type: image-published) — the green-build notification
 #     axiome-back / axiome-front / axiome-bio-compute each emit via
 #     reusable-build.yml (same event dev-auto-promote uses). Covers all three
 #     services (AXI-1350/FR14/AC19 widened this from backend-only).
 #   * workflow_dispatch — manual one-click deploy of any service + tag.
+# There is no `on: push`/`on: pull_request` trigger — a merge to `main` in
+# this repo never, by itself, starts a production deploy.
 #
-# Health path per service (AXI-1350) — deploy-prod.sh's own HEALTH_URL default
-# is backend-shaped (`/api/v1/health` on every env's FQDN); the "Deploy to
-# production" step below overrides it per service instead of editing that
-# script (kept generic/reusable as-is): bio-compute -> `/api/v1/version`,
-# frontend -> `/` (a static SPA has no health endpoint; a 2xx on `/` is the
-# signal), backend keeps the script's own default.
+# Health path per service — deploy-prod.sh's own HEALTH_URL default is now
+# `/api/v1/health/ready` for backend (FR24/FR26/AC18 — a 503 with per-service
+# reasons fails the gate and restores the previous tag) on every env's FQDN;
+# the "Deploy to production" step below overrides it per NON-backend service
+# instead of editing that script (kept generic/reusable as-is): bio-compute ->
+# `/api/v1/version`, frontend -> `/` (a static SPA has no health endpoint; a
+# 2xx on `/` is the signal), backend keeps the script's own `/health/ready` default.
 #
 # The GATE: the `deploy` job declares `environment: production`. Configure that as a
 # PROTECTED GitHub environment with required reviewers (repo Settings → Environments)
-# so every run pauses for one-click human approval before it mutates prod. See the
+# so every run pauses for one-click human approval before it mutates prod. This
+# story does not weaken that gate, any `if:` guard, or any other approval. See the
 # runbook + the "Required setup" note at the bottom of this file.
 #
-# Idempotent + fail-closed (NFR6): both properties come from scripts/deploy-prod.sh
-# (re-running the same tag is a no-op retag + no-op roll; a failed migration never
-# swaps the image; a post-swap health failure auto-rolls :stable back to the prior
-# image). A `concurrency` group serializes runs so two deploys never race the box.
+# Idempotent + fail-closed (NFR1/NFR2): re-running the same tag after a success
+# is a no-op retag + no-op roll; a failed migration or readiness check never
+# advances `:stable` and restores the box's previous tag; an SSM-indeterminate
+# result never advances `:stable` either (scripts/deploy-prod.sh, FR20). A
+# `concurrency` group serializes WORKFLOW runs; the S3 deploy lock inside
+# deploy-prod.sh additionally serializes against a laptop `make deploy-prod`
+# or a power-down running at the same time (FR28).
+#
+# Every `run:` step below declares `shell: bash` explicitly and sets
+# `set -euo pipefail` itself — a step with no `shell:` key runs `bash -e`
+# WITHOUT pipefail, which would hide a failure inside a pipeline silently
+# (epic AXI-1944 learning from AXI-1953). Neither step here currently pipes
+# into another command, but the declaration is kept so a future edit that
+# adds one inherits the safe default rather than a silent one.
 
 name: deploy-production
 
@@ -72,6 +99,7 @@ jobs:
     steps:
       - name: Resolve service + tag
         id: resolve
+        shell: bash
         run: |
           set -euo pipefail
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
@@ -108,7 +136,9 @@ jobs:
     if: needs.gate.outputs.deploy == 'true'
     runs-on: ubuntu-latest
     # ‼ The one-click approval gate. Make `production` a PROTECTED environment with
-    #   required reviewers so this job blocks until a human approves it.
+    #   required reviewers so this job blocks until a human approves it. AXI-1954
+    #   does not weaken this — it only changes what scripts/deploy-prod.sh does
+    #   once the run is approved.
     environment: production
     steps:
       - name: Checkout axiome-infra
@@ -126,22 +156,28 @@ jobs:
           ENV: production
           SERVICE: ${{ needs.gate.outputs.service }}
           TAG: ${{ needs.gate.outputs.tag }}
+        shell: bash
         run: |
-          # scripts/deploy-prod.sh advances :stable, rolls the box over SSM (pull +
-          # migrate deploy + up), health-checks, records, and fails closed. jq + the
-          # AWS CLI are preinstalled on ubuntu-latest; ssm-exec.sh uses send-command
-          # (no session-manager-plugin needed).
+          # scripts/deploy-prod.sh takes the deploy lock, preflights the box,
+          # snapshots only when migrations are pending (production), rolls to
+          # the immutable tag (gate runs on the new image while old containers
+          # serve), polls /health/ready, advances :stable only on PASS, runs a
+          # read-only baseline check, and restores the previous tag on any
+          # failure after the roll wrote it. jq + the AWS CLI are preinstalled
+          # on ubuntu-latest; ssm-exec.sh uses send-command (no
+          # session-manager-plugin needed).
           #
-          # AXI-1350/AC19 — deploy-prod.sh's own HEALTH_URL default is backend-
-          # shaped (`/api/v1/health`); override it per service here (the script
-          # itself stays generic/reusable, per its own HEALTH_URL precedence —
-          # env var wins over the built-in default).
+          # AXI-1350/AC19, carried forward under AXI-1954 — deploy-prod.sh's
+          # own HEALTH_URL default is now `/api/v1/health/ready` for backend;
+          # override it per NON-backend service here (the script itself stays
+          # generic/reusable, per its own HEALTH_URL precedence — env var wins
+          # over the built-in default).
           set -euo pipefail
           case "${SERVICE}" in
             biocompute) export HEALTH_URL="https://platform.axiomebio.com/api/v1/version" ;;
             frontend)   export HEALTH_URL="https://platform.axiomebio.com/" ;;
             # backend: no override — deploy-prod.sh's own default already
-            # resolves https://platform.axiomebio.com/api/v1/health.
+            # resolves https://platform.axiomebio.com/api/v1/health/ready.
           esac
           bash scripts/deploy-prod.sh
 
@@ -158,7 +194,13 @@ jobs:
 # 1. Create a PROTECTED GitHub environment named `production` (repo Settings →
 #    Environments) with at least one required reviewer — this is the one-click gate.
 # 2. Add repo (or environment-scoped) secrets: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
-#    (an IAM identity allowed to ECR put-image + ssm:SendCommand on the prod host).
+#    for an IAM identity allowed to: ECR (DescribeImages/BatchGetImage/PutImage),
+#    ssm:SendCommand/GetCommandInvocation/CancelCommand on the prod host, RDS
+#    (CreateDBSnapshot/DescribeDBSnapshots/DeleteDBSnapshot — AXI-1954, FR16/FR17,
+#    needed only when migrations are pending on production), and S3
+#    GetObject/PutObject/DeleteObject on `s3://axiome-production-system/locks/*`
+#    (AXI-1947's deploy/data-tier locks, now taken by this workflow's run of
+#    deploy-prod.sh — AXI-1954/FR28/FR29).
 # 3. Production is powered down by default (cost control). Before approving a run,
 #    power it on: `cd providers/aws && make turn-on ENV=production YES=1`. Wiring an
 #    automatic power-on/off around the deploy is deferred (touches the data tier).
@@ -166,3 +208,12 @@ jobs:
 #    secret used by their reusable-build.yml call so the `image-published`
 #    repository_dispatch to this workflow actually fires — same mechanism the
 #    backend already relies on (AXI-1349).
+# 5. (AXI-1954, rollout hazard carried from AXI-1949/AXI-1946) Before the FIRST
+#    deploy through this re-ordered path: the production box must already have
+#    the AXI-1950 one-time asset-sync conversion done, AND user-service's
+#    migration ledger must already be baselined (`migrate-gate baseline
+#    user-service`, after a read-only check) if it has no ledger today. Without
+#    both, the new preflight in scripts/deploy-prod.sh refuses the deploy by
+#    design (it names the exact missing act) rather than deploying onto a box
+#    the gate cannot reason about. Neither act is run by this workflow or by
+#    deploy-prod.sh — both are deliberate, one-off operator acts.
