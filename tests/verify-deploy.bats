@@ -2,10 +2,10 @@
 # tests/verify-deploy.bats — scripts/verify-deploy.sh's readiness-aware
 # check_ready() (AXI-1954, FR24/FR26/AC18). UT-INFRA-358..361.
 #
-# `dig` is not in tests/stubs/** (out of this story's file ownership) — a
-# tiny local `dig` double is written into BATS_TEST_TMPDIR and prepended to
-# PATH per-test instead, same pattern as any other fixture file this story
-# owns, without touching the shared stub directory sibling stories rely on.
+# AXI-1968: `dig` now has a shared PATH-shim stub (tests/stubs/dig, same
+# _common.sh/stub_main convention as every other stub) instead of a
+# one-off per-test double written into BATS_TEST_TMPDIR — see
+# tests/fixtures/verify-deploy-dig.rules.sh.
 
 load 'helpers/setup'
 
@@ -14,12 +14,7 @@ SCRIPT="${BATS_TEST_DIRNAME}/../scripts/verify-deploy.sh"
 setup() {
   stub_setup
   stub_use_rules curl "${TESTS_DIR}/fixtures/verify-deploy-curl.rules.sh"
-  cat > "${BATS_TEST_TMPDIR}/dig" <<'EOF'
-#!/usr/bin/env bash
-echo "${VERIFY_FIXTURE_DIG_ANSWER:-203.0.113.10}"
-EOF
-  chmod +x "${BATS_TEST_TMPDIR}/dig"
-  export PATH="${BATS_TEST_TMPDIR}:${PATH}"
+  stub_use_rules dig "${TESTS_DIR}/fixtures/verify-deploy-dig.rules.sh"
   export FQDN="platform.example.test"
   export EXPECTED_IP="203.0.113.10"
   export VERIFY_FIXTURE_DIG_ANSWER="203.0.113.10"

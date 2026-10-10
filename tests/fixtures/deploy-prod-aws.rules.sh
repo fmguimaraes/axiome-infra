@@ -15,7 +15,7 @@
 # Env knobs (all optional, sane defaults for the "everything passes" case):
 #   DEPLOY_FIXTURE_TAG / DEPLOY_FIXTURE_PRIOR     tag strings the test used
 #                                                  for IMAGE_TAG='<tag>' sniffing
-#                                                  (default newtag123 / oldtag000)
+#                                                  (default a1b2c3d4 / b2c3d4e5)
 #   DEPLOY_FIXTURE_INSTANCE_MISSING (0/1)         ec2 describe-instances finds
 #                                                  nothing running (EC1)
 #   DEPLOY_FIXTURE_SOURCE_MISSING (0/1)           TAG not found in ECR
@@ -203,7 +203,7 @@ stub_respond() {
 # Assigns a fake command-id by sniffing the embedded script text shipped in
 # send-command's own --parameters argument.
 ssm_command_id() {
-  local argv="$1" tag="${DEPLOY_FIXTURE_TAG:-newtag123}" prior="${DEPLOY_FIXTURE_PRIOR:-oldtag000}"
+  local argv="$1" tag="${DEPLOY_FIXTURE_TAG:-a1b2c3d4}" prior="${DEPLOY_FIXTURE_PRIOR:-b2c3d4e5}"
   case "${argv}" in
     *"MIGRATE_STATUS_RC"*) echo "cmd-preflight" ;;
     *"IMAGE_TAG='${prior}'"*) echo "cmd-restore" ;;
@@ -213,7 +213,7 @@ ssm_command_id() {
 }
 
 default_preflight_out() {
-  printf 'PRIOR_TAG=%s\nCOMPOSE_GATE=present\nMIGRATE_STATUS_RC=0\nPENDING_COUNT=0\n' "${DEPLOY_FIXTURE_PRIOR:-oldtag000}"
+  printf 'PRIOR_TAG=%s\nCOMPOSE_GATE=present\nMIGRATE_STATUS_RC=0\nPENDING_COUNT=0\n' "${DEPLOY_FIXTURE_PRIOR:-b2c3d4e5}"
 }
 
 default_roll_out() {

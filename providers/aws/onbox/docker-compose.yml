@@ -200,16 +200,17 @@ services:
         condition: service_healthy
     networks:
       - axiome
-    # AXI-1950 (FR27/AC18): organization-service ships no /health/live route
-    # (AXI-1948/AXI-1949 only added one to gateway/user-service/event-service).
-    # Its /health always returns HTTP 200 even when the body reports
-    # 'unhealthy' (no @Res status-code wiring here, unlike the gateway) — so
-    # as a container healthcheck this behaves as liveness-only today, same
-    # risk profile as /health/live elsewhere. Documented follow-up: it still
-    # runs one `SELECT 1` per probe, unlike the zero-cost /health/live used
-    # on the other three services.
+    # AXI-1968 (closing an AXI-1974 follow-up): organization-service now has
+    # its own /health/live route (pure liveness, no database access —
+    # AXI-1974, back main 6ecf8d3e). Pointed here instead of the deep
+    # /health route: per the AXI-1949 learning, a container healthcheck on
+    # a route that queries the database turns a database blip into a
+    # gateway/compose restart loop for this container, not just a
+    # readiness signal. Every other backend service's healthcheck already
+    # used /health/live (checked as part of this change; none of the other
+    # services repeat this mistake).
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3004/api/v1/health"]
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3004/api/v1/health/live"]
       interval: 30s
       timeout: 5s
       retries: 5

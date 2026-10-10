@@ -199,8 +199,36 @@ _report_has_sensitive_key_value() {
 # must never be refused. A pure-hex run of any OTHER length is NOT exempt
 # (FR63 — closes the gap where an all-hex secret at a non-hash length used
 # to slip through unconditionally).
+#
+# AXI-1968 fix: the exemption above was only EVER reached via the generic
+# base64-alphabet scan below (`[A-Za-z0-9/+=]{40,}`), whose own character
+# class includes `=` and `/` — the exact operator characters a routine
+# `tag=<40-hex>` / `sha256:` style audit line uses right next to the hash.
+# That let the scan swallow a non-hex prefix like `tag=` INTO the same
+# contiguous match (because `t`/`a`/`g`/`=` are all members of that broader
+# alphabet too), so the combined string was no longer pure hex and the
+# exemption never applied — refusing a perfectly legitimate `tag=<sha>`
+# line. Fixed by exempting (stripping before the generic scan ever runs) a
+# 40/64-char run of PURE hex characters ONLY when it is delimited on BOTH
+# sides — by `=`, `:`, `/`, `@`, a quote, whitespace, or a string boundary.
+# A hex run touched on either side by a letter, digit, `+`, `_`, `.` or
+# `-` is NEVER stripped here: that would make it a substring of something
+# LONGER (an actual secret, or a non-hash-length hex run), which must
+# still reach the generic scan below unexempted, so a 41-63 or 65+ long
+# hex run, or a hex run glued directly onto other base64 characters with
+# no delimiter, is still refused exactly as before.
+_report_hex_exempt_delim="[=:/@\"'[:space:],;)]"
+_report_strip_delimited_hex_runs() {
+  local s="$1" hexrun
+  while [[ "$s" =~ (^|${_report_hex_exempt_delim})([0-9a-fA-F]{40}|[0-9a-fA-F]{64})($|${_report_hex_exempt_delim}) ]]; do
+    hexrun="${BASH_REMATCH[2]}"
+    s="${s/"$hexrun"/}"
+  done
+  printf '%s' "$s"
+}
 _report_has_generic_secret() {
-  local s="$1" m len
+  local s m len
+  s="$(_report_strip_delimited_hex_runs "$1")"
   while [[ "$s" =~ ([A-Za-z0-9/+=]{40,}) ]]; do
     m="${BASH_REMATCH[1]}"
     if [[ "$m" =~ ^[0-9a-fA-F]+$ ]]; then

@@ -94,3 +94,24 @@ print('OK')
   assert_success
   assert_output --partial "OK"
 }
+
+# UT-INFRA-484 — AXI-1968: organization-service's own container healthcheck
+# now targets /health/live (AXI-1974 added that pure-liveness route to
+# organization-service; before this story the healthcheck called the deep
+# /health route, which runs a database query and so can turn a database
+# blip into a Compose restart/unhealthy-mark, same risk this story's
+# FR/follow-up names). Every OTHER backend service's healthcheck is
+# checked here too, to prove none of them repeat that mistake.
+@test "UT-INFRA-484: every backend service's healthcheck targets /health/live, never the deep /health or /health/ready route" {
+  run py "
+import sys, yaml
+d = yaml.safe_load(open(sys.argv[1]))
+for svc in ('gateway', 'user-service', 'organization-service', 'event-service'):
+    test = ' '.join(d['services'][svc]['healthcheck']['test'])
+    assert '/health/live' in test, (svc, test)
+    assert '/health/ready' not in test and not test.rstrip('/').endswith('/health'), (svc, test)
+print('OK')
+"
+  assert_success
+  assert_output --partial "OK"
+}

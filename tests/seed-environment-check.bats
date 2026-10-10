@@ -57,6 +57,7 @@ setup() {
 stub_respond() {
   local argv="\$1"
   case "\$argv" in
+    *"compose version"*) return 0 ;;
     *"exec -T postgres psql -v ON_ERROR_STOP=1 -U axiome -d axiome"*) return 0 ;;
     *"-tAc"*"organization_svc.rules"*) echo "\${SEED_FIXTURE_RULES_COUNT:-2}"; return 0 ;;
     *"-tAc"*"organization_svc.dataview_templates"*) echo "\${SEED_FIXTURE_TEMPLATES_COUNT:-2}"; return 0 ;;
@@ -109,4 +110,64 @@ EOF
   assert_failure
   assert_output --partial "ERROR:"
   refute_output --partial "NOT PERFORMED"
+}
+
+# --- AXI-1968: the REMOTE --check path, left untested by AXI-1954 --------
+#
+# UT-INFRA-357 above only covers usage parsing ("no actual SSM call is
+# exercised here"). These three tests exercise the real `-e ENV --check`
+# path end to end: aws is stubbed (never docker — the remote path never
+# calls this host's docker at all, it ships a one-line `docker run ...`
+# command to the box over SSM), so every count_remote()/ssm-exec.sh/aws
+# call in this script is genuinely walked.
+
+setup_remote_check() {
+  stub_use_rules aws "${TESTS_DIR}/fixtures/seed-environment-remote-check.rules.sh"
+  export SSM_EXEC_POLL_INTERVAL=0
+  command -v jq >/dev/null 2>&1 || skip "jq not installed on this host"
+}
+
+# UT-INFRA-492 — the remote --check path reaches OK when every remote
+# count matches: proves count_remote()/ssm-exec.sh/aws send-command +
+# get-command-invocation are genuinely exercised (not merely parsed), and
+# that CHECK_MODE's single-read, no-settle-wait behaviour holds remotely
+# too (never calls `aws ssm cancel-command`, i.e. never hits the
+# INDETERMINATE/retry path meant for a real settle-wait).
+@test "UT-INFRA-492: seed-environment.sh -e production --check walks the real SSM path and reports OK" {
+  setup_remote_check
+  run "$SCRIPT" -e production --check
+  assert_success
+  assert_output --partial "BASELINE CHECK OK"
+  refute_output --partial "no running instance"
+  run grep -F "cancel-command" "$STUB_LOG"
+  assert_failure
+}
+
+# UT-INFRA-493 — a genuine remote count mismatch (the bootstrap admin
+# missing on the box) is reported the same way the local path reports it:
+# non-zero exit, "BASELINE CHECK MISMATCH", the per-entity table shows
+# MISMATCH — proving the fixture's per-entity differentiation (by the
+# embedded SQL text in `ssm send-command`'s own argv, the only way four
+# otherwise-identical polls can be told apart) actually reaches a
+# DIFFERENT count for the admin entity than the others.
+@test "UT-INFRA-493: seed-environment.sh -e production --check reports a real remote count mismatch" {
+  setup_remote_check
+  export SEED_FIXTURE_ADMIN_COUNT=0
+  run "$SCRIPT" -e production --check
+  assert_failure
+  assert_output --partial "BASELINE CHECK MISMATCH"
+  assert_output --partial "MISMATCH"
+}
+
+# UT-INFRA-494 — -e production --check never requires --confirm (read-only
+# paths are exempt from the production-seed confirmation gate; AC39 names
+# only the WRITE path) — the real SSM round trip above already proves this
+# implicitly (no --confirm was passed), this test pins it explicitly so a
+# future change to the confirm gate's condition can't silently widen it to
+# also block --check.
+@test "UT-INFRA-494: seed-environment.sh -e production --check never asks for --confirm" {
+  setup_remote_check
+  run "$SCRIPT" -e production --check
+  assert_success
+  refute_output --partial "SEED REFUSED"
 }

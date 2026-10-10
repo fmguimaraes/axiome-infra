@@ -276,12 +276,41 @@ can disagree — check both independently (`docker compose ps` on the box vs.
 
 **`Baseline verification: NOT PERFORMED`:** `seed-environment.sh --check`
 exits `3` (distinct from `0` match / nonzero mismatch) specifically when
-expected counts cannot be derived — in `deploy-production.yml` this is
-**always** the case today, because that workflow checks out only
-`axiome-infra` (the expected-counts source lives in `axiome-back`). This is
-reported as `Baseline verification: NOT PERFORMED`, never as a mismatch —
-treating "could not check" as "checked and it's wrong" would be a false
-alarm. Either way this step is warning-only and never rolls back.
+expected counts cannot be derived. Since AXI-1968 (FR45/AC37),
+`deploy-production.yml` checks out `axiome-back` beside `axiome-infra` and
+exports `AXIOME_BACK_PATH`, so this is no longer the structural, every-time
+result there — it now only fires if that checkout genuinely failed or its
+rule-pack/template files are unreadable. This is reported as
+`Baseline verification: NOT PERFORMED`, never as a mismatch — treating
+"could not check" as "checked and it's wrong" would be a false alarm.
+Either way this step is warning-only and never rolls back.
+
+**Diagnostic output is scrubbed before it is ever printed (AXI-1968,
+FR63):** both the preflight's captured `migrate-gate status` output (when
+it REFUSEs with a connectivity/configuration error, §3's "Every refusal"
+table) and the baseline check's own printed output go through
+`report_is_secret_value` (`scripts/lib/report.sh`, AXI-1973) one line at a
+time before `deploy-prod.sh` prints them. A line that matches a secret
+shape is replaced with `[<check name> output line withheld — matched a
+secret shape (NFR3); content not printed]`; every other line in the same
+block still prints verbatim — this is a per-line scrub, not an
+all-or-nothing withholding of the whole diagnostic block. The production
+deploy workflow's own "Resolve deployed commit" step applies the same
+scrub (sourcing `axiome-infra/scripts/lib/report.sh`, already checked out
+by that point) to the GitHub API response it prints on a resolution
+failure, bounded to 2000 bytes either way.
+
+**Seeding production directly (`scripts/seed-environment.sh -e production`,
+outside `deploy-prod.sh`):** since AXI-1968 (FR46/AC39), the WRITE path (no
+`--check`) against `-e production` refuses unless the operator also passes
+`--confirm production` (the literal word, typed exactly — no prompt, no
+piped `yes`/empty stdin satisfies it). The refusal happens before any
+connection or Compose call runs:
+`SEED REFUSED: seeding production requires an explicit confirmation — pass
+--confirm production (typed exactly) to proceed. There is no prompt; a
+piped 'yes' or empty stdin can never satisfy this. Nothing was connected
+to, and nothing was written.` `-e dev`/`-e staging`/`--local`/`--check`
+(any environment) are all unaffected — only a production WRITE needs it.
 
 ---
 
@@ -475,12 +504,13 @@ nothing. It is never executed by this story, by CI, or against any real box.
   `pull-on-vm.sh`, `platform-debug.sh`, `ssm-exec.sh`,
   `providers/aws/onbox/boot.sh`, `providers/aws/scripts/power.sh` /
   `power-up-all.sh`); `providers/onprem/scripts/install.sh` (installs onto a
-  customer's target machine, never run against this repo's own dev stack);
-  and `scripts/seed-environment.sh`, which is a known, flagged exception —
-  it hardcodes `docker compose` literally with **no v1 fallback** (so it
-  cannot reach the legacy binary, only error loudly if v2 is absent) but is
-  not yet resolver-routed; it is out of this story's file ownership and is
-  a follow-up, not a defect of the class this story closes.
+  customer's target machine, never run against this repo's own dev stack).
+  `scripts/seed-environment.sh` was a known, flagged exception at the time
+  this paragraph was written (hardcoded `docker compose` literally, not yet
+  resolver-routed) — AXI-1968 closed it: both of its local Compose call
+  sites now route through `scripts/lib/compose-resolve.sh` like every other
+  local script, and the exclusion entry has been removed from
+  `tests/compose-call-sites.bats`.
 
   The Makefile's own guard still only fires **for a goal that actually
   touches Docker Compose** (AXI-1955 fix (a) — `make help` and every
@@ -587,12 +617,15 @@ nothing. It is never executed by this story, by CI, or against any real box.
 - The deploy/park lock race (§4) is narrowed, not closed — `terraform-cd`
   itself needs to hold the `data-tier` lock across its whole `apply` step to
   close it fully.
-- `seed-environment.sh --check`'s baseline verification is structurally
-  `NOT PERFORMED` in `deploy-production.yml` today (that workflow checks out
-  only `axiome-infra`) — adding an `axiome-back` checkout (or
-  `AXIOME_BACK_PATH`) to the workflow is an owner decision, not yet made.
-  "Baseline verification: NOT PERFORMED" is therefore the routine, expected
-  result in CI/automation, not a signal something is wrong.
+- AXI-1968 added `axiome-back`/`axiome-bio-compute`/`axiome-front` checkouts
+  and `AXIOME_BACK_PATH` to `deploy-production.yml` (FR45/AC37), so
+  `seed-environment.sh --check`'s baseline verification now has a real
+  `axiome-back` checkout to read expected counts from in that workflow —
+  "Baseline verification: NOT PERFORMED" is no longer the routine,
+  structural result there; it should now show `OK`/`MISMATCH` like a local
+  run. It remains the correct, honest result whenever `AXIOME_BACK_PATH`
+  genuinely isn't available (e.g. a caller that only checks out
+  `axiome-infra`), per FR46/AC38.
 - `install-mongo-backup-timer.sh` has never been run against a real box.
 - Nothing in this runbook — box conversion, baselining, deploy, roll,
   park/unpark, locks — has been exercised against live AWS. Every behaviour

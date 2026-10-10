@@ -30,6 +30,13 @@
 #   -r REGION    AWS region. Default: eu-west-3 (or $AWS_REGION).
 #   -t SECONDS   Max seconds to wait for the DB / seed hooks to settle.
 #                Default: 120. Ignored in --check mode (single read, no wait).
+#   --confirm production
+#                Required before any --local=false, non-check seed of
+#                production (-e production without --check): the literal
+#                word "production", typed exactly — no prompt, no piped
+#                "yes" (AXI-1968/FR46/AC39). Checked before any connection
+#                or Compose call runs. Ignored (not required) for dev,
+#                staging, --local, or --check.
 #   --check      Read-only baseline verification (FR21): never writes the
 #                workspace-roles SQL, takes exactly one count per entity (no
 #                settle-loop — the caller already proved readiness), and
@@ -55,11 +62,26 @@ INFRA_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 BACK_REPO="${AXIOME_BACK_PATH:-${INFRA_ROOT}/../axiome-back}"
 ROLES_SQL="${BACK_REPO}/scripts/seed_workspace_roles.sql"
 
+# AXI-1968 (FR54 debt): route the local Compose v2 call through the one
+# shared resolver (scripts/lib/compose-resolve.sh) instead of hardcoding
+# "docker compose" — same guard every other local script already uses.
+# shellcheck source=./lib/compose-resolve.sh
+. "${SCRIPT_DIR}/lib/compose-resolve.sh"
+# AXI-1968: the two remote-mode temp files below (the SQL-shipping script
+# bodies for run_sql_remote/count_remote) now go through
+# scripts/lib/cleanup.sh's axiome_create_tracked_tempfile (AXI-1973) rather
+# than `mktemp` + a per-function `trap ... RETURN` — register-before-create
+# closes a real signal-landing-in-the-gap leak window; see that file's own
+# header comment for the full contract.
+# shellcheck source=./lib/cleanup.sh
+. "${SCRIPT_DIR}/lib/cleanup.sh"
+
 MODE="local"
 ENVIRONMENT=""
 REGION="${AWS_REGION:-eu-west-3}"
 TIMEOUT="${TIMEOUT:-120}"
 CHECK_MODE=0
+CONFIRM_ARG=""
 
 usage() {
   sed -n '2,42p' "$0"
@@ -72,6 +94,7 @@ while [ $# -gt 0 ]; do
     -r) REGION="${2:?-r requires a region}"; shift 2 ;;
     -t) TIMEOUT="${2:?-t requires seconds}"; shift 2 ;;
     --check) CHECK_MODE=1; shift ;;
+    --confirm) CONFIRM_ARG="${2:?--confirm needs a value}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage; exit 1 ;;
   esac
@@ -79,6 +102,23 @@ done
 
 if [ "${MODE}" = "remote" ]; then
   case "${ENVIRONMENT}" in dev|staging|production) ;; *) echo "ERROR: -e must be dev, staging, or production" >&2; exit 1 ;; esac
+fi
+
+# FR46/AC39 (AXI-1968): seeding PRODUCTION in write mode (not --check, which
+# is read-only and never writes) requires an explicit confirmation naming
+# the environment, typed exactly — same style as wt-down.sh --purge-shared
+# and lock.sh override's --confirm: no prompt, no piped "yes" can satisfy
+# it, and the refusal happens here, before any connection or Compose call
+# runs (no run_sql_remote/count_remote has been reached yet).
+if [ "${MODE}" = "remote" ] && [ "${ENVIRONMENT}" = "production" ] && [ "${CHECK_MODE}" -eq 0 ]; then
+  if [ "${CONFIRM_ARG}" != "production" ]; then
+    echo "SEED REFUSED: seeding production requires an explicit confirmation — pass --confirm production (typed exactly) to proceed. There is no prompt; a piped 'yes' or empty stdin can never satisfy this. Nothing was connected to, and nothing was written." >&2
+    exit 1
+  fi
+fi
+
+if [ "${MODE}" = "local" ]; then
+  compose_resolve || { echo "ERROR: ${COMPOSE_RESOLVE_ERROR}" >&2; exit 1; }
 fi
 
 # ---------------------------------------------------------------------------
@@ -94,7 +134,7 @@ run_sql_local() {
   # $1 = database name. SQL body comes from stdin (default table formatting —
   # used for the multi-statement roles migration, not for count queries).
   local db="$1"
-  docker compose -p axiome-shared -f "${INFRA_ROOT}/docker-compose.shared.yml" exec -T postgres \
+  "${COMPOSE_ARGS[@]}" -p axiome-shared -f "${INFRA_ROOT}/docker-compose.shared.yml" exec -T postgres \
     psql -v ON_ERROR_STOP=1 -U "${POSTGRES_USER:-axiome}" -d "${db}"
 }
 
@@ -107,8 +147,7 @@ run_sql_remote() {
   local sql
   sql="$(cat)"
   local tmp
-  tmp="$(mktemp)"
-  trap 'rm -f "${tmp}"' RETURN
+  axiome_create_tracked_tempfile tmp
   {
     echo "set -e"
     echo "cd /opt/axiome"
@@ -124,7 +163,7 @@ count_local() {
   # $1 = database name, $2 = a single "SELECT count(*) ..." query.
   # -tAc = tuples-only, unaligned, single command — prints just the bare number.
   local db="$1" sql="$2"
-  docker compose -p axiome-shared -f "${INFRA_ROOT}/docker-compose.shared.yml" exec -T postgres \
+  "${COMPOSE_ARGS[@]}" -p axiome-shared -f "${INFRA_ROOT}/docker-compose.shared.yml" exec -T postgres \
     psql -v ON_ERROR_STOP=1 -tAc "${sql}" -U "${POSTGRES_USER:-axiome}" -d "${db}"
 }
 
@@ -132,8 +171,7 @@ count_remote() {
   # $1 = env var name holding the target DSN, $2 = count query.
   local var_name="$1" sql="$2"
   local tmp
-  tmp="$(mktemp)"
-  trap 'rm -f "${tmp}"' RETURN
+  axiome_create_tracked_tempfile tmp
   {
     echo "set -e"
     echo "cd /opt/axiome"
@@ -219,12 +257,12 @@ ADMIN_EMAIL="${BOOTSTRAP_ADMIN_EMAIL:-admin@axiome.local}"
 
 if [ "${EXPECTED_RULES}" -eq 0 ] || [ "${EXPECTED_TEMPLATES}" -eq 0 ]; then
   if [ "${CHECK_MODE}" -eq 1 ]; then
-    # Distinct exit code (3, review bounce #1 item 4): a caller like
-    # deploy-prod.sh's baseline step only checks out axiome-infra (the
-    # production deploy workflow does not add an axiome-back checkout or
-    # any new token/secret to do so — that is an owner decision, noted as
-    # a follow-up), so THIS specific failure is expected and routine there,
-    # not a real count mismatch. Exit 1 (below, non-check mode) still means
+    # Distinct exit code (3, review bounce #1 item 4): callers such as
+    # deploy-prod.sh's baseline step now check out axiome-back as a sibling
+    # repo (AXI-1968), so this branch firing is NOT routine or expected —
+    # it signals a real problem: the checkout is missing, its rule-pack or
+    # template seed files are unreadable, or AXIOME_BACK_PATH is unset/
+    # pointing at the wrong path. Exit 1 (below, non-check mode) still means
     # a real operator error — axiome-back missing during an actual seed is
     # not tolerable and must fail loudly as before.
     echo "BASELINE CHECK NOT PERFORMED: expected counts could not be derived — ${BACK_REPO} is not checked out (or its rule-pack/template files are unreadable). This is not a count mismatch; set AXIOME_BACK_PATH or run this check from a context where axiome-back is a sibling checkout." >&2

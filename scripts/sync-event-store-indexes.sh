@@ -98,21 +98,70 @@ fi
 [ -n "${url}" ] || die "no MongoDB address to validate (set \$MONGODB_URL, pass --env-file, or --mongodb-url) — refusing rather than guessing which database this would run against. Nothing was changed."
 
 # --- Host-only extraction (the full URL, which may carry credentials, is
-# NEVER printed anywhere below — only the host) ---------------------------
-_mongo_url_host() {  # $1 = a mongodb:// URL; prints ONLY the host
+# NEVER printed anywhere below — only the host(s)) -------------------------
+# AXI-1968 (closing three AXI-1971 follow-ups):
+#   1. a replica-set URL with MULTIPLE hosts (h1:27017,h2:27017) must have
+#      EVERY host checked, not just the first — `_mongo_url_hosts` below
+#      prints one host per line, and the caller validates each one.
+#   2. userinfo is stripped with the LONGEST match (`${rest##*@}`, not
+#      `${rest#*@}`): a password containing a literal '@' left a residual
+#      fragment in `rest` before, which was then mistaken for the host
+#      (a false refusal) AND could appear in the refusal text (a leak).
+#      The authority section of a Mongo URI has exactly one userinfo
+#      separator — its LAST '@' — so stripping up to the last '@' is
+#      always correct, never just "the common case".
+#   3. a bracketed IPv6 literal (`[::1]:27017`) used to be mishandled by
+#      the naive `${tok%%:*}` port-strip, which stops at the FIRST colon
+#      inside the brackets — `_mongo_host_from_token` below special-cases
+#      a leading `[` and takes everything up to the matching `]`.
+_mongo_url_authority() {  # $1 = a mongodb:// URL; prints the authority
+  # (host[:port][,host[:port]...]) with the scheme, userinfo, path and
+  # query all stripped. Never printed directly — only consumed below.
   local rest="${1#*://}"
-  rest="${rest#*@}"      # strip userinfo if present; no-op if absent
-  rest="${rest%%/*}"     # strip path
-  rest="${rest%%\?*}"    # strip query, if path-stripping left one
-  rest="${rest%%,*}"     # a replica-set URL's first host only
-  printf '%s' "${rest%%:*}"   # strip port
+  rest="${rest%%\?*}"   # drop the query first
+  rest="${rest%%/*}"    # keep only the authority
+  case "${rest}" in
+    *@*) rest="${rest##*@}" ;;  # strip userinfo: LONGEST match up to the LAST '@'
+  esac
+  printf '%s' "${rest}"
+}
+
+_mongo_host_from_token() {  # $1 = one "host[:port]" or "[ipv6]:port" token;
+  # prints ONLY the host, brackets stripped.
+  case "$1" in
+    \[*)
+      local h="${1#\[}"
+      printf '%s' "${h%%]*}"
+      ;;
+    *)
+      printf '%s' "${1%%:*}"
+      ;;
+  esac
+}
+
+_mongo_url_hosts() {  # $1 = a mongodb:// URL; prints ONE host per line,
+  # covering every host in a replica-set URL (host1,host2,...).
+  local authority tok
+  authority="$(_mongo_url_authority "$1")"
+  local old_ifs="${IFS}"
+  IFS=','
+  # shellcheck disable=SC2086 # deliberate word-splitting on IFS=','
+  for tok in ${authority}; do
+    IFS="${old_ifs}"
+    _mongo_host_from_token "${tok}"
+    printf '\n'
+  done
+  IFS="${old_ifs}"
 }
 
 EVENT_STORE_LOCAL_HOSTS="${EVENT_STORE_LOCAL_HOSTS:- localhost 127.0.0.1 ::1 mongodb }"
 
 # _is_local_host <host> — true if <host> is on the local allowlist. Shared
 # by both the host-side check (below) and the container-side check
-# (further down) so the two can never silently drift apart.
+# (further down) so the two can never silently drift apart. Bracketed
+# IPv6 (`[::1]`) is normalized to bracket-free form (`::1`) by the
+# extraction above before this is ever called, so the allowlist itself
+# only ever needs to name the bracket-free form.
 _is_local_host() {
   case " ${EVENT_STORE_LOCAL_HOSTS} " in
     *" $1 "*) return 0 ;;
@@ -120,9 +169,16 @@ _is_local_host() {
   esac
 }
 
-host="$(_mongo_url_host "${url}")"
-_is_local_host "${host}" || \
-  die "MongoDB host '${host}' is not a recognized LOCAL address (localhost/127.0.0.1/::1/the 'mongodb' compose-network alias) — refusing to sync indexes against a non-local event store. Nothing was changed."
+host="$(_mongo_url_hosts "${url}")"
+[ -n "${host}" ] || die "could not extract any host from the MongoDB address — refusing. Nothing was changed."
+while IFS= read -r _h; do
+  [ -n "${_h}" ] || continue
+  _is_local_host "${_h}" || \
+    die "MongoDB host '${_h}' is not a recognized LOCAL address (localhost/127.0.0.1/::1/the 'mongodb' compose-network alias) — refusing to sync indexes against a non-local event store. Nothing was changed."
+done <<< "${host}"
+# Single-line form for the final status print below (one or more hosts,
+# space-separated — never the full URL, never a credential fragment).
+host="$(printf '%s' "${host}" | tr '\n' ' ' | sed 's/ *$//')"
 
 # --- Resolve Compose v2 through the one shared resolver (AXI-1971/FR54) --
 compose_resolve || die "${COMPOSE_RESOLVE_ERROR}"
@@ -135,21 +191,27 @@ compose_cmd=("${COMPOSE_ARGS[@]}" -p "${COMPOSE_PROJECT}" -f "${COMPOSE_FILE}")
 # `prisma db push` below runs INSIDE the container and reads the
 # CONTAINER's OWN $MONGODB_URL (set by docker-compose.yml), which can
 # legitimately differ from whatever this command was told on its own argv/
-# env-file/--mongodb-url. Read ONLY the host from inside the container —
+# env-file/--mongodb-url. Read ONLY the host(s) from inside the container —
 # never the full URL, which may carry credentials — so nothing
 # credential-bearing ever reaches this process's argv, stdout, or logs.
 # The extraction script below is deliberately the exact same algorithm as
-# _mongo_url_host() above, just written once more in POSIX sh so it runs
-# unmodified inside the container's own shell.
-container_host="$("${compose_cmd[@]}" exec -T "${SERVICE}" sh -lc \
-  'u="$MONGODB_URL"; u="${u#*://}"; u="${u#*@}"; u="${u%%/*}"; u="${u%%\?*}"; u="${u%%,*}"; printf "%s" "${u%%:*}"' \
+# _mongo_url_authority/_mongo_host_from_token above (longest-match userinfo
+# strip, every replica-set host, bracketed-IPv6-aware), just written once
+# more in POSIX sh so it runs unmodified inside the container's own shell —
+# it still prints HOSTS ONLY, one per line, never the URL.
+container_hosts="$("${compose_cmd[@]}" exec -T "${SERVICE}" sh -lc \
+  'u="$MONGODB_URL"; u="${u%%\?*}"; u="${u#*://}"; u="${u%%/*}"; case "$u" in *@*) u="${u##*@}" ;; esac; IFS=","; for t in $u; do case "$t" in \[*) h="${t#\[}"; h="${h%%]*}" ;; *) h="${t%%:*}" ;; esac; printf "%s\n" "$h"; done' \
   2>/dev/null)" && container_host_rc=0 || container_host_rc=$?
 
-if [ "${container_host_rc}" -ne 0 ] || [ -z "${container_host}" ]; then
-  die "could not read the ${SERVICE} container's own MONGODB_URL host (the read either failed or returned nothing) — refusing to assume it is local. Checked: the container's own \$MONGODB_URL, via 'compose exec ${SERVICE} sh -lc ...' printing only the host. Nothing was changed."
+if [ "${container_host_rc}" -ne 0 ] || [ -z "${container_hosts}" ]; then
+  die "could not read the ${SERVICE} container's own MONGODB_URL host (the read either failed or returned nothing) — refusing to assume it is local. Checked: the container's own \$MONGODB_URL, via 'compose exec ${SERVICE} sh -lc ...' printing only the host(s). Nothing was changed."
 fi
-_is_local_host "${container_host}" || \
-  die "the ${SERVICE} container's own MONGODB_URL host '${container_host}' is not a recognized LOCAL address (localhost/127.0.0.1/::1/the 'mongodb' compose-network alias) — refusing to sync indexes against what the container would actually use, even though the host-side address checked out. Nothing was changed."
+while IFS= read -r _ch; do
+  [ -n "${_ch}" ] || continue
+  _is_local_host "${_ch}" || \
+    die "the ${SERVICE} container's own MONGODB_URL host '${_ch}' is not a recognized LOCAL address (localhost/127.0.0.1/::1/the 'mongodb' compose-network alias) — refusing to sync indexes against what the container would actually use, even though the host-side address checked out. Nothing was changed."
+done <<< "${container_hosts}"
+container_host="$(printf '%s' "${container_hosts}" | tr '\n' ' ' | sed 's/ *$//')"
 
 # --- The sync itself: Prisma's OWN index definition, no data-loss flag ---
 # Deliberately `exec` (not `run`): this is a maintenance command against an

@@ -315,6 +315,12 @@ analytics-connect-prod:
 seed:
 	set -a; [ -f $(ENV_FILE) ] && . ./$(ENV_FILE); set +a; scripts/seed-environment.sh --local
 
+# NOTE: `make seed-env ENV=production` always refuses now (AXI-1968's
+# production confirmation gate) — this target intentionally does not forward
+# a --confirm flag (there is no safe default and make's quoting makes a typed
+# "production" value easy to get wrong silently). Seeding production for
+# real requires calling the script directly:
+#   scripts/seed-environment.sh -e production --confirm production
 seed-env:
 	scripts/seed-environment.sh -e $(ENV)
 

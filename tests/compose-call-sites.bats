@@ -39,12 +39,9 @@
 #     ssm-exec.sh                         : remote-exec tooling — the
 #     literal "docker compose ..." text is a STRING shipped to a remote
 #     shell over SSM/SSH, never resolved by THIS process's own PATH.
-#   - scripts/seed-environment.sh         : hardcodes Compose v2 literally
-#     ("docker compose ...") with NO v1 fallback anywhere — it cannot
-#     reach the legacy binary, it can only error out loudly if v2 is
-#     absent. Out of this story's file ownership per its spawn brief, so
-#     it is not yet resolver-routed; flagged to the lead as a follow-up,
-#     not a defect of the class this story closes (reaching v1).
+#   - scripts/seed-environment.sh is no longer excluded (AXI-1968 closed
+#     this debt): both its local Compose call sites now go through
+#     scripts/lib/compose-resolve.sh, same as every other local script.
 #
 # UT-INFRA-520: `make local-ps` / `make local-health` inspect the Compose
 # PROJECT that `make local-up` (== `demo-up`) actually starts
@@ -66,7 +63,7 @@ setup() {
   stub_setup
 }
 
-_EXCLUDED_FILES='^tests/vendor/|^tests/fixtures/.*\.rules\.sh$|^tests/stubs/_common\.sh$|^scripts/lib/compose-resolve\.sh$|^providers/aws/onbox/boot\.sh$|^providers/aws/scripts/power\.sh$|^providers/aws/scripts/power-up-all\.sh$|^providers/onprem/scripts/install\.sh$|^scripts/asset-sync\.sh$|^scripts/deploy-prod\.sh$|^scripts/roll-service\.sh$|^scripts/reset-admin-password\.sh$|^scripts/pull-on-vm\.sh$|^scripts/platform-debug\.sh$|^scripts/ssm-exec\.sh$|^scripts/seed-environment\.sh$'
+_EXCLUDED_FILES='^tests/vendor/|^tests/fixtures/.*\.rules\.sh$|^tests/stubs/_common\.sh$|^scripts/lib/compose-resolve\.sh$|^providers/aws/onbox/boot\.sh$|^providers/aws/scripts/power\.sh$|^providers/aws/scripts/power-up-all\.sh$|^providers/onprem/scripts/install\.sh$|^scripts/asset-sync\.sh$|^scripts/deploy-prod\.sh$|^scripts/roll-service\.sh$|^scripts/reset-admin-password\.sh$|^scripts/pull-on-vm\.sh$|^scripts/platform-debug\.sh$|^scripts/ssm-exec\.sh$'
 
 # _repo_sources — every tracked shell script + Makefile in the WHOLE repo
 # (not just this story's scripts/), relative to INFRA_ROOT. Captured once

@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # tests/deploy-prod.bats — scripts/deploy-prod.sh (AXI-1954, epic AXI-1944,
-# FR14-21/EC1/EC13/AC11-14/18/19/28). UT-INFRA-330..352.
+# FR14-21/EC1/EC13/AC11-14/18/19/28). UT-INFRA-330..352, 480..483, 508..509.
 
 load 'helpers/setup'
 
@@ -22,9 +22,9 @@ setup() {
   export AXIOME_PROJECT="axiome"
   export ENV="production"
   export SERVICE="backend"
-  export TAG="newtag123"
-  export DEPLOY_FIXTURE_TAG="newtag123"
-  export DEPLOY_FIXTURE_PRIOR="oldtag000"
+  export TAG="a1b2c3d4"
+  export DEPLOY_FIXTURE_TAG="a1b2c3d4"
+  export DEPLOY_FIXTURE_PRIOR="b2c3d4e5"
   export DEPLOY_FIXTURE_READY_COUNTER="${BATS_TEST_TMPDIR}/ready.counter"
   export DEPLOY_FIXTURE_LOCK_TOKEN_FILE="${BATS_TEST_TMPDIR}/lock.token"
   export LOCK_ACTOR="test@example.com"
@@ -112,7 +112,7 @@ assert_stub_not_called_substring() {
 # UT-INFRA-335 — NFR7/AC8: an unconverted box (no migrate: service) refuses
 # and names the asset-sync command; no roll is attempted; :stable untouched.
 @test "UT-INFRA-335: deploy-prod.sh refuses an unconverted box, naming asset-sync.sh" {
-  export DEPLOY_FIXTURE_PREFLIGHT_OUT=$'PRIOR_TAG=oldtag000\nCOMPOSE_GATE=absent\n'
+  export DEPLOY_FIXTURE_PREFLIGHT_OUT=$'PRIOR_TAG=b2c3d4e5\nCOMPOSE_GATE=absent\n'
   run "$SCRIPT"
   assert_failure
   assert_output --partial "REFUSE"
@@ -127,7 +127,7 @@ assert_stub_not_called_substring() {
 # classification). A generic unreadable status still refuses (no :stable
 # advance) but must NOT instruct an operator to baseline.
 @test "UT-INFRA-336: deploy-prod.sh refuses an undetermined status without instructing baseline" {
-  export DEPLOY_FIXTURE_PREFLIGHT_OUT=$'PRIOR_TAG=oldtag000\nCOMPOSE_GATE=present\nMIGRATE_STATUS_RC=1\nFAIL organization-service: could not determine status: connect ECONNREFUSED\n'
+  export DEPLOY_FIXTURE_PREFLIGHT_OUT=$'PRIOR_TAG=b2c3d4e5\nCOMPOSE_GATE=present\nMIGRATE_STATUS_RC=1\nFAIL organization-service: could not determine status: connect ECONNREFUSED\n'
   run "$SCRIPT"
   assert_failure
   assert_output --partial "REFUSE"
@@ -143,7 +143,7 @@ assert_stub_not_called_substring() {
 # output is the ONLY case that may name `baseline`, and it must name the
 # SAME service the output named.
 @test "UT-INFRA-366: deploy-prod.sh names baseline + the exact service when the output carries migrate-gate's own ledger-less refusal" {
-  export DEPLOY_FIXTURE_PREFLIGHT_OUT=$'PRIOR_TAG=oldtag000\nCOMPOSE_GATE=present\nMIGRATE_STATUS_RC=1\nREFUSE user-service: tables exist with no migration ledger. Run: migrate-gate baseline user-service\n'
+  export DEPLOY_FIXTURE_PREFLIGHT_OUT=$'PRIOR_TAG=b2c3d4e5\nCOMPOSE_GATE=present\nMIGRATE_STATUS_RC=1\nREFUSE user-service: tables exist with no migration ledger. Run: migrate-gate baseline user-service\n'
   run "$SCRIPT"
   assert_failure
   assert_output --partial "REFUSE"
@@ -158,7 +158,7 @@ assert_stub_not_called_substring() {
 # tables but no migration ledger" / "migrate-gate baseline <service>" for
 # ANY non-zero status).
 @test "UT-INFRA-367: deploy-prod.sh shows the verbatim connectivity error and never suggests baseline" {
-  export DEPLOY_FIXTURE_PREFLIGHT_OUT=$'PRIOR_TAG=oldtag000\nCOMPOSE_GATE=present\nMIGRATE_STATUS_RC=1\nFAIL organization-service: could not determine status: connect ECONNREFUSED 10.0.0.5:5432\n'
+  export DEPLOY_FIXTURE_PREFLIGHT_OUT=$'PRIOR_TAG=b2c3d4e5\nCOMPOSE_GATE=present\nMIGRATE_STATUS_RC=1\nFAIL organization-service: could not determine status: connect ECONNREFUSED 10.0.0.5:5432\n'
   run "$SCRIPT"
   assert_failure
   assert_output --partial "configuration or connectivity"
@@ -171,7 +171,7 @@ assert_stub_not_called_substring() {
 # ledger problem: same verbatim-output treatment, same absence of a
 # baseline instruction.
 @test "UT-INFRA-368: deploy-prod.sh treats a missing database URL the same as a connectivity error, never baseline" {
-  export DEPLOY_FIXTURE_PREFLIGHT_OUT=$'PRIOR_TAG=oldtag000\nCOMPOSE_GATE=present\nMIGRATE_STATUS_RC=1\nFAIL user-service: USER_DATABASE_URL not set\n'
+  export DEPLOY_FIXTURE_PREFLIGHT_OUT=$'PRIOR_TAG=b2c3d4e5\nCOMPOSE_GATE=present\nMIGRATE_STATUS_RC=1\nFAIL user-service: USER_DATABASE_URL not set\n'
   run "$SCRIPT"
   assert_failure
   assert_output --partial "configuration or connectivity"
@@ -183,7 +183,7 @@ assert_stub_not_called_substring() {
 # pre-deploy snapshot (and wait for it) before rolling, and prune beyond
 # retention.
 @test "UT-INFRA-337: deploy-prod.sh takes a pre-deploy snapshot when migrations are pending (FR16/FR17)" {
-  export DEPLOY_FIXTURE_PREFLIGHT_OUT=$'PRIOR_TAG=oldtag000\nCOMPOSE_GATE=present\nMIGRATE_STATUS_RC=0\nPENDING 1 20250101\nPENDING_COUNT=1\n'
+  export DEPLOY_FIXTURE_PREFLIGHT_OUT=$'PRIOR_TAG=b2c3d4e5\nCOMPOSE_GATE=present\nMIGRATE_STATUS_RC=0\nPENDING 1 20250101\nPENDING_COUNT=1\n'
   export SNAPSHOT_RETENTION=1
   # Three entries as prune_old_snapshots itself sees them (via the stubbed
   # describe-db-snapshots response): two old ones, and a third dated newest
@@ -224,7 +224,7 @@ assert_stub_not_called_substring() {
 # UT-INFRA-339 — a snapshot failure stops the deploy before migrating;
 # :stable untouched; no roll attempted.
 @test "UT-INFRA-339: deploy-prod.sh stops before migrating when the snapshot fails" {
-  export DEPLOY_FIXTURE_PREFLIGHT_OUT=$'PRIOR_TAG=oldtag000\nCOMPOSE_GATE=present\nMIGRATE_STATUS_RC=0\nPENDING_COUNT=1\n'
+  export DEPLOY_FIXTURE_PREFLIGHT_OUT=$'PRIOR_TAG=b2c3d4e5\nCOMPOSE_GATE=present\nMIGRATE_STATUS_RC=0\nPENDING_COUNT=1\n'
   export DEPLOY_FIXTURE_SNAPSHOT_CREATE_RC=1
   run "$SCRIPT"
   assert_failure
@@ -306,7 +306,7 @@ assert_stub_not_called_substring() {
 # taken this run, the same roll-failure caveat must name its exact id as
 # the point-in-time rollback path (never auto-restored).
 @test "UT-INFRA-371: deploy-prod.sh's roll-failure report names the pre-deploy snapshot id when one was taken" {
-  export DEPLOY_FIXTURE_PREFLIGHT_OUT=$'PRIOR_TAG=oldtag000\nCOMPOSE_GATE=present\nMIGRATE_STATUS_RC=0\nPENDING_COUNT=1\n'
+  export DEPLOY_FIXTURE_PREFLIGHT_OUT=$'PRIOR_TAG=b2c3d4e5\nCOMPOSE_GATE=present\nMIGRATE_STATUS_RC=0\nPENDING_COUNT=1\n'
   export DEPLOY_FIXTURE_ROLL_RC=1
   export DEPLOY_FIXTURE_READY_SEQUENCE="200"
   run "$SCRIPT"
@@ -391,13 +391,17 @@ EOF
 }
 
 # UT-INFRA-375 — FR21/AC28 (review bounce #1 item 4): seed-environment.sh
-# --check exiting 3 (expected counts unavailable, e.g. axiome-back not
-# checked out in deploy-production.yml) is reported as NOT PERFORMED, never
+# --check exiting 3 (expected counts unavailable — e.g. the axiome-back
+# checkout is missing, its rule-pack/template seed files are unreadable, or
+# AXIOME_BACK_PATH is unset/incorrect) is reported as NOT PERFORMED, never
 # as MISMATCH — that would be a false claim of a real count difference.
+# This test exercises the reporting branch via a fake stub (fast, isolated
+# from the real seed-environment.sh's own count-derivation logic); see
+# UT-INFRA-632 below for the same branch exercised through the REAL script.
 @test "UT-INFRA-375: deploy-prod.sh records expected-counts-unavailable as NOT PERFORMED, not MISMATCH" {
   cat > "${BATS_TEST_TMPDIR}/fake-seed-environment.sh" <<'EOF'
 #!/usr/bin/env bash
-echo "BASELINE CHECK NOT PERFORMED: expected counts could not be derived — axiome-back is not checked out." >&2
+echo "BASELINE CHECK NOT PERFORMED: expected counts could not be derived — axiome-back checkout missing or unreadable." >&2
 exit 3
 EOF
   chmod +x "${BATS_TEST_TMPDIR}/fake-seed-environment.sh"
@@ -413,10 +417,31 @@ EOF
   refute_output --partial "Baseline verification: MISMATCH"
 }
 
+# UT-INFRA-632 — review bounce #2 item 1 (blocking): the exit-3 "NOT
+# PERFORMED" report line must no longer claim axiome-back "is not checked
+# out in this workflow" as an expected/routine case — the workflow checks
+# it out now (AXI-1968). This drives the REAL seed-environment.sh (no
+# SEED_ENVIRONMENT_SCRIPT override) into its real exit-3 path by pointing
+# AXIOME_BACK_PATH at an empty directory, and pins the new report text
+# verbatim while asserting the old phrase is gone for good.
+@test "UT-INFRA-632: deploy-prod.sh's NOT PERFORMED report line states real causes, not axiome-back is not checked out in this workflow" {
+  export AXIOME_BACK_PATH="${BATS_TEST_TMPDIR}/empty-axiome-back"
+  mkdir -p "${AXIOME_BACK_PATH}"
+  run "$SCRIPT"
+  assert_success
+  assert_output --partial "Deploy OK"
+  assert_output --partial "report:"
+  REPORT_FILE="$(echo "$output" | sed -n 's/^.*report: //p')"
+  run cat "${REPORT_FILE}"
+  assert_output --partial "Baseline verification: NOT PERFORMED (expected counts unavailable — the axiome-back checkout is missing, its rule-pack/template seed files are unreadable, or AXIOME_BACK_PATH is unset/incorrect; this is a configuration problem that should be investigated, not an expected outcome of this workflow)."
+  refute_output --partial "axiome-back is not checked out in this workflow"
+  refute_output --partial "owner decision"
+}
+
 # UT-INFRA-346 — FR7: MIGRATION_FACTS lines from a successful roll are
 # captured into the deploy report.
 @test "UT-INFRA-346: deploy-prod.sh captures MIGRATION_FACTS lines into the report" {
-  export DEPLOY_FIXTURE_ROLL_OUT=$'MIGRATION_FACTS: SERVICE=organization-service SCHEMA_VERSION=v1 APPLIED=1 PRE_COUNTS=1 POST_COUNTS=2\n=== Roll complete: backend -> newtag123 ==='
+  export DEPLOY_FIXTURE_ROLL_OUT=$'MIGRATION_FACTS: SERVICE=organization-service SCHEMA_VERSION=v1 APPLIED=1 PRE_COUNTS=1 POST_COUNTS=2\n=== Roll complete: backend -> a1b2c3d4 ==='
   run "$SCRIPT"
   assert_success
   run bash -c "grep -l 'MIGRATION_FACTS: SERVICE=organization-service' ${REPORTS_DIR}/*.md"
@@ -427,7 +452,7 @@ EOF
 # does not fail the deploy (the containers are already proven serving by
 # readiness).
 @test "UT-INFRA-347: deploy-prod.sh records MIGRATION_FACTS_UNAVAILABLE as a warning, not a failure" {
-  export DEPLOY_FIXTURE_ROLL_OUT=$'=== Roll complete: backend -> newtag123 ==='
+  export DEPLOY_FIXTURE_ROLL_OUT=$'=== Roll complete: backend -> a1b2c3d4 ==='
   run "$SCRIPT"
   assert_success
   assert_output --partial "Deploy OK"
@@ -436,7 +461,7 @@ EOF
 # UT-INFRA-348 — FR19: dry-run prints pending migrations and mutates
 # nothing — no lock, no retag, no roll.
 @test "UT-INFRA-348: deploy-prod.sh --dry-run reports the plan and mutates nothing" {
-  export DEPLOY_FIXTURE_PREFLIGHT_OUT=$'PRIOR_TAG=oldtag000\nCOMPOSE_GATE=present\nMIGRATE_STATUS_RC=0\nPENDING 1 20250101\nPENDING_COUNT=1\n'
+  export DEPLOY_FIXTURE_PREFLIGHT_OUT=$'PRIOR_TAG=b2c3d4e5\nCOMPOSE_GATE=present\nMIGRATE_STATUS_RC=0\nPENDING 1 20250101\nPENDING_COUNT=1\n'
   run "$SCRIPT" --dry-run
   assert_success
   assert_output --partial "DRY-RUN"
@@ -463,7 +488,7 @@ EOF
 # assertion fails against the pre-bounce code (which always said "was not
 # reachable over SSM" for any run_preflight failure, reachable or not).
 @test "UT-INFRA-369: deploy-prod.sh --dry-run distinguishes a reachable-but-refused box from an unreachable one" {
-  export DEPLOY_FIXTURE_PREFLIGHT_OUT=$'PRIOR_TAG=oldtag000\nCOMPOSE_GATE=absent\n'
+  export DEPLOY_FIXTURE_PREFLIGHT_OUT=$'PRIOR_TAG=b2c3d4e5\nCOMPOSE_GATE=absent\n'
   run "$SCRIPT" --dry-run
   assert_success
   assert_output --partial "could not determine"
@@ -525,4 +550,100 @@ EOF
   assert_failure
   assert_output --partial "unknown SERVICE"
   assert_stub_not_called aws
+}
+
+# UT-INFRA-480 — AXI-1968/F3: --tag is validated against the shape the
+# pipeline actually produces (exactly 8 lowercase hex characters,
+# reusable-build.yml's `cut -c1-8` of github.sha) BEFORE any lock/aws/curl
+# call — a malformed tag never reaches the S3 lock body or the report.
+@test "UT-INFRA-480: deploy-prod.sh refuses a --tag not shaped like a git SHA, before any lock/aws/curl call" {
+  export TAG="not-a-sha!"
+  run "$SCRIPT"
+  assert_failure
+  assert_output --partial "not shaped like an image tag"
+  assert_output --partial "not-a-sha!"
+  assert_stub_not_called aws
+  assert_stub_not_called curl
+}
+
+# UT-INFRA-481 — an 8-char lowercase hex tag (the normal pipeline shape) is
+# accepted; proven by this fixture's ordinary happy path still succeeding
+# with that exact TAG (set in setup()).
+@test "UT-INFRA-481: deploy-prod.sh accepts an 8-char lowercase hex --tag" {
+  run "$SCRIPT"
+  assert_success
+}
+
+# UT-INFRA-482 — a full 40-char lowercase hex git SHA is refused, not
+# silently accepted: deploy-prod.sh's --tag shape check is deliberately
+# narrowed to the one shape the pipeline actually produces (exactly 8
+# lowercase hex characters). Widening it to 40 chars would reproduce a
+# real trap found while writing this story's tests: written into the lock
+# body as "tag=<40-hex-char-sha>" (no space around '='), lib/report.sh's
+# generic-secret heuristic sweeps the literal "tag=" prefix into its
+# 40+-char match, which then fails that function's pure-hex exemption and
+# refuses a perfectly legitimate SHA. Refusing a 40-char tag up front, with
+# a truthful message, is strictly better than that.
+@test "UT-INFRA-482: deploy-prod.sh refuses a full 40-char lowercase hex --tag (narrower than a git SHA can be, on purpose)" {
+  export TAG="a1b2c3d4e5f60718293a4b5c6d7e8f9011223344"
+  run "$SCRIPT"
+  assert_failure
+  assert_output --partial "not shaped like an image tag"
+  assert_stub_not_called aws
+  assert_stub_not_called curl
+}
+
+# UT-INFRA-483 — a --tag value that both fails the shape check AND looks
+# secret-shaped (e.g. carries a `password=` assignment) is refused WITHOUT
+# echoing it back — reusing lib/report.sh's PUBLIC `report_is_secret_value`
+# guard (AXI-1973), never a private look-alike.
+@test "UT-INFRA-483: deploy-prod.sh refuses a secret-shaped malformed --tag without echoing it" {
+  export TAG="password=s3cr3t-tag-value"
+  run "$SCRIPT"
+  assert_failure
+  assert_output --partial "not shaped like an image tag"
+  assert_output --partial "also looks secret-shaped"
+  refute_output --partial "s3cr3t-tag-value"
+  assert_stub_not_called aws
+  assert_stub_not_called curl
+}
+
+# --- AXI-1968 Item G (FR63): diagnostic output scrubbing -------------------
+
+# UT-INFRA-508 — a migrate-gate status REFUSE/FAIL line that happens to
+# carry a secret-shaped fragment (here a postgres URL with embedded
+# credentials, the kind of thing a real connection-error message can
+# contain) is withheld from the printed "raw output", replaced by a fixed
+# notice naming the check — never the content. A sibling non-secret-shaped
+# line in the SAME multi-line output still prints verbatim (proves this is
+# a per-LINE scrub, not an all-or-nothing withholding of the whole block).
+@test "UT-INFRA-508: deploy-prod.sh withholds a secret-shaped line from the preflight's raw migrate-gate output" {
+  export DEPLOY_FIXTURE_PREFLIGHT_OUT=$'PRIOR_TAG=b2c3d4e5\nCOMPOSE_GATE=present\nMIGRATE_STATUS_RC=1\nFAIL organization-service: could not determine status: connect to postgres://orguser:S3cr3tPassw0rd123@10.0.0.5:5432/orgdb\nFAIL user-service: USER_DATABASE_URL not set\n'
+  run "$SCRIPT"
+  assert_failure
+  assert_output --partial "output line withheld"
+  assert_output --partial "FAIL user-service: USER_DATABASE_URL not set"
+  refute_output --partial "S3cr3tPassw0rd123"
+  refute_output --partial "postgres://orguser"
+}
+
+# UT-INFRA-509 — the baseline-check (seed-environment.sh --check) output is
+# scrubbed the same way: a secret-shaped line in what it prints is
+# withheld, naming the baseline check specifically, while a routine,
+# non-secret-shaped line from the same run still prints verbatim.
+@test "UT-INFRA-509: deploy-prod.sh withholds a secret-shaped line from the baseline check's printed output" {
+  cat > "${BATS_TEST_TMPDIR}/fake-seed-environment.sh" <<'EOF'
+#!/usr/bin/env bash
+echo "system rule pack 5 5 OK"
+echo "connection string was: postgres://axiome:Ut1968HostileSecret@10.0.0.9:5432/axiome"
+exit 0
+EOF
+  chmod +x "${BATS_TEST_TMPDIR}/fake-seed-environment.sh"
+  export SEED_ENVIRONMENT_SCRIPT="${BATS_TEST_TMPDIR}/fake-seed-environment.sh"
+  run "$SCRIPT"
+  assert_success
+  assert_output --partial "system rule pack 5 5 OK"
+  assert_output --partial "baseline output line withheld"
+  refute_output --partial "Ut1968HostileSecret"
+  refute_output --partial "postgres://axiome:"
 }

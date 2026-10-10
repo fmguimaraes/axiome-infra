@@ -3,7 +3,8 @@
 # never place the database password on any process's argument list, and
 # the temporary credentials file it uses instead must be removed after
 # success, after failure, and after a signal. UT-INFRA-460..464,
-# UT-INFRA-610..611 (review bounce #1).
+# UT-INFRA-610..611 (review bounce #1), UT-INFRA-495..496 (AXI-1968,
+# review bounce #2 item (b)).
 #
 # `refute_secret_in_any_stub_argv` scans the WHOLE per-test stub log
 # (tests/stubs/_common.sh writes one argv element per line, bracketed by
@@ -125,12 +126,33 @@ decode_mongodump_password_yaml() {
   printf '%s' "${stripped//\'\'/\'}"
 }
 
+# decode_mongodump_password_yaml_real <file> — same contract as the hand
+# decoder above, but via a REAL YAML parser (python3 + PyYAML), when one
+# is available on this machine. AXI-1968 review bounce #2 item (b): the
+# hand decoder only proves the emitter's output round-trips through ITS
+# OWN inverse, not through an independent, standards-compliant parser.
+_pyyaml_available() {
+  command -v python3 >/dev/null 2>&1 && python3 -c 'import yaml' >/dev/null 2>&1
+}
+decode_mongodump_password_yaml_real() {
+  python3 -c '
+import sys, yaml
+with open(sys.argv[1]) as f:
+    doc = yaml.safe_load(f)
+sys.stdout.write(doc["password"])
+' "$1"
+}
+
 # UT-INFRA-610: review bounce #1 item (d) — a password containing every
 # byte class mongodump's YAML config needs to survive (a double quote, a
 # backslash, a colon, a hash, a single quote, a leading `*`, a trailing
 # space) round-trips byte-for-byte through the REAL emitter function
 # (sourced from mongo-backup.sh itself via MONGO_BACKUP_LIB_ONLY=1 — not a
-# copy of it).
+# copy of it). AXI-1968 review bounce #2 item (b): also decoded with a
+# REAL YAML parser (PyYAML) when available, not only this test's own
+# hand-written inverse of the emitter — skipped (visibly, with a reason)
+# when PyYAML is not installed on this machine, keeping the hand-decoder
+# assertion as the baseline either way.
 @test "UT-INFRA-610: mongodump_password_config_yaml round-trips a hostile password exactly" {
   local hostile=$'*a"b\\c\':#d '
   local out="${BATS_TEST_TMPDIR}/hostile-config.yaml"
@@ -142,6 +164,13 @@ decode_mongodump_password_yaml() {
 
   run decode_mongodump_password_yaml "$out"
   assert_output "$hostile"
+
+  if _pyyaml_available; then
+    run decode_mongodump_password_yaml_real "$out"
+    assert_output "$hostile"
+  else
+    skip "python3 -c 'import yaml' is not available on this machine — real-YAML-parser round-trip assertion skipped; the hand-decoder assertion above still ran."
+  fi
 }
 
 # UT-INFRA-611: a password containing a literal newline is refused with a
@@ -158,4 +187,40 @@ decode_mongodump_password_yaml() {
   assert_failure
   assert_output --partial "MONGO_ROOT_PASSWORD contains a newline"
   refute_output --partial "line-two-SECRET"
+}
+
+# UT-INFRA-495 — AXI-1968: a password containing a BARE carriage return
+# (no accompanying newline) is also refused, with the same truthful
+# message and no value echoed. Before this story only a literal `\n` was
+# checked — a bare `\r` slipped past this guard entirely and failed
+# closed later, opaquely, as "mongodump failed" (the follow-up this story
+# closes).
+@test "UT-INFRA-495: mongodump_password_config_yaml refuses a password containing a bare carriage return, without printing it" {
+  local hostile=$'line-one\rline-two-SECRET'
+
+  run env MONGO_BACKUP_LIB_ONLY=1 bash -c '
+    source "'"${INFRA_ROOT}"'/providers/aws/onbox/mongo-backup.sh"
+    mongodump_password_config_yaml "$1"
+  ' _ "$hostile"
+
+  assert_failure
+  assert_output --partial "MONGO_ROOT_PASSWORD contains a newline"
+  refute_output --partial "line-two-SECRET"
+}
+
+# UT-INFRA-496 — AXI-1968: a password containing some OTHER control
+# character (not newline or carriage return — a bare NUL-adjacent control
+# byte, here a literal BEL \a) is refused too — the guard is "any control
+# character", not an enumerated pair.
+@test "UT-INFRA-496: mongodump_password_config_yaml refuses a password containing another control character" {
+  local hostile=$'bell\aSECRET'
+
+  run env MONGO_BACKUP_LIB_ONLY=1 bash -c '
+    source "'"${INFRA_ROOT}"'/providers/aws/onbox/mongo-backup.sh"
+    mongodump_password_config_yaml "$1"
+  ' _ "$hostile"
+
+  assert_failure
+  assert_output --partial "control character"
+  refute_output --partial "SECRET"
 }

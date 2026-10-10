@@ -1,6 +1,19 @@
 # Gated continuous-deployment to PRODUCTION (AXI-1349, FR13/AC17/NFR6; deploy
 # ORDERING/ROLLBACK re-architected under AXI-1954, epic AXI-1944, FR14-21/
-# EC1/EC13/AC11-14/18/19/28).
+# EC1/EC13/AC11-14/18/19/28; cross-repo checkouts added under AXI-1968,
+# FR45/AC37).
+#
+# The `deploy` job checks out all three application repositories BESIDE
+# axiome-infra (same sibling layout the local dev convention already
+# assumes): the repository of the service being deployed is checked out
+# AT THE DEPLOYED COMMIT (the image tag resolved to a full SHA via the
+# GitHub API — "Resolve deployed commit" below); the other two at their
+# default branch. `AXIOME_BACK_PATH` is exported to the deploy step so
+# scripts/seed-environment.sh --check (run by deploy-prod.sh) can read its
+# expected counts instead of reporting "Baseline verification: NOT
+# PERFORMED" (the gap AXI-1954 left open). A missing GH_PAT secret fails
+# the job before any AWS credential is configured or any production
+# mutation runs.
 #
 # Closes the promote≠deploy gap: a green `main` build can become a deployed prod
 # through a ONE-CLICK approval, without manual ECR surgery. This runs the SAME
@@ -143,6 +156,156 @@ jobs:
     steps:
       - name: Checkout axiome-infra
         uses: actions/checkout@v4
+        with:
+          path: axiome-infra
+          persist-credentials: false
+
+      # AXI-1968 (FR45/AC37): the baseline check (scripts/seed-environment.sh
+      # --check, run by deploy-prod.sh) reads its expected counts from the
+      # axiome-back checkout — without one it is always "NOT PERFORMED"
+      # (AXI-1954's own follow-up). This job now checks out all three
+      # application repositories beside axiome-infra, same layout the local
+      # dev convention already assumes (AXIOME_BACK_PATH's default,
+      # `${INFRA_ROOT}/../axiome-back`). Fail BEFORE any production step
+      # (AWS creds, lock, deploy-prod.sh) if the credential is missing.
+      - name: Verify cross-repo checkout credential is configured
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${GH_PAT:?GH_PAT secret is required to check out axiome-back, axiome-bio-compute and axiome-front for this deploy's baseline check and deployed-commit checkout — missing. Add it as a repo secret (same PAT reusable-build.yml and terraform-cd.yml already use).}"
+
+      # Lead decision (epic AXI-1944 debt-closure pass): the repository of
+      # the SERVICE BEING DEPLOYED is checked out at the exact commit the
+      # deployed image was built from; the other two repositories at their
+      # default branch. The image tag IS that commit's short git SHA
+      # (reusable-build.yml: `cut -c1-8` of github.sha) — resolved to a full
+      # SHA through the GitHub API (not handed to actions/checkout as-is)
+      # so an unresolvable/malformed tag fails here with a truthful message
+      # naming the repo and tag, instead of a bare git-fetch error later.
+      - name: Resolve deployed commit for ${{ needs.gate.outputs.service }}
+        id: resolve-commit
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+          SERVICE: ${{ needs.gate.outputs.service }}
+          TAG: ${{ needs.gate.outputs.tag }}
+          OWNER: ${{ github.repository_owner }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${SERVICE}" in
+            backend)    REPO="axiome-back" ;;
+            biocompute) REPO="axiome-bio-compute" ;;
+            frontend)   REPO="axiome-front" ;;
+            *)
+              echo "::error::Unknown service '${SERVICE}' — cannot resolve its source repository." >&2
+              exit 1
+              ;;
+          esac
+          echo "repo=${REPO}" >> "$GITHUB_OUTPUT"
+
+          # AXI-1968 (Item G, FR63): axiome-infra is already checked out (the
+          # very first step in this job), so report.sh's PUBLIC
+          # report_is_secret_value is sourceable here too — scrub the API
+          # response the same way deploy-prod.sh scrubs its own diagnostic
+          # output, rather than printing it unscrubbed just because this is
+          # workflow YAML, not a script. GH_PAT itself can never appear in
+          # this response (it is sent only in a request HEADER, never
+          # reflected by GitHub's API in a commit-lookup response body; no
+          # `-v`/`set -x` is used anywhere in this step, so curl's own
+          # verbose/trace output — which WOULD echo the Authorization header
+          # — is never produced either), but the response body is still
+          # untrusted, bounded, and scrubbed defensively before printing.
+          # shellcheck disable=SC1091
+          . "${GITHUB_WORKSPACE}/axiome-infra/scripts/lib/report.sh"
+
+          response="$(mktemp)"
+          http_code="$(curl -sS -o "${response}" -w '%{http_code}' \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${GH_PAT}" \
+            "https://api.github.com/repos/${OWNER}/${REPO}/commits/${TAG}")"
+
+          scrubbed_response() {
+            local line out=""
+            while IFS= read -r line || [ -n "${line}" ]; do
+              if report_is_secret_value "${line}"; then
+                out="${out}[response line withheld — matched a secret shape (NFR3); content not printed]"$'\n'
+              else
+                out="${out}${line}"$'\n'
+              fi
+            done < <(head -c 2000 "${response}")
+            printf '%s' "${out}"
+          }
+
+          if [[ ! "${http_code}" =~ ^2 ]]; then
+            echo "::error::Could not resolve ${REPO}@${TAG} to a commit via the GitHub API (HTTP ${http_code}) — refusing to check out an unresolved commit for the service being deployed. Nothing was changed. Response (truncated to 2000 bytes, scrubbed): $(scrubbed_response)" >&2
+            exit 1
+          fi
+          sha="$(jq -r '.sha // empty' "${response}")"
+          if [[ -z "${sha}" ]]; then
+            echo "::error::GitHub API returned no commit SHA for ${REPO}@${TAG} — refusing. Nothing was changed. Response (truncated to 2000 bytes, scrubbed): $(scrubbed_response)" >&2
+            exit 1
+          fi
+          echo "deployed_sha=${sha}" >> "$GITHUB_OUTPUT"
+          echo "Resolved ${REPO}@${TAG} -> ${sha}"
+
+      - name: Checkout axiome-back (deployed commit)
+        if: needs.gate.outputs.service == 'backend'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/axiome-back
+          ref: ${{ steps.resolve-commit.outputs.deployed_sha }}
+          token: ${{ secrets.GH_PAT }}
+          persist-credentials: false
+          path: axiome-back
+
+      - name: Checkout axiome-back (default branch)
+        if: needs.gate.outputs.service != 'backend'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/axiome-back
+          token: ${{ secrets.GH_PAT }}
+          persist-credentials: false
+          path: axiome-back
+
+      - name: Checkout axiome-bio-compute (deployed commit)
+        if: needs.gate.outputs.service == 'biocompute'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/axiome-bio-compute
+          ref: ${{ steps.resolve-commit.outputs.deployed_sha }}
+          token: ${{ secrets.GH_PAT }}
+          persist-credentials: false
+          path: axiome-bio-compute
+
+      - name: Checkout axiome-bio-compute (default branch)
+        if: needs.gate.outputs.service != 'biocompute'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/axiome-bio-compute
+          token: ${{ secrets.GH_PAT }}
+          persist-credentials: false
+          path: axiome-bio-compute
+
+      - name: Checkout axiome-front (deployed commit)
+        if: needs.gate.outputs.service == 'frontend'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/axiome-front
+          ref: ${{ steps.resolve-commit.outputs.deployed_sha }}
+          token: ${{ secrets.GH_PAT }}
+          persist-credentials: false
+          path: axiome-front
+
+      - name: Checkout axiome-front (default branch)
+        if: needs.gate.outputs.service != 'frontend'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/axiome-front
+          token: ${{ secrets.GH_PAT }}
+          persist-credentials: false
+          path: axiome-front
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -152,10 +315,15 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Deploy to production (authoritative)
+        working-directory: axiome-infra
         env:
           ENV: production
           SERVICE: ${{ needs.gate.outputs.service }}
           TAG: ${{ needs.gate.outputs.tag }}
+          # AXI-1968/FR45: scripts/seed-environment.sh --check (run by
+          # deploy-prod.sh's read-only baseline step) reads its expected
+          # counts from this path instead of guessing a sibling directory.
+          AXIOME_BACK_PATH: ${{ github.workspace }}/axiome-back
         shell: bash
         run: |
           # scripts/deploy-prod.sh takes the deploy lock, preflights the box,
@@ -186,7 +354,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: deploy-report-${{ needs.gate.outputs.service }}-${{ needs.gate.outputs.tag }}
-          path: reports/*-production-deploy-*.md
+          path: axiome-infra/reports/*-production-deploy-*.md
           if-no-files-found: ignore
           retention-days: 90
 
@@ -208,6 +376,14 @@ jobs:
 #    secret used by their reusable-build.yml call so the `image-published`
 #    repository_dispatch to this workflow actually fires — same mechanism the
 #    backend already relies on (AXI-1349).
+# 4a. (AXI-1968) THIS repo's own GH_PAT secret (already used by
+#     reusable-build.yml and terraform-cd.yml) must be a PAT with read
+#     access to axiome-back, axiome-bio-compute and axiome-front — this
+#     job checks out all three (the deployed service at its deployed
+#     commit, resolved via the GitHub API; the others at their default
+#     branch) so the read-only baseline check actually runs instead of
+#     reporting "NOT PERFORMED". Missing GH_PAT fails this job before any
+#     AWS credential is configured.
 # 5. (AXI-1954, rollout hazard carried from AXI-1949/AXI-1946) Before the FIRST
 #    deploy through this re-ordered path: the production box must already have
 #    the AXI-1950 one-time asset-sync conversion done, AND user-service's

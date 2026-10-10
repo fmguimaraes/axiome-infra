@@ -107,10 +107,15 @@ set -euo pipefail
 # scalar's only escape is doubling an embedded `'` (`'` -> `''`) — no
 # backslash escaping, so `"`, `\`, `:`, `#`, a leading `*` and a trailing
 # space all round-trip untouched (confirmed against PyYAML and a real
-# mongodump binary — see this story's handback). A literal newline does
-# NOT round-trip (YAML folds it to a space inside a single-quoted scalar)
-# — refused rather than silently using the wrong password. Never prints
-# the password itself, even on that refusal.
+# mongodump binary — see this story's handback). A literal newline, a bare
+# carriage return, or ANY OTHER control character does NOT round-trip
+# (YAML folds a newline — and, in practice, a bare CR — inside a
+# single-quoted scalar into a space, and other control bytes have no safe
+# representation here either) — refused rather than silently using the
+# wrong password (AXI-1968: widened from "newline only", which a bare `\r`
+# slipped past, failing closed later as an opaque `mongodump failed`
+# instead of this refusal naming the real cause). Never prints the
+# password itself, even on that refusal.
 #
 # Defined here, not sourced from a sibling file: see the header comment
 # above for why. A test sources THIS file with MONGO_BACKUP_LIB_ONLY=1 set
@@ -120,8 +125,8 @@ set -euo pipefail
 mongodump_password_config_yaml() {
   local pw="$1" escaped
   case "$pw" in
-    *$'\n'*)
-      echo "ERROR: MONGO_ROOT_PASSWORD contains a newline, which a mongodump YAML config file cannot represent without corrupting it (YAML folds a newline inside a single-quoted scalar into a space) — refusing rather than silently using the wrong password." >&2
+    *[[:cntrl:]]*)
+      echo "ERROR: MONGO_ROOT_PASSWORD contains a newline, a carriage return, or another control character, which a mongodump YAML config file cannot represent without corrupting it (YAML folds a newline/carriage return inside a single-quoted scalar into a space) — refusing rather than silently using the wrong password." >&2
       return 1
       ;;
   esac

@@ -46,6 +46,13 @@
 # report line — the on-box scripts this calls read everything they need
 # from /opt/axiome/.env, which is itself never printed. Reports go through
 # scripts/lib/report.sh, which refuses a secret-shaped line outright.
+# AXI-1968 (Item G): diagnostic text this script merely RELAYS verbatim —
+# the preflight's captured migrate-gate status output, and the baseline
+# check's captured seed-environment.sh --check output — is scrubbed
+# line-by-line through the same report.sh `report_is_secret_value` check
+# (see scrub_diagnostic_output below) before it is ever printed, rather
+# than relying solely on report_line's own, stricter, whole-sequence-
+# aborting guard.
 
 set -euo pipefail
 
@@ -55,6 +62,31 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 . "${SCRIPT_DIR}/lib/report.sh"
 # shellcheck source=lock.sh
 . "${SCRIPT_DIR}/lock.sh"
+
+# AXI-1968 (Item G, FR63): every line of diagnostic output this script
+# prints VERBATIM from something it did not author itself — a tool's own
+# captured output (migrate-gate status, over SSM) or the baseline check's
+# own captured output (seed-environment.sh --check) — is scrubbed
+# line-by-line through report.sh's PUBLIC report_is_secret_value before it
+# ever reaches stdout/stderr. A matching line is replaced by a FIXED
+# notice naming which check's output was withheld; the content itself is
+# never printed, logged, or written into the report either way. This is
+# deliberately separate from report_line's own existing secret guard
+# (report_line refuses outright and aborts under `set -e`) — a preflight
+# refusal message is operator-facing console output, not a report write,
+# and must still finish printing the rest of a multi-line diagnostic
+# rather than aborting the whole script on one suspicious-looking line
+# inside otherwise-routine tool output.
+scrub_diagnostic_output() { # <label> — reads lines on stdin
+  local label="$1" line
+  while IFS= read -r line || [ -n "${line}" ]; do
+    if report_is_secret_value "${line}"; then
+      echo "[${label} output line withheld — matched a secret shape (NFR3); content not printed]"
+    else
+      printf '%s\n' "${line}"
+    fi
+  done
+}
 
 # --- defaults + arg parsing ---------------------------------------------------
 ENV="${ENV:-production}"
@@ -120,6 +152,57 @@ default_health_path() { [ "${IS_BACKEND}" -eq 1 ] && echo "/api/v1/health/ready"
 HEALTH_URL="${HEALTH_URL:-https://$(default_fqdn)$(default_health_path)}"
 
 [ -n "${TAG}" ] || { echo "ERROR: --tag/TAG is required (the source image git SHA)." >&2; exit 2; }
+
+# AXI-1968 (FR debt): --tag is written verbatim into the S3 deploy-lock
+# body (lock_acquire's "operation" text, scripts/lock.sh, as "tag=${TAG}")
+# and into this run's report — validate its SHAPE before either, so an
+# operator typo or a malformed dispatch payload is refused here rather
+# than being recorded as this run's lock operation / report text. The
+# shape the pipeline actually produces is exactly 8 lowercase hex
+# characters (reusable-build.yml's `step.meta`: `cut -c1-8` of
+# github.sha — the same value deploy-production.yml's repository_dispatch
+# payload and workflow_dispatch input both document as "8-char git SHA").
+# Deliberately NOT widened to accept a full 40-char git SHA too: written
+# as "tag=<40-hex-char-sha>" (no space around '='), lib/report.sh's own
+# generic-secret heuristic (_report_has_generic_secret, a 40+-char
+# contiguous run from the base64-ish alphabet) sweeps the literal "tag="
+# prefix into the same match, which then fails that function's
+# pure-hex-only exemption (the match is no longer ALL hex) and refuses
+# the report line outright on a perfectly legitimate full SHA — proven in
+# this story's own test run. AXI-1973 has since fixed that trap at the
+# source (report.sh's generic-secret scan now exempts a 40/64-char pure-hex
+# run delimited by '=', ':', '/', '@' or a quote, the exact shape `tag=` /
+# `sha256:` / `commit=` produce), so widening this to accept a 40-char SHA
+# too would now be SAFE — kept narrow anyway, 8 lowercase hex only, because
+# that remains the one shape every one of this pipeline's three producers
+# (reusable-build.yml for backend/frontend/biocompute) actually publishes;
+# see this story's handback for the producer-by-producer evidence. Checked
+# here, before any report_line/lock_acquire call: a value this script is
+# about to persist (lock body, report) is validated before persistence,
+# not after. The refusal echoes TAG back ONLY when TAG itself does not look
+# secret-shaped (via lib/report.sh's PUBLIC `report_is_secret_value`
+# function, AXI-1973 — never a private look-alike) — a bogus --tag that
+# happens to also look like a credential is never printed.
+#
+# Ordering relative to AXI-1970's `gnu_date_check` (line 84, above): this
+# check deliberately stays AFTER it. gnu_date_check is a pure, input-
+# independent binary-shape probe (no mutation, does not read TAG at all),
+# so its position relative to TAG's own validation has no correctness
+# consequence either way — both run well before any lock/aws/curl call,
+# which is the only ordering constraint that actually matters (FR45). Left
+# as-is rather than reordered, to avoid touching AXI-1970's own preflight
+# block for no functional gain.
+case "${TAG}" in
+  [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;;
+  *)
+    if report_is_secret_value "${TAG}"; then
+      echo "ERROR: --tag/TAG is not shaped like an image tag this pipeline produces (expected exactly 8 lowercase hex characters, the short git SHA reusable-build.yml publishes). The given value also looks secret-shaped, so it is not printed here. Refusing before it is written into any lock or report. Nothing was changed." >&2
+    else
+      echo "ERROR: --tag/TAG is not shaped like an image tag this pipeline produces (expected exactly 8 lowercase hex characters, e.g. 'a1b2c3d4'); got '${TAG}'. Refusing before it is written into any lock or report. Nothing was changed." >&2
+    fi
+    exit 2
+    ;;
+esac
 
 is_dry() { [ "${DRY_RUN}" = "1" ]; }
 is_production_class() { [ "${ENV}" = "production" ]; }
@@ -267,8 +350,8 @@ preflight_refuse_status_nonzero() {
     echo "REFUSE: migrate-gate reports ${named_service} has tables but no migration ledger on the ${ENV} box. Run: migrate-gate baseline ${named_service}, then retry this deploy." >&2
     return 0
   fi
-  echo "REFUSE: migrate-gate status could not be determined on the ${ENV} box (exit ${status_rc:-unknown}) — this is a configuration or connectivity problem (e.g. a service's database URL not set, or the database unreachable from inside the migrate container), NOT evidence that any service needs baselining. Do NOT run migrate-gate baseline unless the raw output below explicitly names a service with tables and no ledger. Check both database URLs are present and reachable from the migrate container, then retry. Raw output:" >&2
-  printf '%s\n' "${PREFLIGHT_OUT}" >&2
+  echo "REFUSE: migrate-gate status could not be determined on the ${ENV} box (exit ${status_rc:-unknown}) — this is a configuration or connectivity problem (e.g. a service's database URL not set, or the database unreachable from inside the migrate container), NOT evidence that any service needs baselining. Do NOT run migrate-gate baseline unless the raw output below explicitly names a service with tables and no ledger. Check both database URLs are present and reachable from the migrate container, then retry. Raw output (scrubbed, FR63):" >&2
+  printf '%s\n' "${PREFLIGHT_OUT}" | scrub_diagnostic_output "migrate-gate status" >&2
 }
 
 # Runs the preflight and classifies the result. Sets PREFLIGHT_OUT,
@@ -598,7 +681,11 @@ fi
 
 # --- 3. roll to the immutable source tag (runs the gate on the new image) ----
 echo "==> Rolling ${SERVICE} on ${ENV} to ${TAG} (pull + migrate gate + up, old containers keep serving until the gate passes)"
-ROLL_LOG="$(mktemp)"
+# AXI-1968: tracked via scripts/lib/cleanup.sh (AXI-1973) instead of a bare
+# mktemp with no cleanup at all (a real, if minor, leak this closes for
+# free) — report.sh (sourced above) already installs the shared EXIT/TERM/
+# INT/HUP trap, so this file disappears on every exit path.
+axiome_create_tracked_tempfile ROLL_LOG
 ROLL_RC=0
 if roll_on_box "${TAG}" > "${ROLL_LOG}" 2>&1; then
   ROLL_RC=0
@@ -698,18 +785,20 @@ if [ "${IS_BACKEND}" -eq 1 ]; then
   else
     BASELINE_RC=$?
   fi
-  echo "${BASELINE_OUT}"
+  printf '%s\n' "${BASELINE_OUT}" | scrub_diagnostic_output "seed-environment.sh --check baseline"
   if [ "${BASELINE_RC}" -eq 0 ]; then
     report_line "Baseline verification: OK (expected == actual for reference data, system rule pack, bootstrap roles)."
   elif [ "${BASELINE_RC}" -eq 3 ]; then
     # Exit 3 is seed-environment.sh's distinct "could not derive expected
-    # counts" code (review bounce #1 item 4). In this workflow only
-    # axiome-infra is checked out (deploy-production.yml does not add an
-    # axiome-back checkout or any new token/secret to do so — an owner
-    # decision, follow-up noted in the handback), so this branch is the
-    # routine, expected case here — NOT a count mismatch. Reporting it as
-    # MISMATCH would be false; report it as not performed instead.
-    report_line "Baseline verification: NOT PERFORMED (expected counts unavailable — axiome-back is not checked out in this workflow). See the deploy log above for detail."
+    # counts" code (review bounce #1 item 4). This workflow now checks out
+    # axiome-back as a sibling repo (AXI-1968), so this branch firing is NOT
+    # the expected/routine case anymore — it means something real is wrong:
+    # the checkout is missing or its rule-pack/template seed files are
+    # unreadable, or AXIOME_BACK_PATH is unset/pointing at the wrong path.
+    # Reporting it as MISMATCH would still be false (it is not a count
+    # disagreement), so it stays "NOT PERFORMED", but the text must name the
+    # real causes rather than call this an expected case.
+    report_line "Baseline verification: NOT PERFORMED (expected counts unavailable — the axiome-back checkout is missing, its rule-pack/template seed files are unreadable, or AXIOME_BACK_PATH is unset/incorrect; this is a configuration problem that should be investigated, not an expected outcome of this workflow). See the deploy log above for detail."
   else
     report_line "Baseline verification: MISMATCH (warning only — does not roll back). See the deploy log for the expected/actual table."
   fi

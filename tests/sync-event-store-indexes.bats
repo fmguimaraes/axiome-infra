@@ -170,3 +170,99 @@ SCRIPT="${BATS_TEST_DIRNAME}/../scripts/sync-event-store-indexes.sh"
   run grep -c "prisma db push" "$STUB_LOG"
   assert_output "0"
 }
+
+# --- AXI-1968 (FR debt, three follow-ups left by AXI-1971) ---------------
+
+# UT-INFRA-497 — a replica-set URL with a REMOTE second host is refused,
+# even though the first host is local — before this story only the first
+# host was ever checked.
+@test "UT-INFRA-497: refuses a multi-host MongoDB URL whose SECOND host is remote" {
+  run env MONGODB_URL="mongodb://axiome:pw@localhost:27017,evil-remote.example.com:27017/axiome?authSource=admin&replicaSet=rs0" \
+    "$SCRIPT" --compose-project axiome-demo --compose-file docker-compose.demo.yml
+  assert_failure
+  assert_output --partial "not a recognized LOCAL address"
+  assert_output --partial "evil-remote.example.com"
+  run grep -c "^### CALL:" "$STUB_LOG"
+  assert_output "0"
+}
+
+# UT-INFRA-498 — a replica-set URL with EVERY host local is accepted.
+@test "UT-INFRA-498: accepts a multi-host MongoDB URL when every host is local" {
+  stub_use_rules docker "${TESTS_DIR}/fixtures/sync-event-store-ok.rules.sh"
+  run env MONGODB_URL="mongodb://axiome:pw@localhost:27017,mongodb:27017/axiome?authSource=admin&replicaSet=rs0" \
+    "$SCRIPT" --compose-project axiome-demo --compose-file docker-compose.demo.yml
+  assert_success
+}
+
+# UT-INFRA-499 — a password containing a literal '@' does not cause a
+# false refusal (userinfo must be stripped with the LONGEST match, up to
+# the LAST '@', not the first) when the actual host is local.
+@test "UT-INFRA-499: accepts a local host even when the password contains an embedded '@'" {
+  stub_use_rules docker "${TESTS_DIR}/fixtures/sync-event-store-ok.rules.sh"
+  run env 'MONGODB_URL=mongodb://axiome:p@ss@localhost:27017/axiome?authSource=admin' \
+    "$SCRIPT" --compose-project axiome-demo --compose-file docker-compose.demo.yml
+  assert_success
+}
+
+# UT-INFRA-500 — the same embedded-'@' password, against a REMOTE host:
+# refuses (correctly, on the real host — never on a leftover userinfo
+# fragment), and the refusal text never contains the password.
+@test "UT-INFRA-500: refuses a remote host with an embedded-'@' password, without leaking a password fragment" {
+  run env 'MONGODB_URL=mongodb://axiome:p@ss@db.example.com:27017/axiome?authSource=admin' \
+    "$SCRIPT" --compose-project axiome-demo --compose-file docker-compose.demo.yml
+  assert_failure
+  assert_output --partial "not a recognized LOCAL address"
+  assert_output --partial "db.example.com"
+  refute_output --partial "p@ss"
+  refute_output --partial "axiome:p"
+}
+
+# UT-INFRA-501 — a bracketed IPv6 loopback address ([::1]:27017) is
+# accepted as local; before this story the naive port-strip mishandled
+# the brackets and refused it.
+@test "UT-INFRA-501: accepts a bracketed IPv6 loopback host ([::1]:27017)" {
+  stub_use_rules docker "${TESTS_DIR}/fixtures/sync-event-store-ok.rules.sh"
+  run env 'MONGODB_URL=mongodb://axiome:pw@[::1]:27017/axiome?authSource=admin' \
+    "$SCRIPT" --compose-project axiome-demo --compose-file docker-compose.demo.yml
+  assert_success
+}
+
+# UT-INFRA-502 — the CONTAINER-side check also validates every host in a
+# replica-set URL, not just the first; a remote SECOND host refuses, and
+# `prisma db push` is never invoked.
+@test "UT-INFRA-502: refuses when the container's own MONGODB_URL has a remote SECOND host" {
+  stub_use_rules docker "${TESTS_DIR}/fixtures/sync-event-store-container-multihost-remote.rules.sh"
+  run env MONGODB_URL="mongodb://axiome:pw@localhost:27017/axiome?authSource=admin" \
+    "$SCRIPT" --compose-project axiome-demo --compose-file docker-compose.demo.yml
+  assert_failure
+  assert_output --partial "container's own MONGODB_URL host"
+  assert_output --partial "evil-remote.example.com"
+  assert_output --partial "not a recognized LOCAL address"
+  run grep -c "prisma db push" "$STUB_LOG"
+  assert_output "0"
+}
+
+# UT-INFRA-503 — direct unit test of the CONTAINER-side POSIX sh snippet
+# (review bounce #2 note: the snippet text is READ from the committed
+# script's own source at test time — never hand-copied — so it cannot
+# drift from what the script actually runs inside the container), run
+# under plain `sh`, proving its multi-host/bracket/longest-match
+# userinfo-strip behaviour independent of the docker stub's canned fixture
+# strings.
+@test "UT-INFRA-503: the container-side POSIX host-extraction snippet handles multi-host, embedded-'@' userinfo, and bracketed IPv6" {
+  local script_file snippet_line snippet
+  script_file="${BATS_TEST_DIRNAME}/../scripts/sync-event-store-indexes.sh"
+  # The snippet is the single-quoted argument to `sh -lc` on the one line
+  # of the script containing this exact marker — grab that line, then
+  # take everything between its FIRST and LAST single quote (the snippet
+  # itself only ever uses double quotes internally, so this is unambiguous).
+  snippet_line="$(grep -F 'u="$MONGODB_URL"' "${script_file}")"
+  [ -n "${snippet_line}" ] || fail "could not find the MONGODB_URL host-extraction line in ${script_file} — has it moved or been rewritten?"
+  snippet="$(printf '%s' "${snippet_line}" | sed -e "s/^[^']*'//" -e "s/'[^']*\$//")"
+  [ -n "${snippet}" ] || fail "extracted an empty snippet from ${script_file} — the single-quote extraction did not match"
+
+  run env MONGODB_URL='mongodb://axiome:p@ss@localhost:27017,[::1]:27018,evil-remote.example.com:27017/axiome?authSource=admin' \
+    sh -c "${snippet}"
+  assert_success
+  assert_output $'localhost\n::1\nevil-remote.example.com'
+}

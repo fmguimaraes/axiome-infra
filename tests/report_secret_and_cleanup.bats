@@ -1,7 +1,8 @@
 #!/usr/bin/env bats
 # tests/report_secret_and_cleanup.bats — scripts/lib/report.sh's public
 # report_is_secret_value (FR63) and no-leftover-temp-file contract (AC58).
-# UT-INFRA-530..535.
+# UT-INFRA-530..535, UT-INFRA-504..507 (AXI-1968: the tag=/sha256:/
+# image@sha256:/commit= delimited-hex-exemption fix).
 
 load 'helpers/setup'
 
@@ -90,6 +91,74 @@ setup() {
   assert_success
   # 44 pure hex chars (also not a recognised digest length) — refused.
   run report_is_secret_value "value a1b2c3a1b2c3a1b2c3a1b2c3a1b2c3a1b2c3a1b2c3ab"
+  assert_success
+}
+
+# UT-INFRA-504 — AXI-1968: the generic-secret scan's OWN base64 alphabet
+# (`[A-Za-z0-9/+=]`) includes `=` and `/` — the exact operator characters a
+# routine `tag=<sha>` / `image@sha256:<digest>` audit line uses right next
+# to the hash. Before this fix, that let the scan swallow a non-hex prefix
+# like `tag=` INTO the same contiguous match (since `t`/`a`/`g`/`=` are all
+# members of the broader alphabet too), so the combined string was no
+# longer pure hex and the git-SHA/sha256 exemption above never applied —
+# refusing a perfectly legitimate `tag=<40-hex-sha>` line outright. These
+# four cases are the exact shapes that trap required to not be refused;
+# UT-INFRA-532 above already proves the exemption still does NOT widen to
+# any other length or an undelimited run.
+@test "UT-INFRA-504: report_is_secret_value allows a git SHA / sha256 digest written as tag=, sha256:, image@sha256: or commit=" {
+  local hex40 hex64
+  hex40="$(printf 'a%.0s' $(seq 1 40))"
+  hex64="$(printf 'a%.0s' $(seq 1 64))"
+  run report_is_secret_value "tag=${hex40}"
+  assert_failure
+  run report_is_secret_value "sha256:${hex64}"
+  assert_failure
+  run report_is_secret_value "image@sha256:${hex64}"
+  assert_failure
+  run report_is_secret_value "commit=${hex40}"
+  assert_failure
+}
+
+# UT-INFRA-505 — the delimited exemption never widens to a hex run that is
+# NOT exactly 40 or 64 chars, even when it sits right next to one of the
+# newly-recognised delimiters ('=' here) — a 41-char run is refused exactly
+# as a bare one would be (mutation check against UT-INFRA-504/532 both
+# narrowing and widening in the wrong direction).
+@test "UT-INFRA-505: report_is_secret_value still refuses a delimited hex run of the WRONG length" {
+  local hex41 hex65
+  hex41="$(printf 'a%.0s' $(seq 1 41))"
+  hex65="$(printf 'a%.0s' $(seq 1 65))"
+  run report_is_secret_value "tag=${hex41}"
+  assert_success
+  run report_is_secret_value "tag=${hex65}"
+  assert_success
+}
+
+# UT-INFRA-506 — a hex run merely ADJACENT to (not delimited from) other
+# base64-alphabet text — a letter, digit, '+', '_', '.', or '-' touching
+# either end — is still refused: that run is a substring of something
+# LONGER, not a standalone git SHA/digest, and must still reach the generic
+# scan unexempted.
+@test "UT-INFRA-506: report_is_secret_value refuses a 40/64-hex run glued to other base64-alphabet text" {
+  local hex40
+  hex40="$(printf 'a%.0s' $(seq 1 40))"
+  run report_is_secret_value "mytag${hex40}done"
+  assert_success
+  run report_is_secret_value "x${hex40}"
+  assert_success
+  run report_is_secret_value "${hex40}x"
+  assert_success
+}
+
+# UT-INFRA-507 — the delimited-hex exemption is judged on VALUE SHAPE only,
+# same as every other branch of report_is_secret_value: a SENSITIVE key
+# (e.g. `password=`) paired with a 40-char hex value is still refused by
+# the separate sensitive-key-pair branch — the new exemption never
+# overrides that check.
+@test "UT-INFRA-507: report_is_secret_value still refuses password=<40-hex> despite the new delimited exemption" {
+  local hex40
+  hex40="$(printf 'a%.0s' $(seq 1 40))"
+  run report_is_secret_value "password=${hex40}"
   assert_success
 }
 

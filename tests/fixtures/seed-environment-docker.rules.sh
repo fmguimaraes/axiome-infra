@@ -19,6 +19,8 @@
 stub_respond() {
   local argv="$1"
   case "$argv" in
+    *"compose version"*)
+      return 0 ;;
     *"-tAc"*"organization_svc.rules"*)
       echo "${SEED_FIXTURE_RULES_COUNT:-2}"; return 0 ;;
     *"-tAc"*"organization_svc.dataview_templates"*)
