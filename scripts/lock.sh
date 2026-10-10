@@ -31,10 +31,10 @@
 #
 # ---------------------------------------------------------------------------
 # CLI
-#   scripts/lock.sh <dev|staging|production> acquire  <deploy|data-tier> --operation <text>
-#   scripts/lock.sh <dev|staging|production> release  <deploy|data-tier> --token <token>
-#   scripts/lock.sh <dev|staging|production> status   [<deploy|data-tier>]
-#   scripts/lock.sh <dev|staging|production> override <deploy|data-tier> --reason <text> --confirm
+#   scripts/lock.sh <dev|staging|production> acquire  <deploy|data-tier|apply> --operation <text>
+#   scripts/lock.sh <dev|staging|production> release  <deploy|data-tier|apply> --token <token>
+#   scripts/lock.sh <dev|staging|production> status   [<deploy|data-tier|apply>]
+#   scripts/lock.sh <dev|staging|production> override <deploy|data-tier|apply> --reason <text> --confirm
 #
 #   acquire prints `ACQUIRED <name> token=<token> actor=<actor> at=<iso>` on
 #   stdout on success — the caller MUST capture <token> (it is the only proof
@@ -48,6 +48,11 @@
 #   lock_status   <env> [<name>]                      -> prints, returns $LOCK_RC_*
 #   lock_override <env> <name> <reason> <yes|no>      -> returns $LOCK_RC_*
 #   lock_require_free <env> <name>                    -> refuse (nonzero) unless FREE
+#   lock_acquire_exclusive <env> <name> <operation> <other...>
+#     -> acquire <name> FIRST, then require every <other> free (AXI-1967,
+#        FR42/FR43/AC34/AC35); on any <other> held/UNKNOWN, releases <name>
+#        (this call's own token) and returns that rc. Same stdout contract
+#        as lock_acquire on success.
 #
 #   Auto-release (REPLACES the earlier `lock_release_on_exit` shape — bash
 #   has no trap STACK, so a function that does a bare `trap ... EXIT` can
@@ -216,7 +221,7 @@ readonly LOCK_RC_UNKNOWN=2
 readonly LOCK_RC_REFUSED=3
 readonly LOCK_MIN_AWS_CLI_PUT="2.17.34"
 readonly LOCK_MIN_AWS_CLI_DELETE="2.22.3"
-readonly LOCK_NAMES="deploy data-tier"
+readonly LOCK_NAMES="deploy data-tier apply"
 
 # --- env / naming (mirrors providers/aws/scripts/power-data.sh) --------------
 # Sets ONLY `_LOCK_`-prefixed globals — never bare PROJECT/REGION/
@@ -236,8 +241,8 @@ lock_env_defaults() {
 
 lock_validate_name() {
   case "$1" in
-    deploy|data-tier) return 0 ;;
-    *) echo "ERROR: unknown lock name '$1'. Valid: deploy|data-tier" >&2; return "$LOCK_RC_UNKNOWN" ;;
+    deploy|data-tier|apply) return 0 ;;
+    *) echo "ERROR: unknown lock name '$1'. Valid: deploy|data-tier|apply" >&2; return "$LOCK_RC_UNKNOWN" ;;
   esac
 }
 
@@ -568,6 +573,54 @@ lock_require_free() {
   [ "$rc" -eq "${LOCK_RC_OK}" ] && return 0
   echo "ERROR: lock '${name}' is not free (rc=${rc}) — refusing to proceed." >&2
   return "$rc"
+}
+
+# lock_acquire_exclusive <env> <name> <operation> <other_name> [<other_name> ...]
+# (AXI-1967, FR42/FR43, AC34/AC35) — "acquire mine, THEN check the others"
+# in one call, for every caller that must never check-then-acquire (a check
+# that passes and an acquire a moment later leaves a window where two
+# operations can both see the others free and both proceed; acquiring
+# first and only then checking means two operations racing this way can
+# both refuse, but never both proceed).
+#
+# On success: behaves exactly like a plain `lock_acquire` — prints the same
+# `ACQUIRED <name> token=<token> actor=<actor> at=<iso>` line to stdout (so
+# an existing caller's `sed -n 's/.*token=\([^ ]*\).*/\1/p'` parsing is
+# unchanged) and returns LOCK_RC_OK. <name> itself is NOT marked for
+# auto-release here — that remains the caller's own choice
+# (lock_mark_for_auto_release / lock_install_exit_trap), exactly as for a
+# plain lock_acquire.
+#
+# On failure to acquire <name> itself: returns lock_acquire's own rc
+# unchanged; nothing was acquired, so there is nothing to release.
+#
+# On success acquiring <name> but ANY <other_name> is not free (held or
+# UNKNOWN): releases <name> (this call's own, just-acquired token — never
+# a lock this call did not itself take) and returns that other lock's rc,
+# having already named which lock blocked it on stderr.
+lock_acquire_exclusive() {
+  local env="$1" name="$2" operation="$3"; shift 3
+  local acquire_out rc token other other_rc
+  acquire_out="$(lock_acquire "$env" "$name" "$operation")"
+  rc=$?
+  [ "$rc" -eq "${LOCK_RC_OK}" ] || return "$rc"
+  printf '%s\n' "${acquire_out}"
+  token="$(printf '%s\n' "${acquire_out}" | sed -n 's/.*token=\([^ ]*\).*/\1/p')"
+  for other in "$@"; do
+    # Capture lock_require_free's OWN rc BEFORE any negation — `if !
+    # lock_require_free ...; then other_rc=$?; fi` is a trap: `$?` inside
+    # that branch reflects the `!`-negated boolean (always 0 on entry to
+    # `then`), never lock_require_free's real exit code, so a held lock
+    # would always be reported back as rc=0 (success) here.
+    lock_require_free "$env" "$other"
+    other_rc=$?
+    if [ "$other_rc" -ne "${LOCK_RC_OK}" ]; then
+      echo "ERROR: acquired '${name}' but '${other}' is not free — releasing '${name}' and refusing (FR43)." >&2
+      lock_release "$env" "$name" "${token}" >&2
+      return "$other_rc"
+    fi
+  done
+  return "${LOCK_RC_OK}"
 }
 
 # --- auto-release (replaces the earlier blind-trap `lock_release_on_exit`) ------

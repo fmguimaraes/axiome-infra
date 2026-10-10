@@ -7,6 +7,10 @@ load 'helpers/setup'
 setup() {
   stub_setup
   export REPO_ROOT="${INFRA_ROOT}"
+  # AXI-1967: power.sh now also sources scripts/lock.sh (lib/report.sh
+  # transitively) — pre-set REPORT_REPO_ROOT too, same reason as REPO_ROOT
+  # above, so no git stub call is ever needed here.
+  export REPORT_REPO_ROOT="${INFRA_ROOT}"
   export POWER_NO_COMMIT=1
   export REPORTS_DIR="${BATS_TEST_TMPDIR}/reports"
 }

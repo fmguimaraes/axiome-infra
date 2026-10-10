@@ -167,9 +167,31 @@ jobs:
 
       # Re-checked here, immediately before apply: ci-gate's check (above)
       # can be minutes/hours stale by the time a human approves the
-      # `production` environment's required reviewer gate.
+      # `production` environment's required reviewer gate. UNCHANGED by
+      # AXI-1967 — still a point-in-time read of data-tier only (see
+      # UT-INFRA-126..128); the new apply lock below is the thing that
+      # actually closes the hold-across-apply window (FR42/FR43).
       - name: Check data-tier lock (AC20, FR29)
         run: bash scripts/lock.sh production status data-tier
+
+      # AXI-1967 (FR42/FR43, AC34/AC35): acquire the `apply` lock HERE —
+      # the job's first Terraform-affecting step, and crucially AFTER the
+      # `environment: production` approval wait above (that wait blocks the
+      # whole job before ANY step runs, so acquiring inside a step can
+      # never hold the lock across the approval gate). Acquire-then-check
+      # (lock_acquire_exclusive, scripts/lock.sh — AXI-1967): take `apply`
+      # first, then require `deploy` and `data-tier` both free; on either
+      # being held, the helper releases `apply` itself and this step exits
+      # non-zero, naming the holder, before `scripts/deploy.sh` ever runs.
+      - name: Acquire apply lock (FR42/FR43, AC34)
+        shell: bash
+        run: |
+          set -euo pipefail
+          . scripts/lock.sh
+          OUT="$(lock_acquire_exclusive production apply "terraform apply run=${{ github.run_id }}" deploy data-tier)"
+          echo "$OUT"
+          TOKEN="$(printf '%s\n' "$OUT" | sed -n 's/.*token=\([^ ]*\).*/\1/p')"
+          echo "APPLY_LOCK_TOKEN=${TOKEN}" >> "$GITHUB_ENV"
 
       - name: Deploy production
         env:
@@ -182,6 +204,21 @@ jobs:
           else
             bash scripts/deploy.sh production
           fi
+
+      # AXI-1967 (FR42): release `apply` on EVERY outcome of the step above
+      # — success, failure, or a cancelled run — never leaving it held. A
+      # no-op (never calls lock.sh at all) when the acquire step never
+      # captured a token (e.g. it refused and never ran "Deploy production").
+      - name: Release apply lock (FR42, always)
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${APPLY_LOCK_TOKEN:-}" ]; then
+            echo "No apply lock token recorded for this run — nothing to release."
+            exit 0
+          fi
+          bash scripts/lock.sh production release apply --token "${APPLY_LOCK_TOKEN}"
 
       - name: Tag release
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.plan_only != true }}

@@ -14,6 +14,10 @@ setup() {
   # exercises power.sh's own logic without needing a git stub fixture at
   # all; `git` thus stays correctly unconfigured/untouched by this script.
   export REPO_ROOT="${INFRA_ROOT}"
+  # AXI-1967: power.sh now also sources scripts/lock.sh (lib/report.sh
+  # transitively) — pre-set REPORT_REPO_ROOT too, same reason as REPO_ROOT
+  # above, so no git stub call is ever needed here.
+  export REPORT_REPO_ROOT="${INFRA_ROOT}"
 }
 
 # UT-INFRA-005 — given a stubbed `aws ec2 describe-instances`, when

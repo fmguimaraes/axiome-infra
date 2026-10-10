@@ -127,3 +127,33 @@ refute_stub_called_with() {
   refute_stub_called_with aws "stop-db-instance"
   refute_stub_called_with aws "delete-replication-group"
 }
+
+# UT-INFRA-416 (AXI-1967, FR43): data-tier is acquired FIRST, THEN deploy is
+# found held — down must release the data-tier lock it just took and clear
+# any park-state, never touching RDS/Redis.
+@test "UT-INFRA-416: power-data.sh down releases data-tier and refuses when the deploy lock is held (FR43)" {
+  stub_use_rules aws "${TESTS_DIR}/fixtures/power-data-down-ok.rules.sh"
+  export POWER_DATA_FIXTURE_DEPLOY_STATE=held
+
+  run "${INFRA_ROOT}/providers/aws/scripts/power-data.sh" dev down
+
+  assert_failure
+  assert_output --partial "deploy lock is held"
+  assert_stub_called aws "delete-object"
+  refute_stub_called_with aws "stop-db-instance"
+  refute_stub_called_with aws "delete-replication-group"
+}
+
+# UT-INFRA-417 (AXI-1967, FR43): same, for the apply lock.
+@test "UT-INFRA-417: power-data.sh down releases data-tier and refuses when the apply lock is held (FR43)" {
+  stub_use_rules aws "${TESTS_DIR}/fixtures/power-data-down-ok.rules.sh"
+  export POWER_DATA_FIXTURE_APPLY_STATE=held
+
+  run "${INFRA_ROOT}/providers/aws/scripts/power-data.sh" dev down
+
+  assert_failure
+  assert_output --partial "apply lock is held"
+  assert_stub_called aws "delete-object"
+  refute_stub_called_with aws "stop-db-instance"
+  refute_stub_called_with aws "delete-replication-group"
+}

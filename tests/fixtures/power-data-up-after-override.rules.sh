@@ -16,6 +16,14 @@ stub_respond() {
       echo "arn:aws:iam::111111111111:user/test-actor"
       return 0
       ;;
+    *"get-object"*"locks/deploy.json"*)
+      echo "An error occurred (404) when calling the GetObject operation: Not Found"
+      return 254
+      ;;
+    *"get-object"*"locks/apply.json"*)
+      echo "An error occurred (404) when calling the GetObject operation: Not Found"
+      return 254
+      ;;
     *"describe-db-instances"*"DBInstanceStatus"*)
       echo "available"
       return 0
@@ -36,6 +44,12 @@ stub_respond() {
     *"get-object"*"locks/data-tier.json"*)
       echo "An error occurred (NoSuchKey) when calling the GetObject operation: The specified key does not exist."
       return 1
+      ;;
+    *"s3"*"rm"*"park-state.env"*)
+      # FR44 (AXI-1967): `up` clears the stale park-state record once it
+      # detects the release was refused because the lock was ALREADY free
+      # (the override case), not some other failure.
+      return 0
       ;;
     *)
       return 99

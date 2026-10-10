@@ -38,15 +38,19 @@ setup() {
   assert_output --partial "UNKNOWN"
 }
 
-# UT-INFRA-113: status with no <name> checks BOTH locks and returns the
-# worst code (HELD beats FREE here).
-@test "UT-INFRA-113: lock.sh status with no name checks both locks and returns the worst code" {
+# UT-INFRA-113: status with no <name> checks ALL THREE locks (AXI-1967
+# added `apply` to LOCK_NAMES) and returns the worst code (HELD beats FREE
+# here). Updated for AXI-1967: previously asserted "both locks"; now a
+# third name (apply) is also checked and must be asserted FREE, or the
+# fixture's new dev/apply arm would go unexercised.
+@test "UT-INFRA-113: lock.sh status with no name checks all three locks and returns the worst code" {
   run "${INFRA_ROOT}/scripts/lock.sh" dev status
 
   assert_failure
   [ "$status" -eq 1 ]
   assert_output --partial "deploy: HELD"
   assert_output --partial "data-tier: FREE"
+  assert_output --partial "apply: FREE"
 }
 
 # UT-INFRA-390 (B2): a get-object call that returns rc 0 with a ZERO-BYTE

@@ -263,3 +263,23 @@ ranges are allocated by the lead per sibling story.
 | UT-INFRA-387 | AXI-1955 | `tests/doc-truth.bats` | FR41/AC33: every `scripts/**`/`providers/aws/scripts/**` path named in this story's runbooks actually exists on disk. |
 | UT-INFRA-388 | AXI-1955 | `tests/doc-truth.bats` | FR41/AC33: a curated set of refusal/contract strings quoted verbatim in the runbook exist verbatim in the script named alongside them. |
 | UT-INFRA-389 | AXI-1955 | `tests/doc-truth.bats` | FR41/AC33: the AWS CLI minimum versions quoted in the runbook match `scripts/lock.sh`'s own `LOCK_MIN_AWS_CLI_PUT`/`LOCK_MIN_AWS_CLI_DELETE` constants. |
+| UT-INFRA-408 | AXI-1967 | `tests/lock_acquire_exclusive.bats` | `lock_acquire_exclusive` succeeds and prints the same `ACQUIRED` line as a plain `lock_acquire` when every other lock is free (FR42/FR43). |
+| UT-INFRA-409 | AXI-1967 | `tests/lock_acquire_exclusive.bats` | `lock_acquire_exclusive` releases its own just-acquired lock and refuses when `data-tier` is held — pins the fix for the `! cmd; then $?` negation-trap bug that made this always report success. |
+| UT-INFRA-410 | AXI-1967 | `tests/lock_acquire_exclusive.bats` | `lock_acquire_exclusive` also refuses when `apply` (checked second) is held, proving the loop checks every `<other>`, not just the first. |
+| UT-INFRA-411 | AXI-1967 | `tests/lock_acquire_exclusive.bats` | When both `data-tier` and `apply` are held, `lock_acquire_exclusive` refuses on the first one checked and never looks at the second (fail fast, not exhaustive). |
+| UT-INFRA-412 | AXI-1967 | `tests/lock_acquire_exclusive.bats` | `lock_acquire_exclusive` checks each other-lock exactly once (no hidden retry/poll that could mask a race the caller must re-check for, AC35). |
+| UT-INFRA-413 | AXI-1967 | `tests/lock_acquire_exclusive.bats` | When acquiring its own lock fails, `lock_acquire_exclusive` returns `lock_acquire`'s rc unchanged and never checks any other-lock name. |
+| UT-INFRA-414 | AXI-1967 | `tests/power_down_backup.bats` | `power.sh down` refuses to stop compute when the `deploy` lock is held (FR43), before the FR31 backup step. |
+| UT-INFRA-415 | AXI-1967 | `tests/power_down_backup.bats` | `power.sh down` refuses to stop compute when the `apply` lock is held (FR43). |
+| UT-INFRA-416 | AXI-1967 | `tests/power_data_down.bats` | `power-data.sh down` acquires `data-tier` first, then releases it and refuses when the `deploy` lock is held (FR43/AC34). |
+| UT-INFRA-417 | AXI-1967 | `tests/power_data_down.bats` | `power-data.sh down` releases `data-tier` and refuses when the `apply` lock is held (FR43). |
+| UT-INFRA-418 | AXI-1967 | `tests/power_data_up.bats` | `power-data.sh up` refuses when the `deploy` lock is held, before any RDS/Redis mutation, and never touches its own `data-tier` lock on refusal (FR43). |
+| UT-INFRA-419 | AXI-1967 | `tests/power_data_up.bats` | `power-data.sh up` refuses when the `apply` lock is held, same contract. |
+| UT-INFRA-420 | AXI-1967 | `tests/power_data_status.bats` | `power-data.sh status` reports a stale park-state record PRESENT alongside an explicit WARNING naming `up` as the remedy when the lock is free but the record remains (FR44/AC36). |
+| UT-INFRA-421 | AXI-1967 | `tests/lock_terraform_cd_apply_lock.bats` | `terraform-cd.yml`'s "Acquire apply lock" step sits strictly between the existing data-tier check and "Deploy production". |
+| UT-INFRA-422 | AXI-1967 | `tests/lock_terraform_cd_apply_lock.bats` | `terraform-cd.yml`'s "Release apply lock" step runs with `if: always()` immediately after "Deploy production". |
+| UT-INFRA-423 | AXI-1967 | `tests/lock_terraform_cd_apply_lock.bats` | The acquire step's real `run:` text, executed against stubs, acquires `apply` and records `APPLY_LOCK_TOKEN` to `$GITHUB_ENV`. |
+| UT-INFRA-424 | AXI-1967 | `tests/lock_terraform_cd_apply_lock.bats` | The same `run:` text refuses (non-zero exit) and records no token when `deploy` is held, so "Deploy production" never runs. |
+| UT-INFRA-425 | AXI-1967 | `tests/lock_terraform_cd_apply_lock.bats` | The release step's real `run:` text releases `APPLY_LOCK_TOKEN` when set, and no-ops cleanly (no `aws` call at all) when it was never captured. |
+| UT-INFRA-426 | AXI-1967 | `tests/lock_acquire.bats` | `lock.sh acquire` accepts `apply` as a valid lock name across the CLI surface (FR42). |
+| UT-INFRA-427 | AXI-1967 | `tests/power_up_all_delegation.bats` | `power-up-all.sh` contains no direct mutating RDS/EC2/Redis call of its own and never calls `down` on either sub-script — it cannot bypass the FR42/FR43 rule. |

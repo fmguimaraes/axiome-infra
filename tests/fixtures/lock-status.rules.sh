@@ -19,6 +19,12 @@ stub_respond() {
       echo "An error occurred (NoSuchKey) when calling the GetObject operation: The specified key does not exist."
       return 254
       ;;
+    *"get-object"*"axiome-dev-system"*"locks/apply.json"*)
+      # AXI-1967: apply is a valid lock name now too (FR42) — dev/apply is
+      # FREE, exercised by UT-INFRA-113's "status with no name" sweep.
+      echo "An error occurred (NoSuchKey) when calling the GetObject operation: The specified key does not exist."
+      return 254
+      ;;
     *"get-object"*"axiome-staging-system"*"locks/deploy.json"*)
       echo "An error occurred (RequestTimeout) when calling the GetObject operation: transport error"
       return 254

@@ -267,6 +267,22 @@ case "$ACTION" in
     fi
     echo "  Redis ${RG_ID}: $(redis_state)"
     lock_status "$ENV" data-tier || true
+    # FR44 (AXI-1967): surface a park-state record left behind by an
+    # operator `lock.sh override` of the data-tier lock — status must
+    # report it clearly rather than staying silent about it.
+    PARK_TOKEN_STATUS="$(read_park_state_field LOCK_TOKEN)"
+    if [ -n "$PARK_TOKEN_STATUS" ]; then
+      echo "  park-state record: PRESENT at ${PARK_STATE_S3} (token=${PARK_TOKEN_STATUS}, parked_at=$(read_park_state_field PARKED_AT))"
+      set +e
+      lock_status "$ENV" data-tier >/dev/null 2>&1
+      LOCK_FREE_RC=$?
+      set -e
+      if [ "$LOCK_FREE_RC" -eq "$LOCK_RC_OK" ]; then
+        echo "  WARNING: the data-tier lock is FREE but a park-state record remains — an operator 'override' likely removed the lock without running 'up'. Run '$0 ${ENV} up' to verify both tiers and clear this record (FR44)."
+      fi
+    else
+      echo "  park-state record: none"
+    fi
     ;;
 
   down)
@@ -283,6 +299,28 @@ case "$ACTION" in
     TOKEN="$(printf '%s\n' "$LOCK_OUT" | sed -n 's/.*token=\([^ ]*\).*/\1/p')"
     if [ -z "$TOKEN" ]; then
       echo "ABORT: lock reported acquired but no token could be parsed from its output — refusing to proceed without a release token." >&2
+      exit 1
+    fi
+
+    # FR43 (AXI-1967): data-tier is acquired FIRST (above); now verify
+    # deploy and apply are both free before any AWS mutation. On refusal,
+    # release the data-tier lock this call just took and remove any
+    # park-state it wrote (none yet, at this point, but defensive — see
+    # the write below) so the refusal leaves nothing behind.
+    if ! lock_require_free "$ENV" deploy; then
+      echo "ABORT: the deploy lock is held — releasing the data-tier lock just acquired and refusing to park while a deploy is in progress." >&2
+      set +e
+      lock_release "$ENV" data-tier "$TOKEN" >&2
+      set -e
+      clear_park_state
+      exit 1
+    fi
+    if ! lock_require_free "$ENV" apply; then
+      echo "ABORT: the apply lock is held — releasing the data-tier lock just acquired and refusing to park while a Terraform apply is in progress." >&2
+      set +e
+      lock_release "$ENV" data-tier "$TOKEN" >&2
+      set -e
+      clear_park_state
       exit 1
     fi
 
@@ -376,6 +414,25 @@ case "$ACTION" in
     report_section "Before"
     report_line "RDS ${RDS_ID}: $(rds_state)"
     report_line "Redis ${RG_ID}: $(redis_state)"
+
+    # FR43 (AXI-1967): require deploy and apply free before any RDS/Redis
+    # mutation. The data-tier lock itself is THIS park's own lock (acquired
+    # by the earlier `down`, not by this `up` invocation) — it must NOT be
+    # released on a refusal here; only an operator/the later verified
+    # release path ever clears it.
+    if ! lock_require_free "$ENV" deploy; then
+      report_line "ABORT: the deploy lock is held — refusing to unpark while a deploy is in progress. The data-tier lock itself is untouched (it is this park's own lock)."
+      report_finish "failed-deploy-held"
+      echo "ABORT: the deploy lock for ${ENV} is held — refusing to start/recreate the data tier while a deploy is in progress. Re-run '$0 ${ENV} up' once the deploy finishes." >&2
+      exit 1
+    fi
+    if ! lock_require_free "$ENV" apply; then
+      report_line "ABORT: the apply lock is held — refusing to unpark while a Terraform apply is in progress. The data-tier lock itself is untouched (it is this park's own lock)."
+      report_finish "failed-apply-held"
+      echo "ABORT: the apply lock for ${ENV} is held — refusing to start/recreate the data tier while a Terraform apply is in progress. Re-run '$0 ${ENV} up' once the apply finishes." >&2
+      exit 1
+    fi
+
     report_section "Actions"
     # 1) RDS: start if stopped. EC8: if AWS already auto-restarted it, treat
     # "available" as already started and still run every verification below.
@@ -451,7 +508,25 @@ case "$ACTION" in
         report_line "data-tier lock RELEASED (verified available)."
         clear_park_state
       else
-        report_line "WARNING: could not auto-release the data-tier lock (rc=${REL_RC}): ${REL_OUT}. Run: scripts/lock.sh ${ENV} status data-tier"
+        # FR44 (AXI-1967): distinguish "the lock was already free" (an
+        # operator `lock.sh override` ran while parked — the release is
+        # correctly refused, but both tiers ARE now verified available, so
+        # the stale park-state record no longer serves any purpose and
+        # should not be left for the operator forever) from every OTHER
+        # release failure (token mismatch against a different holder,
+        # UNKNOWN/transport error) — those leave the record exactly as
+        # before, unchanged.
+        set +e
+        lock_status "$ENV" data-tier >/dev/null 2>&1
+        STATUS_RC=$?
+        set -e
+        if [ "$STATUS_RC" -eq "$LOCK_RC_OK" ]; then
+          report_line "NOTICE: the data-tier lock was already free (an operator 'override' removed it) — both tiers are now verified available, so the stale park-state record at ${PARK_STATE_S3} is cleared (FR44)."
+          echo "NOTE: the data-tier lock was already free (operator override) — both tiers are verified available; clearing the stale park-state record." >&2
+          clear_park_state
+        else
+          report_line "WARNING: could not auto-release the data-tier lock (rc=${REL_RC}): ${REL_OUT}. Run: scripts/lock.sh ${ENV} status data-tier"
+        fi
       fi
     else
       report_line "WARNING: no recorded lock token at ${PARK_STATE_S3} — lock NOT auto-released. Check: scripts/lock.sh ${ENV} status data-tier"

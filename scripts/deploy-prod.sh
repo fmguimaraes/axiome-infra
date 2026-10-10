@@ -507,17 +507,15 @@ if is_dry; then
   exit 0
 fi
 
-# --- 0. locks (FR28/FR29) -----------------------------------------------------
-echo "==> Checking the data-tier lock for ${ENV} is free"
-if ! lock_require_free "${ENV}" data-tier; then
-  echo "FAIL-CLOSED: the data-tier lock for ${ENV} is held or its state is unknown — refusing to deploy against a parked/parking database." >&2
-  exit 1
-fi
-
-echo "==> Acquiring the deploy lock for ${ENV}"
-LOCK_ACQUIRE_OUT="$(lock_acquire "${ENV}" deploy "deploy service=${SERVICE} tag=${TAG}")" || {
-  echo "FAIL-CLOSED: could not acquire the deploy lock for ${ENV} — another deploy or power operation is in progress." >&2
-  echo "${LOCK_ACQUIRE_OUT}" >&2
+# --- 0. locks (FR28/FR29/FR42/FR43) -------------------------------------------
+# Acquire-then-check (AXI-1967): take the deploy lock FIRST, then verify
+# data-tier and apply are both free. If either is held, lock_acquire_exclusive
+# releases the deploy lock THIS call just took and refuses, naming the
+# holder — never the old check-then-acquire order, which left a window
+# where two operations could both see the others free and both proceed.
+echo "==> Acquiring the deploy lock for ${ENV} (then verifying data-tier and apply are free)"
+LOCK_ACQUIRE_OUT="$(lock_acquire_exclusive "${ENV}" deploy "deploy service=${SERVICE} tag=${TAG}" data-tier apply)" || {
+  echo "FAIL-CLOSED: could not acquire the deploy lock for ${ENV}, or the data-tier/apply lock is held — refusing to deploy. See above for which lock is held." >&2
   exit 1
 }
 echo "  ${LOCK_ACQUIRE_OUT}"
@@ -560,6 +558,15 @@ report_line "Box was serving ${ROLL_KEY}=${PRIOR_TAG:-<unknown>} before this run
 echo "==> Re-checking the data-tier lock for ${ENV} is still free (post-preflight)"
 if ! lock_require_free "${ENV}" data-tier; then
   echo "FAIL-CLOSED: the data-tier lock for ${ENV} is now held (parked during preflight) — refusing to snapshot/roll against it." >&2
+  report_finish "failed-lock-race"
+  exit 1
+fi
+
+# FR43 (AXI-1967): extend the same re-check to apply — a Terraform apply
+# could likewise have started during the preflight SSM round-trip.
+echo "==> Re-checking the apply lock for ${ENV} is still free (post-preflight)"
+if ! lock_require_free "${ENV}" apply; then
+  echo "FAIL-CLOSED: the apply lock for ${ENV} is now held (a Terraform apply started during preflight) — refusing to snapshot/roll against it." >&2
   report_finish "failed-lock-race"
   exit 1
 fi

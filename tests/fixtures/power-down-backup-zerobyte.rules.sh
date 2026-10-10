@@ -1,4 +1,5 @@
 # shellcheck shell=bash
+# AXI-1967: get-object arms for locks/deploy.json and locks/apply.json (both FREE) added — power.sh down now also checks those locks (FR43) before the backup step above.
 # Fixture for the aws stub — power.sh <env> down, backup OK line parses, but
 # the object's own ContentLength is 0 (never trust a zero-byte object).
 # stop-instances/wait are deliberately NOT matched — any call to either is
@@ -9,6 +10,14 @@ stub_respond() {
     *"sts"*"get-caller-identity"*)
       echo "arn:aws:iam::111111111111:user/test-actor"
       return 0
+      ;;
+    *"get-object"*"locks/deploy.json"*)
+      echo "An error occurred (404) when calling the GetObject operation: Not Found"
+      return 254
+      ;;
+    *"get-object"*"locks/apply.json"*)
+      echo "An error occurred (404) when calling the GetObject operation: Not Found"
+      return 254
       ;;
     *"describe-instances"*"InstanceId"*)
       echo "i-0123456789abcdef0"

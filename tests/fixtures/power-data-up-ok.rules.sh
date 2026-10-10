@@ -11,6 +11,24 @@ stub_respond() {
       echo "arn:aws:iam::111111111111:user/test-actor"
       return 0
       ;;
+    *"get-object"*"locks/deploy.json"*)
+      if [ "${POWER_DATA_FIXTURE_DEPLOY_STATE:-free}" = "held" ]; then
+        printf '%s' '{"name":"deploy","actor":"ci-deploy@example.com","operation":"deploy tag=x","host":"h","acquired_at":"2026-10-10T00:00:00Z","token":"t"}' > "${argv##* }"
+        echo '{"ETag":"\"dl\""}'
+        return 0
+      fi
+      echo "An error occurred (404) when calling the GetObject operation: Not Found"
+      return 254
+      ;;
+    *"get-object"*"locks/apply.json"*)
+      if [ "${POWER_DATA_FIXTURE_APPLY_STATE:-free}" = "held" ]; then
+        printf '%s' '{"name":"apply","actor":"ci-apply@example.com","operation":"terraform apply","host":"h","acquired_at":"2026-10-10T00:00:00Z","token":"t"}' > "${argv##* }"
+        echo '{"ETag":"\"al\""}'
+        return 0
+      fi
+      echo "An error occurred (404) when calling the GetObject operation: Not Found"
+      return 254
+      ;;
     *"describe-db-instances"*"DBInstanceStatus"*)
       echo "available"
       return 0
