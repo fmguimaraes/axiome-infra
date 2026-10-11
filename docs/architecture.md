@@ -1,5 +1,10 @@
 # Architecture
 
+> **AXI-1977 note:** the directory listing below is stale about providers —
+> see the correction inline where it appears. `aws/` is the deployed provider
+> (the only live environment); `scaleway/` is not deployed. See
+> [providers.md](providers.md).
+
 ## Infrastructure Topology
 
 ```
@@ -86,8 +91,10 @@ axiome-infra/
 │   ├── registry/              # Container registry
 │   └── secrets/               # Secret management
 ├── providers/
-│   ├── aws/                   # AWS-specific module implementations (future)
-│   └── scaleway/              # Scaleway is the primary provider
+│   ├── aws/                   # AWS — the deployed provider (the only live environment)
+│   ├── scaleway/              # not deployed — scaffold for a possible future sovereign cutover
+│   ├── onprem/                # not deployed — scaffold for a possible future customer offering
+│   └── ovh/                   # not deployed — Terraform scaffold only
 ├── .github/workflows/
 │   ├── ci.yml                 # Build, test, deploy to dev
 │   ├── promote.yml            # Promote to staging/production

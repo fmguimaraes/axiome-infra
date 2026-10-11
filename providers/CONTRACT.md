@@ -9,6 +9,14 @@
 Supported providers: **`aws`**, **`ovh`**, **`scaleway`** (plus `onprem`, which is
 Docker-Compose/Ansible, not Terraform). Select with `PROVIDER=<provider> scripts/deploy.sh <env>`.
 
+> **NOT DEPLOYED (AXI-1977):** of these, only `aws` is actually deployed — the
+> single live production environment (Lightsail + Neon + a self-hosted Mongo
+> container; see [`providers/aws/README.md`](aws/README.md)). `ovh`,
+> `scaleway`, and `onprem` are validated (`terraform validate`-clean where
+> applicable), never-applied scaffolds kept for a possible future
+> cutover/offering. Day-2 operations against the real platform are in
+> [`docs/platform-lifecycle-operations.md`](../docs/platform-lifecycle-operations.md).
+
 ## 1. Region / sovereignty (NFR2)
 
 Each provider exposes its own region variable, but the value MUST be an

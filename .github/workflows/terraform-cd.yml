@@ -36,17 +36,24 @@
 # a held DEPLOY lock, so this workflow checks `data-tier` only (the deploy
 # lock is enforced by the deploy/power scripts themselves, AXI-1951/AXI-1954).
 #
-# IMPORTANT — these two checks are POINT-IN-TIME READS, not a held lock:
-# this workflow never calls `lock.sh ... acquire`, so it holds no lock of
-# its own for the duration of `terraform apply`. A `power-data.sh` park
-# that starts AFTER apply-production's "Check data-tier lock" step has
-# already passed is therefore NOT blocked by this workflow — there is a
-# window, between that check and `terraform apply` actually finishing,
-# during which a park can still begin. Closing that window means the PARK
-# side must itself refuse to proceed while an apply may be running (e.g. by
-# acquiring/checking the `deploy` lock, or an equivalent), which is a design
-# problem for AXI-1951 to solve, not something this story's read-only check
-# can provide on its own.
+# IMPORTANT — the data-tier CHECKS above are POINT-IN-TIME READS, not a
+# held lock on their own: checking `data-tier` is not the same as holding
+# it. AXI-1967 (FR42/FR43, AC34/AC35) closes this gap below by having THIS
+# workflow acquire its OWN `apply` lock (see "Acquire apply lock" /
+# "Release apply lock (FR42, always)" steps further down) BEFORE the
+# `terraform apply` step, via `lock_acquire_exclusive` (atomic S3
+# `put-object --if-none-match '*'`, strongly read-after-write consistent),
+# naming `deploy` and `data-tier` as the locks it conflicts with — THEN
+# checks those are free. `power-data.sh down` mirrors this: it acquires
+# `data-tier` first, then checks `deploy`/`apply`. Because each side
+# acquires its own lock before ever checking the other's, whichever side's
+# acquire happens later is guaranteed to observe the earlier one on its own
+# very next check and back out — at most one of {apply, deploy, park} ever
+# proceeds; two of them can never both run. See
+# docs/platform-lifecycle-operations.md §4 for the full statement
+# (including the mutual-back-out and stuck-lock-after-failed-release cases,
+# and the one exception: `power.sh`'s compute park/unpark, which does not
+# follow this acquire-then-check pattern at all).
 #
 # workflow_dispatch remains for manual plan/apply (plan_only input).
 #

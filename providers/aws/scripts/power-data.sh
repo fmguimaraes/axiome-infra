@@ -36,19 +36,26 @@
 #   trap/finally, exactly as scripts/lock.sh's header requires for this lock
 #   name.
 #
-#   Residual race this closes, and the part it does NOT close (by design —
-#   see scripts/lock.sh's own "Follow-ups" and this story's handback): the
-#   `terraform-cd` workflow reads the data-tier lock twice (before `plan`,
-#   again before `apply`) but holds nothing of its own during `apply`. Once
-#   `down` has acquired the lock, ANY `terraform-cd` run whose own lock check
-#   happens AFTER that point is correctly refused. The gap that remains is an
-#   `apply` whose *second* lock check already passed BEFORE `down` acquires —
-#   i.e. a race only within the few seconds between terraform-cd's own
-#   pre-apply check and this script's acquire. Closing that residual window
-#   completely would require terraform-cd itself to hold the lock across the
-#   whole `apply` step (a workflow-file change), which is out of this
-#   script's reach and out of this story's file ownership — flagged to the
-#   lead rather than done here.
+#   Why this makes apply and park mutually exclusive, not just narrower:
+#   `terraform-cd` acquires its OWN `apply` lock (atomic S3
+#   `put-object --if-none-match '*'`, strongly read-after-write consistent)
+#   BEFORE running `terraform apply`, then checks `deploy`/`data-tier` are
+#   free. This script mirrors that: `down` acquires `data-tier` (above)
+#   FIRST, THEN checks `deploy`/`apply` are free (below). Because each side
+#   acquires its OWN lock before checking the other's, and S3's create is
+#   atomic and immediately visible, whichever side's acquire happens later
+#   is guaranteed to see the earlier one on its own very next check and
+#   back out — at most one of {apply, park} ever proceeds; they can never
+#   both run. If both start in the same instant, each acquires its own
+#   lock successfully, then each finds the other's lock held and both
+#   refuse (releasing the lock this invocation just took) — one must be
+#   retried, never both at once. If a refusal's own release of `data-tier`
+#   fails, the lock stays HELD and every later `down`/`up` refuses until an
+#   operator runs `scripts/lock.sh <env> status data-tier`, confirms it is
+#   this run's own stale lock, then `scripts/lock.sh <env> override
+#   data-tier --reason "<text>" --confirm`. A check that cannot determine
+#   whether `deploy`/`apply` is free (network/CLI error, rc=2) is treated
+#   the same as held — never as free.
 #
 # Usage:  ./power-data.sh <dev|staging|production> <down|up|status>
 # Env overrides: AWS_REGION, AXIOME_PROJECT, AXIOME_SYSTEM_BUCKET, REPORTS_DIR,

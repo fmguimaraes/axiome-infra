@@ -1,5 +1,12 @@
 # Secrets and Variables
 
+> **AXI-1977 note:** the `MONGODB_ATLAS_PUBLIC_KEY`/`MONGODB_ATLAS_PRIVATE_KEY`
+> row below is only needed if Scaleway or OVH resources are ever in a
+> Terraform plan (`providers/scaleway/`, `providers/ovh/`) — grep confirms
+> `mongodbatlas` is not a provider in `providers/aws/` or the root module.
+> Production (AWS) uses a self-hosted MongoDB container, not Atlas; see
+> [providers.md](providers.md).
+
 Where every credential lives, who needs it, and why.
 
 ## Principles

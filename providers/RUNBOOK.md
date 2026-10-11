@@ -1,5 +1,15 @@
 # MIPP Hosting — Operator Runbook (AXI-916)
 
+> **NOT DEPLOYED (AXI-1977).** Everything below (the gated EC2/RDS/ElastiCache
+> HDS stack, and the "Sovereign cutover to Scaleway" section further down) is a
+> validated, never-applied plan — `use_hds_data_stack`, `use_ec2_compute`, and
+> every sovereign toggle default to `false`/off. The only live, deployed
+> environment today is **production on the legacy Lightsail + Neon + a
+> self-hosted Mongo container stack** (`use_legacy_stack = true`) — see
+> [`providers/aws/README.md`](aws/README.md) and
+> [`docs/platform-lifecycle-operations.md`](../docs/platform-lifecycle-operations.md)
+> for the current, accurate day-2 operator runbook.
+
 Operational guide + per-story status for the HDS-certified, provider-portable,
 Terraform-only hosting. See `providers/CONTRACT.md` for the cross-provider contract
 and `05 - product/features/MIPP-Hosting-Environment.md` (axiome-docs) for requirements.

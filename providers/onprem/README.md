@@ -1,5 +1,12 @@
 # On-Prem Provider — Bootstrap Guide
 
+> **NOT DEPLOYED (AXI-1977).** No customer host runs this today — the only
+> live, deployed environment is **production on AWS**
+> ([`providers/aws/README.md`](../aws/README.md)); day-2 operations against it
+> are in [`docs/platform-lifecycle-operations.md`](../../docs/platform-lifecycle-operations.md).
+> This guide and its scripts are kept as a prepared, never-run offering for a
+> future customer-hosted deployment.
+
 Deployment of the Axiome platform to a customer-managed Linux host. Two modes are supported, **chosen per customer** based on connectivity and compliance requirements.
 
 | Mode | Use when | State services | Backups |

@@ -1,5 +1,17 @@
 # Operational Runbooks
 
+> **RETIRED (AXI-1977).** Every command below targets the Scaleway Container
+> Service path (`scw container ...`, "Scaleway Secret Manager", "Scaleway
+> console") — a provider that is **not deployed**. The deployed, live platform
+> is AWS Lightsail + Neon + a self-hosted Mongo container (see
+> [`providers/aws/README.md`](../providers/aws/README.md)). For the current,
+> accurate operator runbook — the migration gate, deploy, locks, park/unpark,
+> box conversion, and what is and is not yet done — use
+> [`platform-lifecycle-operations.md`](platform-lifecycle-operations.md). The
+> "Seed a clean environment" section below is still accurate (it is
+> provider-neutral) and is kept; everything else on this page describes the
+> inactive Scaleway flow and should not be followed against production.
+
 ## Common Operations
 
 ### Scale a service

@@ -501,3 +501,40 @@ write_unsafe_manifest() {
   run find "$DEST" -maxdepth 1 -name '.onbox-staging.*'
   assert_output ""
 }
+
+# UT-INFRA-585 (AXI-1977 close-out sweep item 3) — same leak-on-abort
+# property as UT-INFRA-439 above, but signalled on a STUB-LOG MARKER
+# (the `aws` call for a specific file actually being in flight) rather
+# than on the staging directory's appearance, same deterministic-timing
+# pattern as tests/lock_cleanup.bats's UT-INFRA-536, and additionally
+# asserts the exit status itself is non-zero (UT-INFRA-439 only asserted
+# the directory was gone).
+@test "UT-INFRA-585: asset-sync.sh pull leaves no staging directory and exits non-zero when TERM arrives mid-fetch (stub-log-marker timing)" {
+  stub_use_rules aws "${TESTS_DIR}/fixtures/asset-sync-slow-fetch.rules.sh"
+  mkdir -p "$ASSET_SYNC_FIXTURE_BUCKET"
+  local i
+  for i in $(seq 1 40); do
+    printf 'content-%d\n' "$i" > "${ASSET_SYNC_FIXTURE_BUCKET}/file-${i}.txt"
+  done
+  write_bucket_manifest
+
+  setsid "$SCRIPT" pull "$ASSET_SYNC_FIXTURE_PREFIX" "$DEST" &
+  local pid=$!
+  local tries=0
+  while ! grep -q "file-20.txt" "$STUB_LOG" 2>/dev/null; do
+    tries=$((tries + 1))
+    if [ "$tries" -gt 1000 ]; then
+      kill -TERM -- "-$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      fail "the slow fetch for file-20.txt was never reached — cannot exercise the in-flight abort path"
+    fi
+    sleep 0.005
+  done
+  kill -TERM -- "-$pid" 2>/dev/null || true
+  local rc=0
+  wait "$pid" || rc=$?
+
+  run find "$DEST" -maxdepth 1 -name '.onbox-staging.*'
+  assert_output ""
+  [ "$rc" -ne 0 ]
+}

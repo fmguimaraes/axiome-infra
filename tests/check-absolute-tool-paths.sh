@@ -37,20 +37,63 @@ mapfile -t FILES < <(
   } | sort -u
 )
 
+# _code_only <line> — AXI-1977 close-out sweep item 4: returns <line> with
+# any UNQUOTED trailing "# ..." comment removed (both a full-line comment
+# and a trailing inline one). Tracks single- and double-quote state
+# character by character so a literal "#" inside a quoted string (e.g. a
+# path, a URL fragment, or a human comment ABOUT a "#") never truncates
+# real code that follows it on the same line — only a "#" that is not
+# inside an open quote starts a comment, matching the shell's own rule
+# closely enough for this static scan's purpose.
+_code_only() {
+  local line="$1" i=0 c in_squote=0 in_dquote=0 out=""
+  local len="${#line}"
+  while [ "$i" -lt "$len" ]; do
+    c="${line:$i:1}"
+    if [ "$in_squote" -eq 1 ]; then
+      [ "$c" = "'" ] && in_squote=0
+      out="${out}${c}"
+    elif [ "$in_dquote" -eq 1 ]; then
+      if [ "$c" = '\' ] && [ "$((i + 1))" -lt "$len" ]; then
+        out="${out}${c}${line:$((i + 1)):1}"
+        i=$((i + 1))
+      else
+        [ "$c" = '"' ] && in_dquote=0
+        out="${out}${c}"
+      fi
+    else
+      case "$c" in
+        "'") in_squote=1; out="${out}${c}" ;;
+        '"') in_dquote=1; out="${out}${c}" ;;
+        '#') break ;;
+        *) out="${out}${c}" ;;
+      esac
+    fi
+    i=$((i + 1))
+  done
+  printf '%s' "$out"
+}
+
 status=0
 for tool in $GUARDED_TOOLS; do
   for f in "${FILES[@]}"; do
     [ -f "$f" ] || continue
     # A command-position absolute path to the tool: preceded by
-    # whitespace/`;`/`&&`/`||`/`(`/start-of-line, never inside a comment.
+    # whitespace/`;`/`&&`/`||`/`(`/start-of-line, never inside a comment
+    # (full-line OR trailing inline — see _code_only above).
     while IFS=: read -r lineno content; do
       [ -n "$lineno" ] || continue
       case "$content" in
         *ExecStart=*"/${tool}"*|*ExecStop=*"/${tool}"*) continue ;;
       esac
+      code="$(_code_only "$content")"
+      case "$code" in
+        *"/usr/local/bin/${tool}"*|*"/usr/bin/${tool}"*|*"/bin/${tool}"*) : ;;
+        *) continue ;;
+      esac
       echo "ERROR: ${f}:${lineno}: calls '${tool}' by absolute path — bypasses the PATH-shim stub (FR62/AC56): ${content}" >&2
       status=1
-    done < <(grep -nE "(^|[[:space:];(]|&&|\|\|)(/usr/local/bin/|/usr/bin/|/bin/)${tool}([[:space:]]|\$)" "$f" | grep -vE '^[0-9]+:[[:space:]]*#')
+    done < <(grep -nE "(^|[[:space:];(]|&&|\|\|)(/usr/local/bin/|/usr/bin/|/bin/)${tool}([[:space:]]|\$)" "$f")
   done
 done
 exit "$status"

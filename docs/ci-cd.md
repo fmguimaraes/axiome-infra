@@ -332,7 +332,9 @@ they must exist on `axiome-infra` itself, not just the service repos.
 Provider-specific API keys missing or wrong on `axiome-infra`. See
 `docs/secrets.md`. For Atlas, also check the IP allowlist in the project:
 GitHub Actions runner IPs change, so `0.0.0.0/0` is the pragmatic value
-for CI.
+for CI. **AXI-1977 note:** this applies only when a Scaleway/OVH plan is in
+scope — `terraform-cd` against the AWS/production module never touches
+Atlas (no `mongodbatlas` provider there); see [providers.md](providers.md).
 
 ### Re-running a failed run doesn't pick up workflow fixes
 

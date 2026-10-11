@@ -2,7 +2,7 @@
 # tests/check-absolute-tool-paths-self.bats — self-test for
 # tests/check-absolute-tool-paths.sh (AXI-1972, scope item 1/FR62/AC56:
 # "a script calling a guarded tool by absolute path is detected and
-# fails the suite"). Before this story's checker existed, a script that
+# fails the suite"). Before this checker existed, a script that
 # wrote `/usr/bin/aws ...` instead of `aws ...` passed the suite silently
 # (the PATH-shim stub never fires for an absolute path).
 #
@@ -58,4 +58,39 @@ EOF
 @test "UT-INFRA-560: check-absolute-tool-paths.sh is clean on the real repo" {
   run env PATH="$_REAL_PATH" "$CHECKER" "$INFRA_ROOT"
   assert_success
+}
+
+# UT-INFRA-583: a line that ONLY mentions the absolute path inside a
+# TRAILING inline comment (code before the "#" has nothing to do with it)
+# is not flagged — previously only a FULL-line comment was ignored.
+@test "UT-INFRA-583: check-absolute-tool-paths.sh ignores a trailing inline comment" {
+  local dir="${BATS_TEST_TMPDIR}/abs-inline-comment"
+  mkdir -p "${dir}/scripts"
+  PATH="$_REAL_PATH" git init -q "$dir"
+  cat > "${dir}/scripts/ok.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+aws sts get-caller-identity   # formerly called via /usr/bin/aws
+EOF
+  (cd "$dir" && PATH="$_REAL_PATH" git add -A && PATH="$_REAL_PATH" git -c user.email=a@b.c -c user.name=a commit -q -m init)
+  run env PATH="$_REAL_PATH" "$CHECKER" "$dir"
+  assert_success
+}
+
+# UT-INFRA-584 (AXI-1977 close-out sweep item 4): a "#" INSIDE a quoted
+# string earlier on the line must not be treated as a comment start that
+# hides a REAL absolute-path call appearing later on the same line.
+@test "UT-INFRA-584: check-absolute-tool-paths.sh still flags a real call after a quoted '#'" {
+  local dir="${BATS_TEST_TMPDIR}/abs-quoted-hash"
+  mkdir -p "${dir}/scripts"
+  PATH="$_REAL_PATH" git init -q "$dir"
+  cat > "${dir}/scripts/bad.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "tag#1"; /usr/bin/aws sts get-caller-identity
+EOF
+  (cd "$dir" && PATH="$_REAL_PATH" git add -A && PATH="$_REAL_PATH" git -c user.email=a@b.c -c user.name=a commit -q -m init)
+  run env PATH="$_REAL_PATH" "$CHECKER" "$dir"
+  assert_failure
+  assert_output --partial "calls 'aws' by absolute path"
 }

@@ -1,5 +1,14 @@
 # Scaleway Provider — Bootstrap Guide
 
+> **NOT DEPLOYED (AXI-1977).** No environment runs on this provider today — the
+> only live, deployed environment is **production on AWS**
+> ([`providers/aws/README.md`](../aws/README.md)); day-2 operations against it
+> are in [`docs/platform-lifecycle-operations.md`](../../docs/platform-lifecycle-operations.md).
+> This Terraform and the guide below are kept as a validated (`terraform
+> validate`-clean), never-applied scaffold for a possible future sovereign
+> cutover (see `providers/RUNBOOK.md` "Sovereign cutover to Scaleway") — do not
+> follow it expecting a running environment to exist at the end.
+
 Same architecture as the AWS provider, on Scaleway: a single Scaleway Instance per environment running the docker-compose stack, with Neon (Postgres) and Atlas (MongoDB) as external managed databases, Scaleway Object Storage for files, and Scaleway Container Registry for images.
 
 This guide is run **once per Scaleway organization, then once per environment**.

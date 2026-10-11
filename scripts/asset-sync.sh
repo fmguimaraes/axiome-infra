@@ -59,6 +59,18 @@
 #       row — in practice should never happen; AXI-1972 follow-up c)
 #   1  usage error
 #
+# `publish`'s staging-directory-creation failure returns 1 (bare
+# "ERROR: could not create a staging directory"), not pull's dedicated 7 —
+# the two modes were never unified onto one exit code for this failure.
+# This is deliberate, not an oversight to fix here: `publish` is
+# operator/CI-only (no caller in this repo runs it against a real bucket —
+# see "publish" above) and nothing
+# branches on its exit code today, so changing it now would be a
+# behavioural change with no caller to validate it against. Documented
+# here rather than unified; an owner who starts scripting against
+# `publish`'s exit codes should either make it return 7 too or branch on
+# "non-zero", never assume 1 means specifically "usage error" for publish.
+#
 # NFR3: never prints a secret — this script touches no secret value (it
 # copies files; .env refresh is scripts/refresh-env.sh's job).
 set -euo pipefail

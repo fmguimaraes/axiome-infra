@@ -12,7 +12,7 @@ box.
 
 **NFR9 — backward-compatible migrations.** A migration you ship MUST keep the
 **previously deployed image** working, because a rollback (`deploy-prod.sh`'s
-`restore_previous_tag`, see [`platform-lifecycle-operations.md`](platform-lifecycle-operations.md#5-roll--ssm-exec-exit-codes))
+`restore_previous_tag`, see [`platform-lifecycle-operations.md`](platform-lifecycle-operations.md#5-roll-scriptsroll-servicesh-and-ssm-execsh-exit-codes))
 re-points the box at the OLD image but **never reverts the schema** — the gate
 is forward-only and has no "down" migration concept at all. If deploy N's
 migration is not backward-compatible with image N-1, a restore-to-N-1 after a

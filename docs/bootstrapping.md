@@ -1,5 +1,12 @@
 # Bootstrapping Guide
 
+> **AXI-1977 note:** of the providers indexed below, only **AWS** is actually
+> deployed (the single live production environment). Scaleway and on-prem are
+> validated, never-applied scaffolds — see
+> [Retired / not-yet-deployed providers](providers.md#retired--not-yet-deployed-providers).
+> For day-2 operations against the real platform, see
+> [platform-lifecycle-operations.md](platform-lifecycle-operations.md).
+
 Day-0 setup for the Axiome platform across all supported providers. This document is an **index** — detailed per-provider bootstrap lives next to the Terraform code.
 
 For the **why** (architecture, evolution path, graduation criteria), read these first:

@@ -7,7 +7,7 @@ flag, exit code and refusal message below is copied or paraphrased from the
 actual script on `origin/main` as of this writing, not guessed — where a
 refusal string is quoted it is verbatim; where it is paraphrased that is
 called out. **Nothing in this runbook has been run against live AWS** — see
-[Known gaps](#9-known-gaps) at the end.
+[Known gaps](#11-known-gaps) at the end.
 
 For the migration-authoring rules (what makes a migration the gate accepts),
 see [`migration-authoring-guide.md`](migration-authoring-guide.md).
@@ -26,6 +26,16 @@ see [`migration-authoring-guide.md`](migration-authoring-guide.md).
   prints a WARNING and still tries the call — an old CLI that gets past the
   warning still cannot silently overwrite (it hits the "unsupported option"
   branch and fails, never falls back to an unconditional create).
+- **Bash 3.2 (macOS's shipped `/bin/bash`) — what is and is not verified.**
+  `scripts/lib/report.sh` and `scripts/lib/cleanup.sh` are written to avoid
+  bash-4-only constructs (e.g. `${var,,}` case-conversion — `tr` is used
+  instead) so they parse and run on bash 3.2. This has been verified by
+  reading the source for bash-4-only syntax and by the normal bats suite
+  running under whatever bash is on this machine; it has **not** been
+  verified by actually executing these libraries under a real bash 3.2
+  interpreter (none is available in this environment) — treat
+  "bash 3.2 safe" as "reviewed for known bash-4-isms", not "run on bash
+  3.2 and observed to pass".
 - **GNU `date` is required** on whatever machine runs `power-data.sh` /
   `scripts/lock.sh` (age/duration calculations use `date -u -d <iso>`). A
   non-GNU `date` (e.g. macOS's BSD `date` without `coreutils`) makes those
@@ -34,15 +44,28 @@ see [`migration-authoring-guide.md`](migration-authoring-guide.md).
 - **`jq` is required** by `ssm-exec.sh`, `lock.sh`, and `power.sh`'s backup
   verification — each refuses immediately with a plain `ERROR: jq is
   required` if it is missing.
-- **Shellcheck version skew (local vs CI):** CI's `infra-tests` job runs
-  shellcheck **0.9.0**; a contributor's machine may have a newer version
-  (0.11.0 as of this story). A file clean locally can still fail CI — known
-  example: SC2120/SC2119 on a function that reads a positional parameter with
-  a default but is never called with an argument. When adding new shell,
-  avoid optional positional parameters nobody actually passes anywhere
-  (including in tests/fixtures), and never add a disable directive or touch
-  `tests/shellcheck-baseline.json` to get past a version-specific finding —
-  write the function so neither version flags it.
+- **Shellcheck is pinned, not skewed, as of AXI-1972 (FR62).** The older text
+  here claimed CI ran 0.9.0 while a contributor's machine might run a newer
+  0.11.0 — that is now **false**: `tests/run-shellcheck.sh` downloads and
+  **verifies** a pinned shellcheck binary (version/URL/tarball checksum
+  baked into the script as `SHELLCHECK_VERSION`/`SHELLCHECK_URL`/
+  `SHELLCHECK_TARBALL_SHA256`) and runs that exact binary, local or CI,
+  rather than whatever `shellcheck` happens to be on `$PATH`. Cached under
+  `${TESTS_DIR}/vendor/shellcheck` (overridable via `SHELLCHECK_CACHE_DIR`);
+  AXI-1977 close-out hardened the cache itself (see below) to re-verify a
+  SHA-256 sidecar on every cache hit, failing closed (`exit 2`) on a missing
+  or mismatched sidecar rather than trusting whatever is sitting in the
+  cache directory.
+  **To move the pin forward** (e.g. a new shellcheck release): update
+  `SHELLCHECK_VERSION`, `SHELLCHECK_URL`, and `SHELLCHECK_TARBALL_SHA256` in
+  `tests/run-shellcheck.sh` together, delete `${SHELLCHECK_CACHE_DIR}` (or
+  run once with a fresh `SHELLCHECK_CACHE_DIR`) so the next run fetches and
+  re-verifies against the new checksum, then run `tests/run.sh` once to
+  confirm the whole repo is still clean against the new version before
+  committing the bump — a version bump that introduces a new finding is the
+  bump author's finding to fix, never a baseline/disable-directive escape
+  hatch (`tests/shellcheck-baseline.json` only ever shrinks, it is not a
+  place to park a new, real finding).
 
 ---
 
@@ -68,7 +91,7 @@ systemctl daemon-reload
 This has **never been run against a real box** — it is the documented,
 reviewed path, not a verified one. `scripts/deploy-prod.sh`'s own preflight
 names exactly this command when it detects an unconverted box (see
-[§5 Deploy](#5-deploy)).
+[§3 Deploy](#3-deploy-scriptsdeploy-prodsh--make-deploy-prod)).
 
 **What refuses until this is done, and why:**
 
@@ -77,13 +100,29 @@ names exactly this command when it detects an unconverted box (see
 | `scripts/roll-service.sh` (backend) | `REFUSE: <compose-file> has no 'migrate' service under services: — this box predates the migration gate. Run: scripts/asset-sync.sh pull <s3-prefix> <dir> on this box, then retry the roll.` | No `migrate` service in the box's compose file means `up -d` cannot run the gate at all before swapping backend containers — the script refuses rather than start backend containers unguarded. |
 | `scripts/deploy-prod.sh` | `REFUSE: <env> box has no 'migrate' service in its compose definition — it predates the AXI-1950 asset-sync conversion. Run the one-time conversion: scripts/asset-sync.sh pull s3://<project>-<env>-system/onbox /opt/axiome on the box, point axiome.service at scripts/boot.sh, systemctl daemon-reload, then retry this deploy.` | Same check, read-only, at preflight time — before any snapshot or roll. |
 
-`asset-sync.sh pull` itself (exit codes, for diagnosing a failed conversion):
-`0` installed or already current; `2` manifest or a listed file unreachable
-(existing assets kept); `3` a downloaded file's checksum did not match the
-manifest (nothing installed); `4` the downloaded `docker-compose.yml` failed
-`docker compose config -q` validation (nothing installed); `1` usage error.
-Every non-zero exit leaves the destination directory untouched — a failed
-pull never leaves a half-installed box.
+`asset-sync.sh pull` itself — the full exit-code contract (from the
+script's own header, `scripts/asset-sync.sh`):
+
+| Exit | Meaning |
+|---|---|
+| `0` | installed, confirmed already current, or repaired a stale manifest bookkeeping copy only |
+| `1` | usage error |
+| `2` | manifest or a listed file could not be fetched — existing assets kept |
+| `3` | a downloaded file's checksum does not match the manifest — nothing installed |
+| `4` | `docker-compose.yml` failed `docker compose config -q` validation — nothing installed |
+| `5` | a manifest entry's path is absolute, empty, or contains a `..` segment (FR48) — nothing installed, that entry is never even fetched |
+| `6` | install failed partway through — every file already replaced in this install run was restored to its own previous copy (FR49); nothing is left mixed |
+| `7` | could not create a staging directory at all (20 name collisions in a row — in practice should never happen; AXI-1972 follow-up) |
+
+Every non-zero exit leaves the destination directory untouched (`5`/`7`) or
+restored to a consistent pre-install state (`6`) — a failed pull never
+leaves a half-installed box. **`publish`'s own staging-directory-creation
+failure returns `1`, not `7`** — the two modes were never unified onto one
+exit code for this specific failure; `publish` is operator/CI-only (never
+run against a real bucket by anything in this repo) and nothing branches on
+its exit code today, so this is documented rather than changed (see the
+AXI-1977 close-out comment in the script itself, `scripts/asset-sync.sh`
+near the exit-code block).
 
 Once converted, `boot.sh` runs on every boot: asset sync → `.env` refresh
 (both **non-fatal** — a box with assets/`.env` already on disk still comes
@@ -188,8 +227,11 @@ H2/H6/H7 from the feature doc):**
    presence, and `migrate-gate status` (§2 above governs how its result is
    read). The ONLY non-zero SSM exit here (box unreachable) is itself a
    refusal — nothing has mutated yet.
-4. **Re-check** the `data-tier` lock (narrows, does not close, a race where a
-   park starts between step 1 and here — see [§4](#4-locks)).
+4. **Re-check** the `data-tier` lock, now that `deploy` (step 2) is held: a
+   park acquires `data-tier` and only then checks `deploy`/`apply`, so this
+   re-check (on top of step 1's earlier, pre-acquisition check) is what
+   guarantees a park starting anywhere up to this point is caught — not a
+   race left open (see [§4](#4-locks)).
 5. **Pre-deploy RDS snapshot** — backend, pending migrations, production
    only. Named `<project>-<env>-predeploy-<UTC timestamp>`; waits for
    `available` before continuing; pruned to the newest `SNAPSHOT_RETENTION`
@@ -213,20 +255,37 @@ H2/H6/H7 from the feature doc):**
 
 **Every refusal and what it means:**
 
-| Stage | Refusal (paraphrased unless quoted) | Meaning |
+| Stage | Refusal (paraphrased — see the note below the table for which rows are verbatim) | Meaning |
 |---|---|---|
 | Locks | data-tier lock held/UNKNOWN | refuse before any mutation — a park may be in progress |
-| Locks | `FAIL-CLOSED: could not acquire the deploy lock for <env> — another deploy or power operation is in progress.` | another deploy already running |
+| Locks | `FAIL-CLOSED: could not acquire the deploy lock for ${ENV}, or the data-tier/apply lock is held — refusing to deploy. See above for which lock is held.` (**verbatim**, `scripts/deploy-prod.sh`) | another deploy running, or the data-tier/apply lock is held |
 | Preflight (box) | `FAIL-CLOSED: could not reach <env> over SSM to preflight-check (INDETERMINATE) — the box may be stopped. Nothing has been changed.` | SSM wait expired (exit 2) — nothing mutated |
 | Preflight (box) | `FAIL-CLOSED: /opt/axiome/.env does not exist on the <env> box — has cloud-init finished?` | box never finished first boot |
 | Preflight (gate) | §1's box-conversion REFUSE, or §2's ledger/connectivity REFUSE | see §1/§2 |
-| Post-preflight lock race | `FAIL-CLOSED: the data-tier lock for <env> is now held (parked during preflight) — refusing to snapshot/roll against it.` | a park started mid-preflight |
+| Post-preflight re-check | `FAIL-CLOSED: the data-tier lock for <env> is now held (parked during preflight) — refusing to snapshot/roll against it.` | a park started mid-preflight; caught by the already-safe acquire-then-check pattern (§4), not a race |
 | Snapshot | `FAIL-CLOSED: could not create pre-deploy snapshot … — stopping before any migration.` / did not become available | RDS snapshot API failure or timeout — stop before migrating |
 | Roll (indeterminate, exit 2) | `FAIL-CLOSED: the roll result is INDETERMINATE … :stable was NOT advanced.` | SSM wait expired on the roll itself; box state truly unknown — **no blind restore attempted** (see below) |
 | Roll (failed, exit 1) | `FAIL-CLOSED: <env>/<service> roll failed — migration gate did not pass. :stable was never advanced.` | gate refused on the new image; previous tag is restored (see below) |
 | Readiness | `FAIL-CLOSED: <env>/<service> did not become ready after <n> attempts.` + per-service reasons | readiness never reached 200; previous tag is restored |
 | `:stable` advance | `FAIL-CLOSED: … advancing ECR :stable FAILED. Production is serving a build that :stable does NOT point at — retry … by hand with the digest …` | the box IS healthy on the new image, but the retag call itself failed — manual retag needed |
 | `:stable` not advanced (digest moved) | `<repo>:<tag> moved during this deploy — it now points at <digest>, not the <digest> this deploy rolled out and verified ready. Refusing to advance :stable to a digest this deploy never proved healthy.` | someone re-pushed the mutable tag mid-deploy; the roll itself already succeeded and is healthy — only the `:stable` pointer is withheld |
+
+**Verbatim vs paraphrase:** every backtick-quoted message in this runbook
+is one of two things.
+**Dual-checked verbatim** against both this file and its script by
+`tests/doc-truth.bats`'s `UT-INFRA-388` — the deploy-lock row above, the
+§1 box-conversion `REFUSE` lines, the §4 lock-table
+rows, the §4 `acquire --operation`/`lock_mark_for_auto_release` refusals,
+and the `mongo-backup.sh` `MONGO_BACKUP_OK`/`MONGO_BACKUP_FAILED`/
+control-character lines — are all checked this way (grep `UT-INFRA-388` in
+that file for the exact substring list). **Explicitly paraphrased**
+otherwise: every OTHER row in the table above (placeholders like
+`<env>`/`<n>`/`<service>`/`<digest>` stand in for the script's own
+`${ENV}`/etc. shell interpolation, and `…` elides boilerplate) — these are
+paraphrases for operator readability, not exact script output, and are not
+asserted against script source by any test. The §0 AWS-CLI-version-error
+line (`ERROR: aws CLI … is older than the minimum 2.17.34 …`) is likewise
+an explicit paraphrase (its own `…` marks the elision).
 
 **Restore behaviour (previous-tag restore):** on a roll failure (exit 1) or a
 readiness failure, `deploy-prod.sh` re-rolls the box to `PRIOR_TAG` (captured
@@ -300,6 +359,45 @@ scrub (sourcing `axiome-infra/scripts/lib/report.sh`, already checked out
 by that point) to the GitHub API response it prints on a resolution
 failure, bounded to 2000 bytes either way.
 
+**The `deploy-production.yml` GitHub Actions workflow — one level above
+`deploy-prod.sh`.** The script above is what runs; this workflow is what
+calls it and prepares its inputs:
+
+- **`--tag`/`TAG` must be exactly 8 lowercase hex characters** — the short
+  git SHA `reusable-build.yml` publishes — validated before it is written
+  into any lock or report. Two refusal messages, chosen by whether the bad
+  value ALSO looks secret-shaped:
+  `ERROR: --tag/TAG is not shaped like an image tag this pipeline produces
+  (expected exactly 8 lowercase hex characters, the short git SHA
+  reusable-build.yml publishes). The given value also looks secret-shaped,
+  so it is not printed here. Refusing before it is written into any lock or
+  report. Nothing was changed.` or, when it is merely malformed (and safe to
+  print): `ERROR: --tag/TAG is not shaped like an image tag this pipeline
+  produces (expected exactly 8 lowercase hex characters, e.g. 'a1b2c3d4');
+  got '${TAG}'. Refusing before it is written into any lock or report.
+  Nothing was changed.`
+- **`GH_PAT` is required**, not optional, to check out `axiome-back`,
+  `axiome-bio-compute`, and `axiome-front` for this deploy's baseline check
+  and deployed-commit checkout — enforced with
+  `: "${GH_PAT:?GH_PAT secret is required to check out axiome-back,
+  axiome-bio-compute and axiome-front for this deploy's baseline check and
+  deployed-commit checkout — missing. Add it as a repo secret (same PAT
+  reusable-build.yml and terraform-cd.yml already use).}"`.
+- **Each of those three repos is checked out twice** in the same workflow
+  run: once at the commit the deploy is actually rolling out (resolved from
+  `<repo>@<tag>` via the GitHub API), and once at that repo's own default
+  branch (used by the baseline check, §3's "Baseline verification" above,
+  which needs the LATEST rule-pack/template files, not the deployed
+  commit's possibly-older copy).
+- **Commit-resolution failure** (the GitHub API call that turns
+  `<repo>@<tag>` into a commit SHA comes back non-2xx) refuses the checkout
+  outright, with the response scrubbed and truncated before printing:
+  `::error::Could not resolve ${REPO}@${TAG} to a commit via the GitHub API
+  (HTTP ${http_code}) — refusing to check out an unresolved commit for the
+  service being deployed. Nothing was changed. Response (truncated to 2000
+  bytes, scrubbed): $(scrubbed_response)` — nothing is checked out at an
+  unverified ref.
+
 **Seeding production directly (`scripts/seed-environment.sh -e production`,
 outside `deploy-prod.sh`):** since AXI-1968 (FR46/AC39), the WRITE path (no
 `--check`) against `-e production` refuses unless the operator also passes
@@ -311,10 +409,39 @@ connection or Compose call runs:
 piped 'yes' or empty stdin can never satisfy this. Nothing was connected
 to, and nothing was written.` `-e dev`/`-e staging`/`--local`/`--check`
 (any environment) are all unaffected — only a production WRITE needs it.
+**`make seed-env ENV=production` hits this same refusal** — the Makefile
+target is `scripts/seed-environment.sh -e $(ENV)` with no `--confirm` flag
+of its own, so it always refuses for `ENV=production`; the Makefile's own
+`seed-env` help line and comment say so. To actually seed production, call
+the script directly: `scripts/seed-environment.sh -e production --confirm
+production`.
 
 ---
 
 ## 4. Locks
+
+**There are three lock names, not two: `deploy`, `data-tier`, and `apply`**
+(`LOCK_NAMES="deploy data-tier apply"`, `scripts/lock.sh`). `apply` is held
+across a `terraform-cd` apply run (acquired/released by the workflow itself,
+AXI-1967/FR42/AC34 — see `.github/workflows/terraform-cd.yml`'s
+`lock_acquire_exclusive production apply "terraform apply run=${{
+github.run_id }}" deploy data-tier` step, released `if: always()` via
+`scripts/lock.sh production release apply --token "${APPLY_LOCK_TOKEN}"`),
+and is what makes apply/deploy/park mutually exclusive:
+
+| Caller | Check | Exact message | Effect |
+|---|---|---|---|
+| `providers/aws/scripts/power.sh` (compute `down`) | apply lock held? | `ABORT: the apply lock for ${ENV} is held — refusing to stop compute while a Terraform apply is in progress.` | refuses before any SSM/stop call |
+| `providers/aws/scripts/power-data.sh` (`down`, after acquiring data-tier) | apply lock held? | `ABORT: the apply lock is held — releasing the data-tier lock just acquired and refusing to park while a Terraform apply is in progress.` | releases the data-tier lock it just took, then refuses — never leaves data-tier held on this path |
+| `power-data.sh` (`up`) | apply lock held? | **stderr:** `ABORT: the apply lock for ${ENV} is held — refusing to start/recreate the data tier while a Terraform apply is in progress. Re-run '$0 ${ENV} up' once the apply finishes.` **report line:** `ABORT: the apply lock is held — refusing to unpark while a Terraform apply is in progress. The data-tier lock itself is untouched (it is this park's own lock).` (one branch, two surfaces — `providers/aws/scripts/power-data.sh`'s `up` action emits both from the same `if ! lock_require_free "$ENV" apply; then` check) | refuses before starting/recreating RDS/ElastiCache; the park's own data-tier lock is left held (it is not released on this path) |
+| `power-data.sh` (`down`, acquiring data-tier) | could not acquire data-tier at all | `ABORT: could not acquire the data-tier lock (rc=${LOCK_RC}) — refusing to park. Another park, deploy, or terraform-cd apply may be in progress; see '$0 ${ENV} status'.` | refuses before any AWS mutation |
+
+`terraform-cd` itself acquires `apply` naming `deploy` and `data-tier` as the
+locks it conflicts with — so a deploy or a park already in progress blocks a
+new `apply` from starting in the first place, symmetric with the table
+above (apply blocks a NEW deploy/park; an in-progress deploy/park blocks a
+new apply). See below for why this makes apply/deploy/park mutually
+exclusive, and the one path (`power.sh` compute park/unpark) that is not.
 
 **Inspect:**
 
@@ -342,7 +469,7 @@ is no path that deletes a lock without a written audit trail. The report
 names the previous holder, their operation, the lock's age, and the given
 reason.
 
-**`data-tier` has no automatic release by any route** — not on process exit,
+**`data-tier` has no automatic release by ANY route** — not on process exit,
 not on a crash, not on Ctrl-C/SIGTERM. `lock_mark_for_auto_release` (the
 auto-release registration used by `deploy`) **refuses to register
 `data-tier` at all**. Only an explicit `lock_release` (after the operator
@@ -355,16 +482,85 @@ silently free.
 (with its age) and removed by the explicit, audited `override` — nothing
 times it out automatically.
 
-**The residual race (known, not closed by this epic):** `terraform-cd`
-checks the `data-tier` lock twice — before `plan`, again before `apply` — but
-holds nothing of its own during `apply` itself. A park (`power-data.sh down`)
-that acquires the lock strictly AFTER `terraform-cd`'s own second check (and
-before `apply` actually finishes) is not blocked. `scripts/deploy-prod.sh`'s
-own re-check narrows the equivalent window for deploys to the few seconds
-between its preflight and its snapshot/roll calls, but does not close it
-either. Closing this fully needs `terraform-cd` itself to hold the lock
-across the whole `apply` step — a workflow-file change, out of this story's
-ownership; flagged to the lead rather than attempted here.
+**`acquire --operation <text>` is secret-checked too, not just `override
+--reason`.** The same secret-shape guard runs on the `--operation` string
+before a lock is written:
+`ERROR: acquire of '${name}' REFUSED — the given --operation resembles a
+secret-shaped string (e.g. contains 'password=' or similar). Rephrase
+--operation and retry. The lock was NOT acquired.` — the lock is **not**
+acquired at all on this path (contrast `override`, where the audit report
+write itself is what is refused). `lock_mark_for_auto_release`'s own refusal
+for `data-tier` is verbatim:
+`ERROR: lock_mark_for_auto_release refuses 'data-tier' (FR29) — the
+data-tier lock must be removed only after the data tier is verified
+available again, never automatically on exit/crash/signal. Call
+lock_release explicitly after verification.`
+
+**Apply, deploy, and data-tier park cannot run at the same time.** Every
+mutating operation acquires its OWN lock with an atomic S3 conditional
+create (`s3api put-object --if-none-match '*'`, strongly read-after-write
+consistent) **before** it ever checks the other two — never the other
+order:
+
+- `terraform-cd`'s apply job: `lock_acquire_exclusive production apply
+  "terraform apply run=${{ github.run_id }}" deploy data-tier` — this calls
+  `scripts/lock.sh`'s `lock_acquire_exclusive()`, which acquires `apply`
+  (its own lock) first, THEN loops checking `deploy`/`data-tier` are free,
+  releasing `apply` and refusing if either is held.
+- `scripts/deploy-prod.sh`: `lock_acquire_exclusive "${ENV}" deploy
+  "deploy service=... tag=..." data-tier apply` (line ~606) — acquires
+  `deploy` first, then checks `data-tier`/`apply` are free; it re-checks
+  both again after preflight (lines ~636-664), which only re-runs the same
+  already-safe check closer to the snapshot/roll calls — it is not a
+  second chance to be unsafe.
+- `providers/aws/scripts/power-data.sh down`: acquires `data-tier` first
+  (`lock_acquire`), then checks `deploy`/`apply` are free, releasing
+  `data-tier` and refusing if either is held.
+
+Because S3's conditional create is atomic and immediately visible,
+whichever side's own acquire happens later in real time is guaranteed, by
+its own strictly-subsequent check of the other lock, to observe the
+earlier acquisition and back out. **At most one of {apply, deploy, park}
+ever proceeds to its actual mutation — two of them can never both run.**
+The remaining effects are not a safety race; they are:
+
+- **(a) Mutual back-out.** If two of them start within the same narrow
+  window, both own-acquires can succeed (different lock names), but each
+  side's very next check then finds the OTHER's lock held — both refuse,
+  each releasing the lock it just took, and neither proceeds. The operator
+  sees two refusals naming each other's operation and must retry one of
+  them (never both at once).
+- **(b) A failed release leaves the lock stuck.** A refusal releases the
+  lock the refusing side just took; if that release call itself fails
+  (`scripts/lock.sh`'s own wording: `WARNING: releasing '${name}' failed
+  (rc=${release_rc}) — it may still be HELD.`), the lock is left HELD and
+  every later operation refuses — fail-closed — until an operator runs
+  `scripts/lock.sh <env> status <name>`, confirms it is this run's own
+  stale lock, then `scripts/lock.sh <env> override <name> --reason
+  "<text>" --confirm` to remove it.
+- **(c) Cannot determine the other lock's state.** A check that fails to
+  determine whether the other lock is free (network/access/CLI error,
+  `LOCK_RC_UNKNOWN=2`) is refused by `lock_require_free` exactly like a
+  held lock — never treated as free.
+
+**The one exception: `providers/aws/scripts/power.sh`'s compute park
+(`down`)/unpark (`up`) do NOT follow acquire-then-check at all.**
+`power.sh down` only performs read-only `lock_require_free` checks against
+`deploy`/`apply` — by its own comment, "compute power-down has no lock of
+its own" — so it never acquires anything of its own for `terraform-cd` /
+`deploy-prod.sh` / `power-data.sh` to observe; an apply or deploy that
+starts strictly AFTER `power.sh down`'s check has already passed is not
+detected by anyone. `power.sh up` performs no lock check or acquisition at
+all. **In practice:** an operator running `power.sh down`/`up` cannot rely
+on it to refuse against a concurrent apply/deploy the way `power-data.sh`
+and `terraform-cd` refuse against each other — only `power.sh down`'s own
+point-in-time check narrows the window, it does not close it, and
+`power.sh up` offers no protection at all. This is a real, narrow gap
+specific to compute-only park/unpark, not the apply/deploy/data-tier trio
+above, which the acquire-then-check pattern makes provably mutually
+exclusive; it does not satisfy FR43's acquire-first requirement and is
+tracked as a separate follow-up (compute power-down does not acquire its
+own lock before checking the others).
 
 ---
 
@@ -411,7 +607,23 @@ tag that never actually started serving.
   `LastModified` not earlier than when the backup was issued, and the
   object's `sha256` metadata matching the backup script's own reported
   checksum. Only then does it stop the instance. Any `ssm-exec.sh` non-zero
-  result (including the INDETERMINATE 2) refuses the stop.
+  result (including the INDETERMINATE 2) refuses the stop, as does a
+  verification that fails: `ABORT: backup not verified; compute NOT
+  stopped. Use --skip-backup "<reason>" to override.`
+- **The on-box backup script (`providers/aws/onbox/mongo-backup.sh`) never
+  puts the Mongo password on argv.** It delivers `MONGO_ROOT_PASSWORD` to
+  `mongodump` via a generated `--config=/dev/stdin` YAML document instead —
+  argv is visible to any other user on the box (`ps`), a config file read
+  from stdin is not. Before building that YAML it refuses on any control
+  character in the password:
+  `ERROR: MONGO_ROOT_PASSWORD contains a newline, a carriage return, or
+  another control character, which a mongodump YAML config file cannot
+  represent without corrupting it (YAML folds a newline/carriage return
+  inside a single-quoted scalar into a space) — refusing rather than
+  silently using the wrong password.` Its own stdout contract on completion
+  is one of exactly two lines: `MONGO_BACKUP_OK key=<s3-key>
+  sha256=<hex>` or `MONGO_BACKUP_FAILED <reason>` (non-zero exit) — this is
+  what `power.sh down`'s independent verification (below) checks against.
 - `--skip-backup "<reason>"` overrides the backup requirement — the reason
   must be non-empty and must not look secret-shaped (same guard family as
   lock override's `--reason`); it is written to the audit report before the
@@ -466,7 +678,7 @@ category as §1's box conversion): moves a box from cron-only Mongo backup
 be on the asset-sync channel (§1) and have pulled at least once since
 `mongo-backup.timer`/`.service` were published — the script refuses with a
 clear message if those files are not yet on disk, rather than silently doing
-nothing. It is never executed by this story, by CI, or against any real box.
+nothing. It has never been run by CI or against any real box.
 
 ---
 
@@ -577,7 +789,43 @@ nothing. It is never executed by this story, by CI, or against any real box.
 
 ---
 
-## 8. What the next approved `terraform apply` will change
+## 8. Health checks (AXI-1974, FR60)
+
+Three routes exist on both the gateway and organization-service for
+different purposes — do not point a liveness probe at a readiness route or
+vice versa:
+
+| Route | What it does | Touches the database? | Status codes |
+|---|---|---|---|
+| `GET /health` | general health — same shape as `/health/ready` today | yes | 200 healthy / 503 degraded |
+| `GET /health/live` | pure process liveness — "is the process alive enough to answer HTTP at all" | **no** — zero-cost, no RPC, no DB round trip | always 200 `{status:'ok'}` |
+| `GET /health/ready` | readiness — are this service's real dependencies (DB reachable, schema at the expected migration) actually OK right now | yes | 200 ready / 503 not ready |
+
+- **Gateway** (`apps/gateway/src/health/health.controller.ts`): `@SkipThrottle()`
+  on the whole controller (health checks must never be rate-limited).
+  `/health` and `/health/ready` fan out over RPC to `USER_SERVICE`,
+  `EVENT_SERVICE`, `ORGANIZATION_SERVICE`, and (only if
+  `controlPlane.healthEnabled` is configured on, off by default — "no SQL
+  database the gate migrates and no place it is deployed today"; production
+  compose has no `CONTROL_PLANE_*` wiring) `CONTROL_PLANE_SERVICE`.
+- **Organization-service** (`apps/organization-service/src/health/health.controller.ts`):
+  `/health` and `/health/ready` both run a real check — a trivial Postgres
+  query under a `SET LOCAL statement_timeout`, plus a schema-version check
+  against the applied migration ledger — coalesced per-process via a
+  single-flight query so concurrent health polls do not multiply database
+  load. `/health/live` deliberately makes **no** database call at all —
+  exactly the liveness/readiness split FR60 asks for. The same `evaluate()`
+  backs an RPC `@MessagePattern` the gateway calls.
+- **`resolveServiceHealth()`** (`apps/gateway/src/health/resolve-service-health.ts`)
+  is the one place an RPC-reported `<service>.health` payload becomes the
+  gateway's own readiness fact. Only two reasons a service may self-report
+  are trusted: `database_unreachable`, `schema_behind`. Anything the gateway
+  cannot trust is synthesized by the gateway itself, never passed through:
+  `unreachable` (malformed/untrusted payload) or `unexpected_responder`
+  (the payload named a different service than the one asked) — never `ok`
+  on a shape the gateway did not ask for.
+
+## 9. What the next approved `terraform apply` will change
 
 (From the AXI-1950/1951 learnings — **described, never run** by this epic.)
 
@@ -590,18 +838,13 @@ nothing. It is never executed by this story, by CI, or against any real box.
   an alert on AWS's own 7-day auto-restart of a stopped RDS instance.
 - The rendered `user_data` on the EC2 compute module changes (the systemd
   `ExecStart` now points at `/opt/axiome/scripts/boot.sh`, cloud-init
-  bootstraps the on-box layout). **The two readings of this disagree — treat
-  the stricter as true until a real plan is read:** the developer's reading
-  (and the lead's, cross-checked against the AWS provider docs) is that a
-  `user_data` change triggers a stop/start of the instance in place
-  (`user_data_replace_on_change = false` means the instance is NOT replaced,
-  but a `user_data` diff is still applied by a reboot-in-place on most
-  provider versions); the reviewer's reading was no restart at apply. For
-  the Lightsail (dev) module, ANY cloud-init change **destroys and recreates**
-  the instance (pre-existing behaviour, unrelated to this epic). After this
-  one change, on-box file updates happen entirely through `aws_s3_object` +
-  `asset-sync.sh pull` — no further `user_data` changes are expected from
-  future on-box file additions.
+  bootstraps the on-box layout); **production uses the Lightsail module, not
+  EC2** — there, ANY cloud-init change destroys and recreates the instance
+  (pre-existing behaviour, unrelated to this epic, per `providers/RUNBOOK.md`'s
+  `use_legacy_stack = true` default). After this one change, on-box file
+  updates happen entirely through `aws_s3_object` + `asset-sync.sh pull` —
+  no further `user_data` changes are expected from future on-box file
+  additions.
 - `terraform-cd` is currently **red at `terraform fmt -check`** on
   `modules/compute/main.tf` (alignment of `NODE_ENV`/`PORT`), independent of
   this epic (confirmed red before any AXI-1944 commit) — no production plan
@@ -612,11 +855,85 @@ nothing. It is never executed by this story, by CI, or against any real box.
 
 ---
 
-## 9. Known gaps
+## 10. Consolidated exit codes, every operator script
 
-- The deploy/park lock race (§4) is narrowed, not closed — `terraform-cd`
-  itself needs to hold the `data-tier` lock across its whole `apply` step to
-  close it fully.
+A quick-reference table, gathered from each script's own header/contract
+(detailed meanings and refusal text are in the sections above — this is
+the "what number did I just get" lookup):
+
+Each row is read from the script's own `exit`/`return N` statements, not
+from memory. `tests/doc-truth.bats`'s `UT-INFRA-633` derives each script's codes
+mechanically (`grep -oE "(exit|return) [0-9]+"`, or the `LOCK_RC_*`
+constants for `lock.sh`) and cross-checks them against this table's
+columns for `scripts/asset-sync.sh`, `scripts/ssm-exec.sh`,
+`scripts/deploy-prod.sh`, `scripts/lock.sh`, and
+`scripts/seed-environment.sh`, so those five cannot drift silently again.
+`providers/aws/onbox/mongo-backup.sh` and `tests/run-shellcheck.sh` are
+excluded from that mechanical check: `mongo-backup.sh` documents an
+OK/any-failure contract, not per-numeric-code columns — it also exits
+`130`/`143` on signals, still just "failed", nothing branches on which
+nonzero code — so a column-equality check would be forcing a mapping the
+script itself doesn't make; `run-shellcheck.sh`'s success path never calls
+a literal `exit 0`/`return 0` (it falls through normally), so "0" cannot
+be found by the same grep that finds its "2".
+
+| Script | `0` | `1` | `2` | `3` | `4` | `5` | `6` | `7` |
+|---|---|---|---|---|---|---|---|---|
+| `scripts/asset-sync.sh` (pull) | installed/current/repaired | usage error | fetch failure | checksum mismatch | compose validation failure | unsafe manifest path (FR48) | install failed partway, restored (FR49) | staging-dir creation failure |
+| `scripts/ssm-exec.sh` | success (terminal `Success`) | real failure (`Failed`/`Cancelled`/`TimedOut`) | INDETERMINATE (wait expired, command cancelled) | — | — | — | — | — |
+| `scripts/deploy-prod.sh` | success, or a dry run | every FAIL-CLOSED refusal (SSM/box/snapshot/roll/readiness/`:stable`-advance failures) | usage/argument error, including the `--tag` shape refusal (not shaped like an 8-lowercase-hex image tag) | — | — | — | — | — |
+| `scripts/lock.sh` | success (`FREE`/acquired/released/overridden) | HELD (status, or acquire found it already held) | UNKNOWN — could not be determined (network/access/bad input/CLI too old/missing jq/unparseable lock body); never treated as acquired or free (fail-closed) | REFUSED — release/override refused (not the holder, lock already free, missing `--reason`/`--confirm`, unwritable audit report, or a secret-shaped `--operation`/`--reason`) | — | — | — | — |
+| `scripts/seed-environment.sh` (`--check`) | counts match (`BASELINE CHECK OK`) | usage error, OR a mismatch (`BASELINE CHECK MISMATCH`) — both exit `1`, there is no separate exit `2` | — | expected counts could not be derived — `BASELINE CHECK NOT PERFORMED` (not a mismatch; check mode only) | — | — | — | — |
+| `providers/aws/onbox/mongo-backup.sh` | `MONGO_BACKUP_OK` | `MONGO_BACKUP_FAILED` (any failure reason, including the control-character refusal) | — | — | — | — | — | — |
+| `tests/run-shellcheck.sh` (`_ensure_pinned_shellcheck`, AXI-1977) | cache verified / freshly fetched and verified | — | cached binary missing or mismatched its recorded checksum, or any other fetch/verify/preflight failure — refuses closed | — | — | — | — | — |
+
+**Source lines for each code above** (so this table can be re-verified
+against the script, not against this table):
+- `scripts/lock.sh`: `readonly LOCK_RC_OK=0`, `LOCK_RC_HELD=1`,
+  `LOCK_RC_UNKNOWN=2`, `LOCK_RC_REFUSED=3` (header comment + constants,
+  `scripts/lock.sh`). Its CLI entry point's own preflight
+  (`gnu_date_check || exit 1`) is a literal `exit 1` unrelated to any lock
+  state — the one place this script exits `1` for something that is not
+  "HELD" (noted so a reader does not assume `1` always means HELD at the
+  CLI layer).
+- `scripts/deploy-prod.sh`: exit `0` at the dry-run/help/final-success
+  lines; exit `1` at every `FAIL-CLOSED`/restore-failure line (SSM
+  preflight, `.env` missing, snapshot, roll INDETERMINATE/failed,
+  readiness, `:stable` advance, lock-acquire failure); exit `2` at the
+  unknown-argument, bad `--env`/`--service`/`--tag` value branches
+  (the `--tag` shape check is one of these — confirmed via Read of its
+  `case "${TAG}" in [0-9a-f]{8}) ;; *) ... exit 2 ;; esac` block).
+- `scripts/seed-environment.sh`: exit `0` only at `-h|--help`; exit `1` at
+  the unknown-argument/bad-`-e`-value/`compose_resolve`-failure branches
+  AND at the mismatch branch (`if [ "${FAILED}" -ne 0 ]; then ... exit 1;
+  fi`, both check and non-check mode); exit `3` only in check mode, only
+  when expected counts could not be derived (`BASELINE CHECK NOT
+  PERFORMED`). There is no exit `2` anywhere in this script.
+- `tests/run-shellcheck.sh`: `_ensure_pinned_shellcheck`'s every failure
+  branch (missing/mismatched sidecar, unsupported platform, missing
+  `curl`, tarball checksum mismatch) uses `exit 2`; the caller's normal
+  gate failure (a new shellcheck finding) is a separate, later exit path
+  not part of this function's contract and not tabulated here.
+
+`scripts/migrate-gate` (the gate binary itself, from `axiome-back` —
+documented here because every caller above branches on it) uses `0` for a
+clean/already-applied result and non-zero for every refusal shape in §2;
+its exact per-reason codes are that other repo's contract, not
+independently re-specified here.
+
+## 11. Known gaps
+
+- `providers/aws/scripts/power.sh`'s compute park/unpark (`down`/`up`, §4)
+  do not acquire a lock of their own — `down` only checks `deploy`/`apply`
+  (read-only), and `up` checks nothing at all. This does not meet FR43's
+  acquire-first requirement (compute power-down must acquire its own lock
+  before checking the others) and is tracked as a separate follow-up. In
+  practice, an operator cannot rely on `power.sh` to refuse against a
+  concurrent apply/deploy the way `power-data.sh` and `terraform-cd` refuse
+  against each other. Apply, deploy, and data-tier park (`power-data.sh`)
+  ARE proven mutually exclusive by the acquire-then-check pattern (§4,
+  AXI-1967); `power.sh`'s compute-only park/unpark is the one path that
+  does not follow it.
 - AXI-1968 added `axiome-back`/`axiome-bio-compute`/`axiome-front` checkouts
   and `AXIOME_BACK_PATH` to `deploy-production.yml` (FR45/AC37), so
   `seed-environment.sh --check`'s baseline verification now has a real
@@ -633,5 +950,156 @@ nothing. It is never executed by this story, by CI, or against any real box.
   stubbed bats suite (`tests/run.sh`), never a real `terraform apply`, SSM
   command, or AWS mutation. Treat every exit code / refusal message above as
   "what the code says it does", not as field-verified.
-- Local vs CI shellcheck version skew (§0) — a clean local run is not proof
-  CI will be clean.
+- Shellcheck is now **pinned** (§0), so the old "local vs CI version skew"
+  gap this bullet used to name no longer applies — the remaining risk is
+  narrower: a corrupted or stale/foreign cached binary is caught
+  (fail-closed, §0) — this is a corruption/integrity check, not a security
+  control against someone who can write to the cache directory — but a
+  contributor who deletes `${SHELLCHECK_CACHE_DIR}` and is offline cannot
+  run the check at all until connectivity returns (fails closed to "cannot
+  determine", not to "assume clean").
+
+## 12. Not yet done / operator acts before first live use (AXI-1977)
+
+Facts only — this section states what has and has not actually happened,
+not what the code is capable of:
+
+- **Nothing in this epic has been run against real AWS or a real GitHub
+  Actions deploy.** Every refusal message, exit code,
+  and sequence described in this runbook is verified by reading the
+  current script source and by this repo's own offline stubbed bats suite
+  — never by a live `terraform apply`, SSM command, deploy run, or AWS
+  mutation.
+- **Box conversion (§1) and the user-service baseline (§2's baselining
+  procedure, for whichever service still lacks a migration ledger) are both
+  owed, operator acts, not yet done against any real box.**
+- **The Mongo backup systemd timer is not installed anywhere**
+  (`install-mongo-backup-timer.sh`, §6) — backups today happen only via
+  `power.sh down`'s pre-stop backup-and-verify step and whatever cron
+  already exists on the box; the "catches up a missed run" guarantee only
+  starts once an operator runs the installer against a real box.
+- **The next approved `terraform apply` recreates the Lightsail instance.**
+  Verified directly in `providers/aws/modules/compute/main.tf`:
+  `aws_lightsail_instance.main` carries `lifecycle { replace_triggered_by =
+  [terraform_data.user_data_hash] }` — any change to the rendered
+  `user_data`/cloud-init (including the on-box asset-bundle publishing
+  described in §9) destroys and recreates the instance. This is unrelated
+  to this epic and pre-exists it; it is restated here only because the next
+  apply this epic's own changes would trigger lands on this same resource.
+  (The separate EC2 compute module sets `user_data_replace_on_change =
+  false` — it is not replaced on a `user_data` change; production today
+  runs the Lightsail path, per `providers/RUNBOOK.md`'s
+  `use_legacy_stack = true` default, not the EC2 one, so the `user_data`
+  change above recreates the production instance via Lightsail's
+  behaviour, not EC2's.)
+- **Control-plane health checks are skipped in production until wired.**
+  The gateway only calls `CONTROL_PLANE_SERVICE` for `/health`/`/health/ready`
+  when `controlPlane.healthEnabled` is configured on (§8); it is off by
+  default and production's compose configuration carries no
+  `CONTROL_PLANE_*` wiring today, so this is a dormant, not-yet-enabled
+  check, not a live gap in an existing check.
+- **Cloud-init writes `.env` in plaintext on the box** (§1's conversion,
+  `providers/aws/cloud-init/init.sh.tftpl`): it fetches runtime config from
+  SSM Parameter Store into `/opt/axiome/.env`, then `chmod 600`s it
+  (root-only). The weakness this records: the secret material lives on disk
+  in plaintext (not just in SSM) for as long as the box exists, readable by
+  anything running as root on that box (including a compromised container
+  with a host mount, or an operator debugging session) — `chmod 600`
+  narrows who can read the file but does not change that it is unencrypted
+  at rest. This is the same pattern already named for Scaleway/on-prem in
+  `providers.md`'s secrets row (`.env` file, root-only) — it is not unique
+  to AWS; it is recorded here as a fact an operator should know before
+  relying on this box.
+- **What triggers a backend image build/promotion:** a fully green
+  `CI — Backend` run on `axiome-back` main — `test`,
+  `migrate-from-scratch` (per service), and `livedb-constraints`
+  (organization-service) must ALL pass before `Build, Push & Notify` /
+  `Scan Image & Resolve Digest` / `Promote backend to staging/production`
+  run.
+  - **Unmerged branch `AXI-1976-livedb-harness`** (`axiome-back`, head
+    `8b1f6a18`, not merged — verified `git -C axiome-back merge-base
+    --is-ancestor origin/AXI-1976-livedb-harness origin/main` exits
+    non-zero) fixes `livedb-constraints`'s missing `?schema=organization_svc`
+    query parameter. Left unmerged on purpose, so this epic's stories could
+    not themselves trigger a backend build/promotion — merging is the
+    owner's decision.
+  - **Dated observation (2026-10-11, run `38088676928`, headSha
+    `161239b3`):** the `test` job failed on `user-service`'s
+    `admin-bootstrap.service.spec.ts` (5000ms Jest timeout — not
+    investigated further; `axiome-back` is outside `axiome-infra`'s repo
+    boundary). The same
+    run's `livedb-constraints` job failed exactly the way
+    `AXI-1976-livedb-harness` fixes.
+  - **Before merging:** confirm `test` is independently green (the harness
+    fix alone does not fix `test`), rule out the Jest timeout as a genuine
+    regression, then merge and confirm `livedb-constraints` goes green —
+    re-check `CI — Backend` on `axiome-back` main directly
+    (`gh run list -R <org>/axiome-back`) before trusting any of this as
+    current.
+- **`terraform fmt -check` on `providers/aws/modules/compute/main.tf` is
+  left failing on purpose (§9)** — fixing it re-arms a production Terraform
+  plan/apply that no story in this epic is authorized to trigger; this is
+  the owner's (`fmguimaraes`) decision to make, not a formatting fix to
+  slip in. **Not fixed**, per the same instruction that
+  scoped it out of every debt-closure story in this epic.
+
+## 13. Manual validation scenarios (not run — the runbook text itself is the deliverable here, not a live exercise of it)
+
+Every scenario below is **manual/deferred** — none has been run against a
+real box or real AWS (see §12). Each names the exact command
+and the documented message/exit code an operator should see, so a future
+operator or QA pass can walk this list against a real environment and
+confirm the runbook is still true:
+
+1. **A blocked operation under each lock holder** (apply vs deploy vs
+   park) — manual/deferred: (a) with `apply` held, run `power.sh <env>
+   down` and confirm the verbatim `ABORT: the apply lock for ${ENV} is
+   held…` message (§4); (b) with `apply` held, run `power-data.sh <env>
+   down` and confirm it releases the data-tier lock it just took and
+   prints the matching ABORT; (c) with `deploy` held, start a second
+   `deploy-prod.sh` and confirm the `FAIL-CLOSED: could not acquire the
+   deploy lock…` refusal (§3); (d) with `data-tier` held (parked), run
+   `deploy-prod.sh` and confirm it refuses before any mutation (§3 step 1).
+2. **Stale-lock inspection and override** — manual/deferred: `scripts/lock.sh
+   <env> status` to see a `HELD by … (age …s)` line, then `scripts/lock.sh
+   <env> override <name> --reason "<text>" --confirm` and confirm the
+   dated audit report is written before deletion (§4); separately confirm
+   `override --reason "password=x"` is ABORTED and the lock is NOT deleted.
+3. **Index-sync refusal on a non-local host** — manual/deferred:
+   `scripts/sync-event-store-indexes.sh --mongodb-url
+   mongodb://some-remote-host/db …` and confirm it refuses before touching
+   anything (§7).
+4. **`--tag` refusal** — manual/deferred: run the `deploy-production.yml`
+   workflow (or `deploy-prod.sh` directly) with a malformed `--tag` (e.g.
+   `not-a-sha`) and confirm the exact 8-lowercase-hex refusal message (§3);
+   separately with a secret-shaped value and confirm the value is withheld.
+5. **Seed refusal without `--confirm production`** — manual/deferred:
+   `make seed-env ENV=production` and `scripts/seed-environment.sh -e
+   production` (no `--confirm`) and confirm the `SEED REFUSED` message,
+   then `scripts/seed-environment.sh -e production --confirm production`
+   to confirm the write path actually proceeds (§3).
+6. **Baseline verification `NOT PERFORMED`** — manual/deferred: run
+   `deploy-prod.sh`/`deploy-production.yml` in a context where
+   `AXIOME_BACK_PATH`/the `axiome-back` checkout is unavailable and confirm
+   `Baseline verification: NOT PERFORMED` (not a mismatch) is reported (§3).
+7. **Backup timer install and a backup run** — manual/deferred:
+   `install-mongo-backup-timer.sh <env>` against a real, asset-sync-converted
+   box, then confirm `mongo-backup.timer`'s `OnCalendar=daily,
+   Persistent=true` catches up a missed run on box start, and that a
+   manual/triggered run emits `MONGO_BACKUP_OK key=… sha256=…` (§6) —
+   never done against a real box as of this writing.
+8. **`asset-sync.sh` exit 6 and 7** — manual/deferred: exit `6` (install
+   failed partway, restored) needs an injected failure mid-install (e.g. a
+   permission-denied on one target file) and a check that every already-
+   replaced file in that run was restored to its previous copy; exit `7`
+   (could not create a staging directory) needs forcing 20 consecutive
+   name collisions against a real filesystem — both are described from the
+   script's own logic and this repo's stubbed bats suite, never exercised
+   against a real filesystem failure mode (§1/§10).
+9. **A retired-docs link check** — manual/deferred: click/curl every
+   relative link in the retired-provider banners (e.g.
+   `README.md` → `docs/platform-lifecycle-operations.md`,
+   `docs/providers.md#retired--not-yet-deployed-providers`,
+   `providers/scaleway/README.md` → `../aws/README.md`) and confirm each
+   resolves to the intended anchor/file in a rendered (GitHub) view, not
+   just a path that exists on disk (UT-INFRA-387 only checks the latter).

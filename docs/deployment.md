@@ -1,5 +1,12 @@
 # Deployment
 
+> **AXI-1977 note:** the "dev-provider (Scaleway)" sections below (`ci.yml`,
+> "Deploy a new version (dev / staging — legacy Scaleway flow)") describe a
+> **retired, inactive** flow — `dev`/`staging` are not provisioned anywhere
+> (see [environments.md](environments.md)). For the real, deployed production
+> path, go straight to "Production deploy (AWS — authoritative)" below, and for
+> day-2 operations use [platform-lifecycle-operations.md](platform-lifecycle-operations.md).
+
 ## CI/CD Pipeline
 
 ### Automatic Deployment to Dev (ci.yml)

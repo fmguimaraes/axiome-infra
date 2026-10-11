@@ -1,13 +1,29 @@
 # Disaster Recovery
 
+> **AXI-1977 correction:** this page describes the retired, not-deployed
+> Scaleway path (see [providers.md](providers.md)). Production's actual
+> backups: **Postgres** is Neon (its own managed snapshots). **MongoDB** is a
+> self-hosted container on the production box, backed up by `power.sh down`'s
+> pre-stop backup-and-verify step and (once an operator runs
+> `install-mongo-backup-timer.sh`, never done against a real box so far) a
+> daily systemd timer — see
+> [platform-lifecycle-operations.md](platform-lifecycle-operations.md) §6/§9
+> for the verified current behaviour. The gated, not-yet-deployed AWS
+> EC2/RDS/ElastiCache stack (`providers/RUNBOOK.md`) would instead use RDS
+> manual snapshots (see `deploy-prod.sh`'s pre-deploy snapshot step) — that
+> stack is off (`use_hds_data_stack = false`) and does not describe the live
+> platform today.
+
 ## Backup Strategy
 
 ### Databases
 
 | Database | Backup Type | Frequency | Retention |
 |----------|-------------|-----------|-----------|
-| Postgres | Scaleway automatic backups | Daily | 7 days (dev), 30 days (production) |
-| MongoDB | Scaleway automatic backups | Daily | 7 days (dev), 30 days (production) |
+| Postgres (production, actual) | Neon managed snapshots | Continuous/managed | Per Neon plan |
+| MongoDB (production, actual) | `power.sh down`'s verified SSM backup-to-S3 + (owed) systemd timer | On every compute power-down; daily once the timer is installed | Not yet defined — timer not installed |
+| Postgres | ~~Scaleway automatic backups~~ — retired, not deployed | — | — |
+| MongoDB | ~~Scaleway automatic backups~~ — retired, not deployed | — | — |
 
 ### Object Storage
 

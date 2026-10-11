@@ -2,12 +2,22 @@
 
 Terraform-first multi-environment infrastructure for the Axiome platform.
 
+> **Current reality (AXI-1944/AXI-1977):** the only deployed, live environment is
+> **production on AWS** (Lightsail compute + Neon Postgres + a self-hosted Mongo
+> container + S3 + ECR — see [`providers/aws/README.md`](providers/aws/README.md))
+> plus the **local docker-compose stack**. Scaleway, on-prem, and OVH provider
+> code exists in this repo but is **not deployed anywhere** — see
+> [Retired / not-yet-deployed providers](docs/providers.md#retired--not-yet-deployed-providers).
+> For day-2 operator procedures against the real, live platform, start at
+> [`docs/platform-lifecycle-operations.md`](docs/platform-lifecycle-operations.md),
+> not the sections below that still describe Scaleway commands.
+
 ## Prerequisites
 
 - [Terraform](https://www.terraform.io/downloads) >= 1.5
 - [Docker](https://docs.docker.com/get-docker/) and Docker Compose
-- [Scaleway CLI](https://www.scaleway.com/en/cli/) (for cloud operations)
-- Scaleway account with API credentials
+- [AWS CLI](https://docs.aws.amazon.com/cli/) >= 2.22.3, with credentials for the Axiome AWS account (for production operations — see `docs/platform-lifecycle-operations.md` §0)
+- (Only if working on the retired/not-yet-deployed Scaleway provider code) [Scaleway CLI](https://www.scaleway.com/en/cli/) and a Scaleway account with API credentials
 
 ## Quick Start — Local Development
 
@@ -90,14 +100,15 @@ Full detail, timings, and the safety rationale: [AWS power runbook](providers/aw
 
 ## Documentation
 
+- **[Platform Lifecycle Operations](docs/platform-lifecycle-operations.md) — the current, accurate operator runbook: migration gate, deploy, locks, park/unpark, box conversion, what's not yet done** ← start here for any real AWS production operation
 - **[Deploy Procedure](docs/deploy-procedure.md) — operator quick reference: which path ships what, and where to approve a gated production deploy** ← start here to deploy
-- [Bootstrapping](docs/bootstrapping.md) — full setup guide for local, Scaleway, and AWS
+- [Bootstrapping](docs/bootstrapping.md) — full setup guide for local and AWS (dev/staging and the Scaleway/on-prem provider paths are **not deployed** — see the retired-provider note in each)
 - [GitOps Lifecycle](docs/gitops-lifecycle.md) — GitHub Flow, CI/CD, promotion, audit trail
 - [Architecture](docs/architecture.md) — topology, services, storage layout
-- [Environments](docs/environments.md) — configuration, promotion flow
-- [Deployment](docs/deployment.md) — CI/CD pipelines, rollback
+- [Environments](docs/environments.md) — configuration, promotion flow; **only production is actually provisioned**
+- [Deployment](docs/deployment.md) — CI/CD pipelines, rollback (the "dev-provider (Scaleway)" sections describe a **retired, inactive** flow — see the note at the top of that doc)
 - [Secrets](docs/secrets.md) — management, rotation, local dev
-- [Providers](docs/providers.md) — Scaleway/AWS portability
-- [Disaster Recovery](docs/disaster-recovery.md) — backups, restore, RTO/RPO
-- [Runbooks](docs/runbooks.md) — operational procedures
+- [Providers](docs/providers.md) — which provider is actually deployed, and which are retired/not-yet-deployed
+- [Disaster Recovery](docs/disaster-recovery.md) — backups, restore, RTO/RPO (AWS-current; the Scaleway-specific steps are retired — see its top note)
+- [Runbooks](docs/runbooks.md) — **retired** — the commands in this file target the inactive Scaleway path; use [Platform Lifecycle Operations](docs/platform-lifecycle-operations.md) instead
 - [AWS Power Runbook](providers/aws/docs/power-runbook.md) — powering production compute/data on and off (cost control)

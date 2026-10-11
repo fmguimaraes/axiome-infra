@@ -2,15 +2,35 @@
 
 The Axiome platform is designed to deploy on three providers — AWS, Scaleway, and on-prem (customer datacenter) — without architectural changes. The single property that makes this real is **state-and-compute decoupling**: stateful services (Postgres, MongoDB, object storage) are reached via connection strings, so swapping providers is a configuration exercise rather than a redesign.
 
+> **AXI-1977 correction:** the table below previously called Scaleway and
+> on-prem "Production-ready" — neither has ever been deployed anywhere; see
+> [Retired / not-yet-deployed providers](#retired--not-yet-deployed-providers).
+> The AWS row was also wrong about what actually runs there: production is
+> Lightsail + Neon + a **self-hosted MongoDB container** (not Atlas) + S3 +
+> ECR, with DNS managed manually in **Microsoft 365** (not Route 53) — see
+> [`providers/aws/README.md`](../providers/aws/README.md) for the verified
+> current shape.
+
 ## Implemented providers
 
 | Provider | Path | Status | Reference |
 |---|---|---|---|
-| **AWS** (Lightsail + Neon + Atlas + S3 + ECR + Route 53) | [`providers/aws/`](../providers/aws/) | Production-ready | [providers/aws/README.md](../providers/aws/README.md) |
-| **Scaleway** (Instance + Neon + Atlas + Object Storage + Container Registry + DNS) | [`providers/scaleway/`](../providers/scaleway/) | Production-ready | [providers/scaleway/README.md](../providers/scaleway/README.md) |
-| **On-prem** (Linux host + docker-compose; connected or air-gapped modes) | [`providers/onprem/`](../providers/onprem/) | Production-ready | [providers/onprem/README.md](../providers/onprem/README.md) |
+| **AWS** (Lightsail + Neon + self-hosted Mongo container + S3 + ECR + manual Microsoft 365 DNS) | [`providers/aws/`](../providers/aws/) | **Deployed — the only live environment** | [providers/aws/README.md](../providers/aws/README.md) |
 
-A legacy Scaleway-managed-services variant (RDB + Managed MongoDB + Serverless Containers) exists at the repo root level (`main.tf`, `modules/*`) and is **deprecated** in favor of `providers/scaleway/`. Do not use the legacy code for new deployments.
+## Retired / not-yet-deployed providers
+
+None of these has ever been deployed to a real, running environment. Each is
+kept as a validated (`terraform validate`-clean, where applicable), never-
+applied scaffold — read its own README for what it would take to actually
+stand one up, but do not treat any of it as describing the live platform.
+
+| Provider | Path | Status | Reference |
+|---|---|---|---|
+| **Scaleway** (Instance + Neon + Atlas + Object Storage + Container Registry + DNS) | [`providers/scaleway/`](../providers/scaleway/) | Not deployed — scaffold for a possible future sovereign cutover | [providers/scaleway/README.md](../providers/scaleway/README.md) |
+| **On-prem** (Linux host + docker-compose; connected or air-gapped modes) | [`providers/onprem/`](../providers/onprem/) | Not deployed — scaffold for a possible future customer offering | [providers/onprem/README.md](../providers/onprem/README.md) |
+| **OVH** | [`providers/ovh/`](../providers/ovh/) | Not deployed — Terraform scaffold only, no bootstrap guide | [`providers/CONTRACT.md`](../providers/CONTRACT.md) |
+
+A legacy Scaleway-managed-services variant (RDB + Managed MongoDB + Serverless Containers) also exists at the repo root level (`main.tf`, `modules/*`) — superseded by `providers/scaleway/` above (itself not deployed) and never deployed either. Do not use the legacy code for new deployments; its Terraform is left as-is pending an owner decision on removal.
 
 ## Architectural shape, all providers
 
