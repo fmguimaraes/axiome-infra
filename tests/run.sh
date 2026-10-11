@@ -15,5 +15,13 @@ echo "==> teardown contract (every *.bats with its own teardown() calls stub_tea
 "${TESTS_DIR}/check-teardown-contract.sh"
 
 echo
+echo "==> absolute-path guard (no tracked script bypasses a PATH-shim stub, FR62/AC56)"
+"${TESTS_DIR}/check-absolute-tool-paths.sh"
+
+echo
+echo "==> UT-INFRA id uniqueness (each id's own file-scope rule, FR62 follow-up a)"
+"${TESTS_DIR}/check-ut-ids.sh"
+
+echo
 echo "==> bats suite (offline, stubbed cloud/container/db calls, NFR5)"
 "${BATS}" "${TESTS_DIR}"/*.bats

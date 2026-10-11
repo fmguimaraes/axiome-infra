@@ -34,3 +34,8 @@ Thumbs.db
 # See docker-compose.override.yml.example.
 docker-compose.override.yml
 docker-compose.*.override.yml
+
+# Pinned shellcheck binary (AXI-1972): downloaded by checksum, cached
+# per-machine; never committed (it is a 16 MB platform binary, not source).
+# See tests/run-shellcheck.sh.
+tests/vendor/shellcheck/

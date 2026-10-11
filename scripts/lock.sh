@@ -446,11 +446,26 @@ lock_status() {
 }
 
 # --- public: acquire -------------------------------------------------------------
+# AXI-1972 (follow-up h): `operation` is free text supplied by the CALLER
+# (e.g. `--operation "deploy tag=abc"`) and is written verbatim into the
+# lock record (_lock_build_body) AND echoed back by `lock.sh status`
+# (_lock_print_status) and by a future override's report line
+# (_lock_override_report, which already prints _LOCK_OPERATION). Nothing
+# upstream of here validates its shape, so a secret-shaped --operation
+# (e.g. containing "password=...") would otherwise be written to the S3
+# lock object AND echoed to stdout/logs by any later `status` call — the
+# same class of leak report.sh's own guard exists to prevent. Refuse up
+# front, the same way _lock_override_report refuses a secret-shaped
+# --reason, and refuse WITHOUT echoing the value itself.
 lock_acquire() {
   local env="$1" name="$2" operation="$3"
   lock_validate_name "$name" || return "${LOCK_RC_UNKNOWN}"
   lock_env_defaults "$env" || return "${LOCK_RC_UNKNOWN}"
   _lock_cli_version_warn || return "${LOCK_RC_UNKNOWN}"
+  if report_is_secret_value "$operation"; then
+    echo "ERROR: acquire of '${name}' REFUSED — the given --operation resembles a secret-shaped string (e.g. contains 'password=' or similar). Rephrase --operation and retry. The lock was NOT acquired." >&2
+    return "${LOCK_RC_REFUSED}"
+  fi
   local token actor host now key body
   token="$(_lock_token)"; actor="$(_lock_actor)"; host="$(_lock_host_id)"; now="$(_lock_now_iso)"
   key="$(lock_key "$name")"

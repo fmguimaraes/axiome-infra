@@ -46,3 +46,25 @@ INNER
   run _run_inner '( aws sts get-caller-identity >/dev/null 2>&1 & wait ); true'
   assert_failure
 }
+
+# UT-INFRA-549 (AXI-1972, scope item 1/FR62/AC56): `env -i` clears the
+# WHOLE environment before exec — STUB_LOG, STUB_FAIL_LOG, PATH and
+# AWS_STUB_RULES all vanish for the child. The call still must not reach a
+# real binary (the inner bats process's PATH still has tests/stubs first)
+# and must still be recorded, through the fixed FD opened by stub_setup,
+# not the now-absent env var.
+@test "UT-INFRA-549: unconfigured call survives a caller that execs with env -i (cleared environment)" {
+  run _run_inner 'env -i PATH="$PATH" aws sts get-caller-identity >/dev/null 2>&1 || true'
+  assert_failure
+}
+
+# UT-INFRA-550 — same idea, but the caller only scrubs the two stub-log
+# variables (a narrower, more realistic pattern than a full `env -i`) while
+# keeping everything else, including AWS_STUB_RULES, intact. A call that
+# WOULD have matched a configured rule must still be recorded as
+# unconfigured once its logging variables are gone, because the fixed FD
+# is independent of them.
+@test "UT-INFRA-550: unconfigured call survives a caller that unsets STUB_LOG/STUB_FAIL_LOG before calling" {
+  run _run_inner 'unset STUB_LOG STUB_FAIL_LOG; aws sts get-caller-identity >/dev/null 2>&1 || true'
+  assert_failure
+}

@@ -155,7 +155,7 @@ jobs:
     environment: production
     steps:
       - name: Checkout axiome-infra
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           path: axiome-infra
           persist-credentials: false
@@ -252,7 +252,7 @@ jobs:
 
       - name: Checkout axiome-back (deployed commit)
         if: needs.gate.outputs.service == 'backend'
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: ${{ github.repository_owner }}/axiome-back
           ref: ${{ steps.resolve-commit.outputs.deployed_sha }}
@@ -262,7 +262,7 @@ jobs:
 
       - name: Checkout axiome-back (default branch)
         if: needs.gate.outputs.service != 'backend'
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: ${{ github.repository_owner }}/axiome-back
           token: ${{ secrets.GH_PAT }}
@@ -271,7 +271,7 @@ jobs:
 
       - name: Checkout axiome-bio-compute (deployed commit)
         if: needs.gate.outputs.service == 'biocompute'
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: ${{ github.repository_owner }}/axiome-bio-compute
           ref: ${{ steps.resolve-commit.outputs.deployed_sha }}
@@ -281,7 +281,7 @@ jobs:
 
       - name: Checkout axiome-bio-compute (default branch)
         if: needs.gate.outputs.service != 'biocompute'
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: ${{ github.repository_owner }}/axiome-bio-compute
           token: ${{ secrets.GH_PAT }}
@@ -290,7 +290,7 @@ jobs:
 
       - name: Checkout axiome-front (deployed commit)
         if: needs.gate.outputs.service == 'frontend'
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: ${{ github.repository_owner }}/axiome-front
           ref: ${{ steps.resolve-commit.outputs.deployed_sha }}
@@ -300,7 +300,7 @@ jobs:
 
       - name: Checkout axiome-front (default branch)
         if: needs.gate.outputs.service != 'frontend'
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: ${{ github.repository_owner }}/axiome-front
           token: ${{ secrets.GH_PAT }}
@@ -308,7 +308,7 @@ jobs:
           path: axiome-front
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -351,7 +351,7 @@ jobs:
 
       - name: Upload deploy report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: deploy-report-${{ needs.gate.outputs.service }}-${{ needs.gate.outputs.tag }}
           path: axiome-infra/reports/*-production-deploy-*.md

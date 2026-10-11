@@ -256,8 +256,18 @@ SCRIPT="${BATS_TEST_DIRNAME}/../scripts/sync-event-store-indexes.sh"
   # of the script containing this exact marker — grab that line, then
   # take everything between its FIRST and LAST single quote (the snippet
   # itself only ever uses double quotes internally, so this is unambiguous).
+  # AXI-1972 (follow-up e): a marker that matches ZERO or TWO-OR-MORE
+  # lines must fail with a named message, not silently extract the wrong
+  # (or an empty/concatenated) snippet. `grep -c` counts matches without
+  # the ambiguity of inspecting a multi-line command-substitution result.
+  local match_count
+  match_count="$(grep -cF 'u="$MONGODB_URL"' "${script_file}")"
+  case "$match_count" in
+    0) fail "could not find the MONGODB_URL host-extraction line in ${script_file} — has it moved or been rewritten?" ;;
+    1) ;;
+    *) fail "the MONGODB_URL host-extraction marker matches ${match_count} lines in ${script_file} — expected exactly one; the single-quote extraction below is only unambiguous for a single match" ;;
+  esac
   snippet_line="$(grep -F 'u="$MONGODB_URL"' "${script_file}")"
-  [ -n "${snippet_line}" ] || fail "could not find the MONGODB_URL host-extraction line in ${script_file} — has it moved or been rewritten?"
   snippet="$(printf '%s' "${snippet_line}" | sed -e "s/^[^']*'//" -e "s/'[^']*\$//")"
   [ -n "${snippet}" ] || fail "extracted an empty snippet from ${script_file} — the single-quote extraction did not match"
 

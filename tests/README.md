@@ -136,20 +136,47 @@ silently in an unrelated commit — call it out in your PR/handback).
 
 `tests/vendor/bats-core`, `bats-support`, `bats-assert` are vendored source
 (git history stripped) pinned at `v1.11.0` / `v0.3.0` / `v2.1.0`. They are
-committed so CI and local runs need nothing beyond `bash`, `shellcheck` and
-`jq` — no `npm install`/`apt install bats` step, no network access required
-at test time. `tests/run-shellcheck.sh` checks both tools are on `PATH`
-with a clear error before running, rather than failing deep inside a
-cryptic `shellcheck: command not found`.
+committed so CI and local runs need nothing beyond `bash` and `jq` — no
+`npm install`/`apt install bats` step, no network access required to run
+the bats suite itself.
+
+shellcheck is handled differently (AXI-1972/FR62/AC57): `tests/run-shellcheck.sh`
+no longer trusts whatever `shellcheck` happens to be on `PATH` — a version
+skew between a contributor's machine and CI could (and once did, see
+AXI-1954) disagree on findings. It instead downloads the ONE pinned version
+itself (checksum-verified against a recorded SHA-256, cached under
+`tests/vendor/shellcheck/` — gitignored, since it is a 16 MB platform
+binary, not source) the first time it runs, and uses that binary
+exclusively, identically in CI and locally. `jq` is still required on
+`PATH` (checked with a clear error before running), and `curl` is required
+on `PATH` the first time only, to fetch the pinned shellcheck binary.
+
+To re-verify the recorded checksum (or to bump the pinned version) against
+a fresh download yourself:
+```bash
+curl -fsSL https://github.com/koalaman/shellcheck/releases/download/v<VERSION>/shellcheck-v<VERSION>.linux.x86_64.tar.xz \
+  | sha256sum
+```
+and compare the result against `SHELLCHECK_TARBALL_SHA256` in
+`tests/run-shellcheck.sh`. If you bump `SHELLCHECK_VERSION`, update both
+constants together, delete any stale cached binary under
+`tests/vendor/shellcheck/`, and update the `# vX.Y.Z` references in
+`docs/platform-lifecycle-operations.md`'s shellcheck section too (owned by
+that doc's story, not by this file — flag it rather than editing it from
+here if you're not that story).
 
 ## Un-stubbed tools (documented debt)
 
-Only `aws`, `docker`, `psql`, `curl`, `ssh`, `terraform`, `git` have a stub
-today (the set this story's scripts actually call). `scp`, `rsync`, `nc`,
-`wget`, `mongosh`, and any absolute-path invocation (e.g. `/usr/bin/foo`)
-are **not** shimmed — a script under test that calls one of these directly
-will hit the real binary, uncaught by anything here. If a sibling story's
-script under test needs one of these, add a stub following the exact
-pattern in `tests/stubs/aws` (one line, `stub_main "<name>" "$@"`) plus a
-line in `stub_setup`'s `PATH` comment — message the lead first, since
+`aws`, `docker`, `docker-compose`, `psql`, `curl`, `ssh`, `terraform`,
+`git`, `date`, `dig`, `systemctl`, `scp`, `rsync`, `nc`, `wget`, `mongosh`,
+`mongodump` and `mongorestore` have a stub (AXI-1972/FR62 added the last
+seven — every tool
+used anywhere under `scripts/`, `providers/aws/scripts/`, or
+`providers/aws/onbox/` is now covered). Any OTHER tool, or any of the above
+called by an ABSOLUTE path (bypassing the PATH shim entirely — see
+`tests/check-absolute-tool-paths.sh`, run from `tests/run.sh`), is **not**
+caught by anything here. If a sibling story's script under test needs a
+genuinely new tool, add a stub following the exact pattern in
+`tests/stubs/aws` (one line, `stub_main "<name>" "$@"`) plus a line in
+`stub_setup`'s `PATH` comment — message the lead first, since
 `tests/stubs/**` is AXI-1945's shared ownership (see above).

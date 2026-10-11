@@ -62,6 +62,28 @@ setup() {
   assert_success
 }
 
+# UT-INFRA-564 (AXI-1972, follow-up g): YAML-style "password: value" with
+# an UNQUOTED key (the pre-existing JSON branch only fired for a quoted
+# key) is refused, the same as "password=value".
+@test "UT-INFRA-564: report_is_secret_value refuses an unquoted YAML-style 'password: value'" {
+  run report_is_secret_value "password: hunter2hunter2"
+  assert_success
+  run report_is_secret_value "token: abc123def456"
+  assert_success
+}
+
+# UT-INFRA-565 (AXI-1972, follow-up g): ordinary report prose using a
+# colon is never refused by the new YAML branch — only a WHOLE sensitive
+# key, paired with a non-allowlisted value, is.
+@test "UT-INFRA-565: report_is_secret_value does not refuse ordinary 'key: value' report lines" {
+  run report_is_secret_value "Status: ok"
+  assert_failure
+  run report_is_secret_value "token_ttl: 3600"
+  assert_failure
+  run report_is_secret_value "Password policy: strict"
+  assert_failure
+}
+
 # UT-INFRA-531 — FR63: a value that LOOKS like a credential is refused
 # whatever key/flag it is attached to — including a key with no
 # sensitive-sounding name at all.

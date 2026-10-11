@@ -16,7 +16,7 @@ jobs:
       image_tag: ${{ steps.meta.outputs.tag }}
       registry_url: ${{ steps.registry.outputs.url }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           # Full history + tags so we can read the latest semver tag, and a PAT
           # so the auto-patch step below can push the new tag back to the repo.

@@ -119,7 +119,14 @@ report_is_secret_value() {
 # or immediately after a `--` flag prefix. Normalises `-` to `_` and
 # lower-cases before comparing against the recognised name/suffix sets.
 _report_key_is_sensitive() {
-  local k="${1,,}"
+  # AXI-1972 (follow-up b): `${1,,}` is a bash 4+ case-conversion expansion
+  # — it is a syntax error on bash 3.2 (macOS's shipped /bin/bash), which
+  # would abort EVERY operator entry point that sources this file (lock.sh,
+  # deploy-prod.sh, the power scripts, asset-sync.sh, seed-environment.sh)
+  # the moment it is parsed, not just when this branch runs. `tr` is POSIX
+  # and portable back to bash 3.1/3.2.
+  local k
+  k="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
   k="${k//-/_}"
   case "$k" in
     password|passwd|pwd|pgpassword|secret|token|apikey|api_key|access_key|secret_key|private_key|auth)
@@ -139,7 +146,9 @@ _report_value_is_allowed() {
   v="${v%\'}"; v="${v#\'}"
   v="${v%%[,;.)]}"
   [ -z "$v" ] && return 0
-  vn="${v,,}"
+  # AXI-1972 (follow-up b): same bash-3.2 portability concern as
+  # _report_key_is_sensitive above — `${v,,}` is a bash 4+-only expansion.
+  vn="$(printf '%s' "$v" | tr '[:upper:]' '[:lower:]')"
   case "$vn" in
     none|null|unset|redacted|rotated|changed|strict|enabled|disabled|true|false|yes|no)
       return 0 ;;
@@ -182,6 +191,22 @@ _report_has_sensitive_key_value() {
   done
   # bare --flag value (space-separated, no operator)
   while [[ "$s" =~ (^|[[:space:]])--([A-Za-z][A-Za-z0-9_-]*)[[:space:]]+${qc}?(${valchars}+)${qc}? ]]; do
+    whole="${BASH_REMATCH[0]}"
+    key="${BASH_REMATCH[2]}"
+    val="${BASH_REMATCH[3]}"
+    if _report_key_is_sensitive "$key" && ! _report_value_is_allowed "$val"; then
+      return 0
+    fi
+    s="${s/"$whole"/}"
+  done
+  # AXI-1972 (follow-up g): YAML-style `key: value` with an UNQUOTED key
+  # (the JSON branch above only fires for a QUOTED key). Requires at
+  # least one space after the colon (routine prose like "Status: ok",
+  # "token_ttl: 3600" or "Password policy: strict" either is not a
+  # sensitive WHOLE key or has an allowed value, so it passes through;
+  # a bare "sha256:<hex>" or "https://" has no space right after the
+  # colon and never enters this branch at all).
+  while [[ "$s" =~ (^|[^A-Za-z0-9_-])([A-Za-z][A-Za-z0-9_-]*):[[:space:]]+${qc}?(${valchars}+)${qc}? ]]; do
     whole="${BASH_REMATCH[0]}"
     key="${BASH_REMATCH[2]}"
     val="${BASH_REMATCH[3]}"

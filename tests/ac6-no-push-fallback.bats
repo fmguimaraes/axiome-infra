@@ -54,10 +54,15 @@ _ac6_scan() {
     }'
 }
 
-# UT-INFRA-252 — no file in the repo (outside tests/**,
-# scripts/roll-service.sh (AXI-1953's), and scripts/sync-event-store-indexes.sh
-# (AXI-1971's sanctioned, explicit, opt-in exception — see docstring above))
-# contains the literal "db push" outside a comment.
+# UT-INFRA-252 — no file in the repo (outside tests/** and
+# scripts/sync-event-store-indexes.sh (AXI-1971's sanctioned, explicit,
+# opt-in exception — see docstring above)) contains the literal "db push"
+# outside a comment. AXI-1955 dropped the scripts/roll-service.sh
+# exclusion this comment used to name (AXI-1953 had already rewritten
+# that script to delegate migration to the compose gate) — fixed here
+# (AXI-1972) where the comment still claimed it: the call below only ever
+# passed ONE extra exclusion (sync-event-store-indexes.sh), so the stale
+# wording was describing behaviour the code had not had since AXI-1955.
 @test "UT-INFRA-252: no repo file contains the literal 'db push' outside a comment" {
   run _ac6_scan 'db push' 'sync-event-store-indexes.sh'
   assert_output ""

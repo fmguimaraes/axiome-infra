@@ -103,12 +103,16 @@ setup() {
 # held), lock_acquire_exclusive returns lock_acquire's own rc unchanged and
 # never even looks at the other lock names — nothing was acquired, so
 # there is nothing for it to release.
-# UT-INFRA-430 (bounce #1, AXI-1967): if RELEASING the just-acquired lock
-# itself fails (e.g. AccessDenied on the conditional delete), the refusal
-# must never stay silent about it — one truthful line naming the lock,
-# that it may still be HELD, and the remedy (status then override). The
+# UT-INFRA-548 (bounce #1, AXI-1967; renumbered from UT-INFRA-430 by
+# AXI-1972 — that id was also used, independently, by
+# tests/asset-sync.bats (AXI-1969, the older of the two commits); this is
+# the duplicate the per-suite UT-id uniqueness check (tests/check-ut-ids.sh)
+# now enforces never recurs): if RELEASING the just-acquired lock itself
+# fails (e.g. AccessDenied on the conditional delete), the refusal must
+# never stay silent about it — one truthful line naming the lock, that it
+# may still be HELD, and the remedy (status then override). The
 # other-lock's own rc is still returned (non-zero either way).
-@test "UT-INFRA-430: lock_acquire_exclusive warns when releasing its own lock fails, still returns non-zero" {
+@test "UT-INFRA-548: lock_acquire_exclusive warns when releasing its own lock fails, still returns non-zero" {
   export LOCK_EXCLUSIVE_DATATIER_STATE=held
   export LOCK_EXCLUSIVE_DEPLOY_RELEASE_FAIL=1
 

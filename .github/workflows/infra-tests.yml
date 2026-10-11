@@ -1,10 +1,14 @@
-# infra-tests — shellcheck (baseline-gated) + the bats harness (AXI-1945).
+# infra-tests — shellcheck (baseline-gated, ONE pinned version) + the bats
+# harness (AXI-1945; shellcheck pinning AXI-1972/FR62/AC57).
 #
 # Runs exactly `tests/run.sh` so a green run here is a green run locally.
 # Nothing in this job touches real AWS/docker/db: every script under test is
 # driven through the PATH-shim stubs in tests/stubs/ with AWS credentials
 # blanked (NFR5). bats-core/bats-support/bats-assert are vendored under
 # tests/vendor/ — no package-manager install needed for the suite itself.
+# shellcheck itself is NOT apt-installed here any more: tests/run-shellcheck.sh
+# downloads the one pinned version (checksum-verified) itself, so this job
+# and a developer's own machine always lint with the identical binary.
 
 name: infra-tests
 
@@ -37,10 +41,14 @@ jobs:
     name: shellcheck + bats
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - name: Install shellcheck
-        run: sudo apt-get update -y && sudo apt-get install -y shellcheck jq
+      - name: Install jq
+        # shellcheck itself is pinned and self-fetched (checksum-verified) by
+        # tests/run-shellcheck.sh — see that script and AXI-1972. Do not
+        # apt-install shellcheck here: that reintroduces "whatever apt has"
+        # as a second, divergent version.
+        run: sudo apt-get update -y && sudo apt-get install -y jq
 
       - name: Make stubs + vendored bats executable
         run: chmod +x tests/stubs/* tests/run.sh tests/run-shellcheck.sh tests/vendor/bats-core/bin/bats tests/vendor/bats-core/libexec/bats-core/*

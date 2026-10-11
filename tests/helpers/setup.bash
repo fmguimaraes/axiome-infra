@@ -25,6 +25,20 @@ stub_setup() {
   export AWS_ACCESS_KEY_ID="" AWS_SECRET_ACCESS_KEY="" AWS_SESSION_TOKEN=""
   export AWS_PROFILE="" AWS_SHARED_CREDENTIALS_FILE="/dev/null" AWS_CONFIG_FILE="/dev/null"
   export AWS_WEB_IDENTITY_TOKEN_FILE="" AWS_ROLE_ARN=""
+  # FR62/AC56: a caller that execs with a cleared or replaced environment
+  # (`env -i PATH=… aws …`) drops every env var above, including
+  # STUB_LOG/STUB_FAIL_LOG — so a stub relying on those variables alone can
+  # neither log the call nor record it as unconfigured. File descriptors
+  # are a process-table property, not an environment one: `env -i` never
+  # closes them. Opening fixed FDs 87 (unconfigured-call log) and 88 (call
+  # log) here, on the SAME underlying files, means every descendant of
+  # this test process — however it rewrites its own environment — still
+  # has a writable path back to both logs. tests/stubs/_common.sh writes
+  # through these FDs first and only falls back to the env-var path when
+  # they are not open (e.g. a stub invoked outside stub_setup, which is
+  # itself a contract violation).
+  exec 87>>"$STUB_FAIL_LOG"
+  exec 88>>"$STUB_LOG"
 }
 
 # stub_teardown — called by the default teardown() below. Fails the test
@@ -35,8 +49,13 @@ stub_setup() {
 # default below and MUST call stub_teardown itself; tests/run.sh statically
 # checks that via tests/check-teardown-contract.sh.
 stub_teardown() {
-  local log="${STUB_FAIL_LOG:-}"
-  [ -n "$log" ] && [ -s "$log" ] || return 0
+  # Read the FIXED path, not the exported variable: a test body that
+  # itself does `unset STUB_FAIL_LOG` (simulating a caller that clears its
+  # own environment, FR62/AC56) must not thereby blind this check — the
+  # file still exists at the path stub_setup fixed for this test
+  # ($BATS_TEST_TMPDIR is bats-core's own invariant, never ours to unset).
+  local log="${BATS_TEST_TMPDIR}/stub.unconfigured.log"
+  [ -s "$log" ] || return 0
   fail "$(printf 'unconfigured stub call(s) recorded independently of exit-code handling:\n%s' "$(cat "$log")")"
 }
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # tests/lock_acquire.bats — scripts/lock.sh acquire (AXI-1947, AC19, FR28/FR30).
-# UT-INFRA-100..104.
+# UT-INFRA-100..104, UT-INFRA-426, UT-INFRA-566..567.
 
 load 'helpers/setup'
 
@@ -83,4 +83,35 @@ setup() {
   run "${INFRA_ROOT}/scripts/lock.sh" dev acquire apply --operation "terraform apply run=1"
 
   refute_output --partial "unknown lock name"
+}
+
+# UT-INFRA-566 (AXI-1972, follow-up h): a secret-shaped --operation is
+# refused BEFORE the lock body is ever built or written (the fixture's
+# catch-all arm returns 99 and would itself fail the test as an
+# unconfigured call if put-object/get-object were ever reached — only the
+# earlier, unconditional `aws --version` check is allowed through) — the
+# lock is never acquired, and the secret-shaped value itself is never
+# echoed back in the error message.
+@test "UT-INFRA-566: lock.sh acquire refuses a secret-shaped --operation before writing the lock body" {
+  run "${INFRA_ROOT}/scripts/lock.sh" dev acquire deploy --operation "password=hunter2hunter2"
+
+  assert_failure
+  [ "$status" -eq 3 ]
+  assert_output --partial "REFUSED"
+  assert_output --partial "resembles a secret-shaped string"
+  refute_output --partial "hunter2hunter2"
+  refute_output --partial "ACQUIRED"
+  run grep -c "put-object\|get-object" "$STUB_LOG"
+  assert_output "0"
+}
+
+# UT-INFRA-567 (AXI-1972, follow-up h): an ordinary --operation (the kind
+# every other test in this file already uses) is NOT refused by the new
+# guard — proves it only fires on secret-shaped text, not on any
+# "key=value"-looking text in general.
+@test "UT-INFRA-567: lock.sh acquire does not refuse an ordinary --operation" {
+  run "${INFRA_ROOT}/scripts/lock.sh" dev acquire deploy --operation "deploy tag=abc"
+
+  assert_success
+  assert_output --partial "ACQUIRED deploy"
 }

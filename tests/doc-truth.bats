@@ -77,9 +77,19 @@ setup() {
 }
 
 # UT-INFRA-388 — a curated set of refusal/contract strings the runbook
-# quotes verbatim exist verbatim in the named script. Each entry is
-# "<script-relative-path>|<verbatim substring>".
-@test "UT-INFRA-388: curated refusal strings quoted in the runbook exist verbatim in their script" {
+# quotes, verbatim, matches both files at once (AXI-1972 FR64/AC59
+# rework): the previous version of this test carried its own hardcoded
+# copy of the message text and checked it ONLY against the script — a
+# runbook-only edit to the quoted wording could never fail it, because
+# the runbook was never read. Each entry below still names the needle
+# (there is no way to ask "find me the right quote" without knowing what
+# it is), but the test now ALSO greps the RUNBOOK's own text for it —
+# markdown decoration stripped and all whitespace (including the
+# line-wraps Markdown prose uses) collapsed first, so a quote that wraps
+# across source lines still matches as one string. A change to the
+# runbook's wording, with the script untouched, now fails here.
+# Each entry is "<script-relative-path>|<verbatim substring>".
+@test "UT-INFRA-388: refusal strings are read from the runbook and must match both the runbook and their script" {
   local entries=(
     "scripts/roll-service.sh|has no 'migrate' service under services: — this box predates the migration gate"
     "scripts/deploy-prod.sh|it predates the AXI-1950 asset-sync conversion"
@@ -88,17 +98,45 @@ setup() {
     "scripts/deploy-prod.sh|The migration gate completed successfully before this failure"
     "scripts/deploy-prod.sh|Migrations may have PARTIALLY applied before this failure"
     "scripts/ssm-exec.sh|status: INDETERMINATE"
-    "scripts/lock.sh|has no automatic release by ANY route"
     "scripts/wt-down.sh|DELETE-ALL-LOCAL-DATA"
+  )
+  # These three are left SCRIPT-ONLY on purpose (not weakened — this is
+  # exactly their pre-existing coverage): docs/platform-lifecycle-operations.md
+  # is AXI-1977's file, not this story's, and this story may not edit its
+  # prose. Checking them against the runbook found it genuinely does not
+  # carry these quotes verbatim:
+  #   - "has no automatic release by ANY route" — scripts/lock.sh:102 is a
+  #     CODE COMMENT (not a printed message); the runbook's own prose says
+  #     "by any route" (lowercase) at a different line — a case mismatch,
+  #     not the same string.
+  #   - "ABORT: backup not verified; compute NOT stopped" and "ABORT:
+  #     could not acquire the data-tier lock" (providers/aws/scripts/
+  #     power.sh, power-data.sh) — added by AXI-1967/1970's debt-closure
+  #     lock-exclusion work; the runbook predates both and was never
+  #     updated to quote either refusal. Reported for AXI-1977, not fixed
+  #     here.
+  local script_only_entries=(
+    "scripts/lock.sh|has no automatic release by ANY route"
     "providers/aws/scripts/power.sh|ABORT: backup not verified; compute NOT stopped"
     "providers/aws/scripts/power-data.sh|ABORT: could not acquire the data-tier lock"
   )
-  local e script needle missing=""
-  for e in "${entries[@]}"; do
+  # The runbook's own text, markdown-stripped and whitespace-collapsed —
+  # this, not a copy in this test, is what each dual-checked needle is
+  # checked against.
+  local runbook_text
+  runbook_text="$(perl -0777 -pe 's/[`*]//g; s/\s+/ /g' "${INFRA_ROOT}/docs/platform-lifecycle-operations.md")"
+
+  local e script needle missing_script="" missing_runbook=""
+  for e in "${entries[@]}" "${script_only_entries[@]}"; do
     script="${e%%|*}"; needle="${e#*|}"
-    grep -qF -- "$needle" "${INFRA_ROOT}/${script}" || missing="$missing\n  ${script}: ${needle}"
+    grep -qF -- "$needle" "${INFRA_ROOT}/${script}" || missing_script="$missing_script\n  ${script}: ${needle}"
   done
-  [ -z "$missing" ] || fail "runbook quote(s) not found verbatim:$(printf '%b' "$missing")"
+  for e in "${entries[@]}"; do
+    needle="${e#*|}"
+    printf '%s' "$runbook_text" | grep -qF -- "$needle" || missing_runbook="$missing_runbook\n  ${needle}"
+  done
+  [ -z "$missing_script" ] || fail "quote(s) not found verbatim in their script:$(printf '%b' "$missing_script")"
+  [ -z "$missing_runbook" ] || fail "quote(s) not found verbatim in the runbook (docs/platform-lifecycle-operations.md) — AC59:$(printf '%b' "$missing_runbook")"
 }
 
 # UT-INFRA-389 — the Makefile's own documented AWS-CLI-version constants

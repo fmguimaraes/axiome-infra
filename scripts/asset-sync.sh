@@ -55,6 +55,8 @@
 #       segment — nothing installed, nothing even fetched for that entry (FR48)
 #   6  install failed partway through — every file already replaced in this
 #       install was restored to its previous copy; nothing left mixed (FR49)
+#   7  could not create a staging directory at all (20 name collisions in a
+#       row — in practice should never happen; AXI-1972 follow-up c)
 #   1  usage error
 #
 # NFR3: never prints a secret — this script touches no secret value (it
@@ -63,6 +65,46 @@ set -euo pipefail
 
 MANIFEST_NAME="manifest.sha256"
 DEFAULT_MANIFEST_SOURCE="providers/aws/onbox/publish-manifest.txt"
+
+# AXI-1972 (follow-up c): closes the same create-then-register race that
+# scripts/lib/cleanup.sh's `axiome_create_tracked_tempfile` closes for a
+# plain FILE (see that function's header comment in scripts/lib/cleanup.sh
+# for the full race description — confirmed for real on scripts/lock.sh's
+# `_lock_fetch`) — but for a DIRECTORY, which that shared helper does not
+# support (it only ever creates/tracks one regular file via `: >
+# "${candidate}"`; `axiome_run_cleanup` explicitly only ever removes a
+# plain file, never a directory — see tests/cleanup_lib.bats UT-INFRA-541).
+# The previous shape here was `staging="$(mktemp -d ...)"` THEN `trap
+# "rm -rf '${staging}'" EXIT` — a real, if narrow, window where a signal
+# landing between those two lines leaked the directory with nothing yet
+# responsible for it. This closes it by arming the trap on the chosen
+# candidate path FIRST (double-quoted, so it expands to a literal path
+# immediately — same reasoning as the trap lines in do_pull/do_publish
+# below), and only THEN creating the directory with a plain `mkdir`
+# (never `mktemp -d`, so the exact candidate path is known before it is
+# created). A name collision (astronomically unlikely given the
+# $$+3xRANDOM suffix, but checked rather than assumed) retries with a
+# fresh candidate up to 20 times, mirroring
+# axiome_create_tracked_tempfile's own retry bound. Sets <outvar> via
+# `printf -v` (bash 3.1+, no namerefs — consistent with the follow-up b
+# portability fix in scripts/lib/report.sh) directly in the CALLER's own
+# shell (do_pull's/do_publish's `local staging`), never via a command
+# substitution (which would run this whole function, including the trap
+# arming, in a lost subshell).
+_asset_sync_make_staging_dir() {
+  local base="${1:-${TMPDIR:-/tmp}}" _outvar="$2" candidate tries=0
+  while :; do
+    tries=$((tries + 1))
+    candidate="${base}/.onbox-staging.$$.${RANDOM}${RANDOM}${RANDOM}"
+    # shellcheck disable=SC2064 # intentional: expand ${candidate} NOW
+    trap "rm -rf '${candidate}'" EXIT
+    if mkdir "${candidate}" 2>/dev/null; then
+      printf -v "${_outvar}" '%s' "${candidate}"
+      return 0
+    fi
+    [ "${tries}" -ge 20 ] && return 1
+  done
+}
 
 usage() {
   echo "usage: asset-sync.sh pull <s3-prefix> <dest-dir>" >&2
@@ -306,21 +348,20 @@ stage_and_verify() {
 }
 
 do_pull() {
-  local prefix="$1" dest="$2" staging rc
+  local prefix="$1" dest="$2" staging="" rc
   mkdir -p "$dest"
-  staging="$(mktemp -d "${dest}/.onbox-staging.XXXXXX")"
-  # Double-quoted so "${staging}" expands NOW to a literal path (see
-  # do_publish's trap below for why single-quoting it would be wrong) —
-  # armed immediately so an unexpected abort (not just the handled error
-  # paths below) still removes the staging dir. Left armed for the
-  # remainder of the process — never disarmed, never replaced by a manual
-  # rm -rf after the fact: disarming the trap and then cleaning up
-  # explicitly would open a real window where a signal arriving between
-  # the disarm and the manual rm -rf hits neither mechanism and leaves the
-  # staging dir behind. The trap alone is the single source of truth for
-  # cleanup on every exit path, success, handled failure, or abort.
-  # shellcheck disable=SC2064 # intentional: expand ${staging} NOW, see above
-  trap "rm -rf '${staging}'" EXIT
+  # AXI-1972 (follow-up c): _asset_sync_make_staging_dir arms the EXIT
+  # trap on the chosen path BEFORE the directory exists — see its header
+  # comment above for the race this closes versus the previous bare
+  # `mktemp -d` THEN `trap ... EXIT` shape. The trap, once armed, is left
+  # armed for the remainder of the process exactly as before — never
+  # disarmed, never replaced by a manual rm -rf after the fact: it alone
+  # is the single source of truth for cleanup on every exit path,
+  # success, handled failure, or abort.
+  _asset_sync_make_staging_dir "$dest" staging || {
+    echo "FAIL asset-sync: could not create a staging directory under ${dest}" >&2
+    return 7
+  }
   if stage_and_verify "$prefix" "$staging"; then
     if all_files_current "$staging" "$dest"; then
       if manifest_copy_current "$staging" "$dest"; then
@@ -390,15 +431,15 @@ upload_staging() {
 
 do_publish() {
   local repo_root="$1" prefix="$2" manifest_source="${3:-${DEFAULT_MANIFEST_SOURCE}}"
-  local entries staging
+  local entries staging=""
   entries="$(read_manifest_source "$repo_root" "$manifest_source")"
-  staging="$(mktemp -d)"
-  # Double-quoted so "${staging}" expands NOW (trap registration time) to a
-  # literal path — a single-quoted trap would defer expansion to EXIT-trap
-  # firing time, by which point this function's `local staging` is gone and,
-  # under `set -u`, that deferred expansion itself fails.
-  # shellcheck disable=SC2064 # intentional: expand ${staging} NOW, see above
-  trap "rm -rf '${staging}'" EXIT
+  # AXI-1972 (follow-up c): see _asset_sync_make_staging_dir's header
+  # comment above for the create-then-register race this closes versus
+  # the previous bare `mktemp -d` THEN `trap ... EXIT` shape.
+  _asset_sync_make_staging_dir "" staging || {
+    echo "ERROR asset-sync: could not create a staging directory" >&2
+    return 1
+  }
 
   build_publish_staging "$repo_root" "$staging" "$entries"
   validate_compose "$staging"

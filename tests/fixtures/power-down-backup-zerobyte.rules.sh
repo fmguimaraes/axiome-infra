@@ -1,4 +1,10 @@
 # shellcheck shell=bash
+# AXI-1972 (scope item 5): LastModified was a hardcoded "2030-01-01" —
+# fine until 2030, then this fixture would start reporting a STALE object
+# (power.sh compares LastModified against the time the command was
+# issued) and the test would fail for a reason that has nothing to do
+# with what it tests. Computed relative to real "now" via the date stub's
+# default passthrough instead, so it never expires.
 # AXI-1967: get-object arms for locks/deploy.json and locks/apply.json (both FREE) added — power.sh down now also checks those locks (FR43) before the backup step above.
 # Fixture for the aws stub — power.sh <env> down, backup OK line parses, but
 # the object's own ContentLength is 0 (never trust a zero-byte object).
@@ -43,7 +49,7 @@ stub_respond() {
       return 0
       ;;
     *"s3api"*"head-object"*"backups/mongo/20261010T020000Z.archive.gz"*)
-      echo '{"ContentLength":0,"LastModified":"2030-01-01T00:00:00+00:00","Metadata":{"sha256":"deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"}}'
+      echo '{"ContentLength":0,"LastModified":"'"$(date -u -d '+365 days' +%Y-%m-%dT%H:%M:%S+00:00)"'","Metadata":{"sha256":"deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"}}'
       return 0
       ;;
     *)

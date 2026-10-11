@@ -46,8 +46,17 @@ setup() {
 # block terraform-cd (a GitHub Actions step with a non-zero exit fails the
 # job by default, so no extra wrapper is needed in the YAML).
 @test "UT-INFRA-128: the workflow's lock-check command fails on HELD and on UNDETERMINED" {
-  run grep -c "scripts/lock.sh production status data-tier" "$WORKFLOW"
-  [ "$output" -ge 2 ]
+  # AXI-1972 (follow-up f): a bare `grep -c` over the whole file would be
+  # satisfied by a YAML comment mentioning this command — it must appear
+  # in an actual `run:` step's SCRIPT TEXT. Exclude full-line comments
+  # (trimmed first non-blank char `#`) the same way tests/ac6-no-push-
+  # fallback.bats does for shell/YAML; the surviving occurrences are
+  # therefore each inside a `run:` block's command text.
+  local count
+  count="$(grep -n "scripts/lock.sh production status data-tier" "$WORKFLOW" \
+    | awk -F: '{line=$0; sub(/^[^:]*:/, "", line); trimmed=line; sub(/^[ \t]+/, "", trimmed); if (trimmed !~ /^#/) print}' \
+    | grep -c .)"
+  [ "$count" -ge 2 ]
 
   stub_use_rules aws "${TESTS_DIR}/fixtures/lock-status.rules.sh"
   run "${INFRA_ROOT}/scripts/lock.sh" dev status deploy

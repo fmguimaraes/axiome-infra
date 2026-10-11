@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # tests/asset-sync.bats — scripts/asset-sync.sh (AXI-1950, epic AXI-1944
-# decision 8, FR11/EC9/AC9/AC32). UT-INFRA-130..138.
+# decision 8, FR11/EC9/AC9/AC32). UT-INFRA-130..138, UT-INFRA-570.
 
 load 'helpers/setup'
 
@@ -425,6 +425,28 @@ write_unsafe_manifest() {
   seed_bucket
   run "$SCRIPT" pull "$ASSET_SYNC_FIXTURE_PREFIX" "$DEST"
   assert_success
+  run find "$DEST" -maxdepth 1 -name '.onbox-staging.*'
+  assert_output ""
+}
+
+# UT-INFRA-570 (AXI-1972, follow-up c): when the staging directory simply
+# cannot be created (here: dest-dir is not writable — mkdir always
+# fails), asset-sync.sh fails cleanly with the new, distinct exit code 7
+# and a named message — it does not crash under `set -e`, does not call
+# aws at all (nothing to fetch into a staging dir that doesn't exist),
+# and leaves no partial `.onbox-staging.*` entry (there cannot be one:
+# mkdir never succeeded even once).
+@test "UT-INFRA-570: asset-sync.sh pull fails with exit 7 when no staging directory can be created" {
+  chmod 555 "$DEST"
+
+  run "$SCRIPT" pull "$ASSET_SYNC_FIXTURE_PREFIX" "$DEST"
+
+  chmod 755 "$DEST"
+  assert_failure
+  [ "$status" -eq 7 ]
+  assert_output --partial "could not create a staging directory"
+  run grep -c "### CALL: aws" "$STUB_LOG"
+  assert_output "0"
   run find "$DEST" -maxdepth 1 -name '.onbox-staging.*'
   assert_output ""
 }
