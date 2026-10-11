@@ -265,8 +265,10 @@ pipeline plan against production and queue an apply for approval.
   published by hand in 3a — content should match), the RDS auto-restart event
   subscription, and a `user_data` change on the EC2 instance.
 - [ ] The EC2 module sets `user_data_replace_on_change = false`, so the
-  instance should **not** be replaced. If the plan shows the instance being
-  destroyed or replaced, do not approve.
+  instance should **not** be replaced. Expect the apply to **stop and start
+  the instance in place** to set the new `user_data` (a short outage; the
+  box then boots through `boot.sh`), so schedule it like a power cycle. If
+  the plan shows the instance being destroyed or replaced, do not approve.
 - [ ] The apply takes the `apply` lock; it refuses while a deploy, a park or a
   compute power operation holds its lock.
 

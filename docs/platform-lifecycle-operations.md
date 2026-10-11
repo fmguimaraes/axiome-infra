@@ -1012,7 +1012,8 @@ not what the code is capable of:
   already exists on the box; the "catches up a missed run" guarantee only
   starts once an operator runs the installer against a real box.
 - **The next approved `terraform apply` changes the production EC2
-  `user_data` but should not replace the instance.** Production's tfvars
+  `user_data`: expect an in-place stop and start of the instance, not a
+  replacement.** Production's tfvars
   select the EC2 compute module (`use_ec2_compute = true`,
   `use_legacy_stack = false`), which sets `user_data_replace_on_change =
   false`. An earlier version of this section said the apply would recreate
