@@ -3,7 +3,8 @@
 Terraform-first multi-environment infrastructure for the Axiome platform.
 
 > **Current reality (AXI-1944/AXI-1977):** the only deployed, live environment is
-> **production on AWS** (Lightsail compute + Neon Postgres + a self-hosted Mongo
+> **production on AWS** (per `providers/aws/environments/production/terraform.tfvars`:
+> EC2 compute + RDS Postgres + ElastiCache Redis + a self-hosted Mongo
 > container + S3 + ECR — see [`providers/aws/README.md`](providers/aws/README.md))
 > plus the **local docker-compose stack**. Scaleway, on-prem, and OVH provider
 > code exists in this repo but is **not deployed anywhere** — see
@@ -89,6 +90,11 @@ data-tier-only `make data-up` / `data-down` (long idle only; destructive for Red
 
 Full detail, timings, and the safety rationale: [AWS power runbook](providers/aws/docs/power-runbook.md).
 
+> **Not yet usable end to end.** The verified-backup power-down, the migration
+> gate on boot and the readiness check on power-up need a one-time box
+> conversion that has not been done. Follow
+> [First live power cycle — step by step](docs/first-live-power-cycle-checklist.md).
+
 ## Environments
 
 | Environment | Purpose | Deploy Method |
@@ -101,6 +107,7 @@ Full detail, timings, and the safety rationale: [AWS power runbook](providers/aw
 ## Documentation
 
 - **[Platform Lifecycle Operations](docs/platform-lifecycle-operations.md) — the current, accurate operator runbook: migration gate, deploy, locks, park/unpark, box conversion, what's not yet done** ← start here for any real AWS production operation
+- **[First live power cycle — step by step](docs/first-live-power-cycle-checklist.md) — ordered checklist of what must be done before power-down/up and gated deploys work on the real box** ← do this first
 - **[Deploy Procedure](docs/deploy-procedure.md) — operator quick reference: which path ships what, and where to approve a gated production deploy** ← start here to deploy
 - [Bootstrapping](docs/bootstrapping.md) — full setup guide for local and AWS (dev/staging and the Scaleway/on-prem provider paths are **not deployed** — see the retired-provider note in each)
 - [GitOps Lifecycle](docs/gitops-lifecycle.md) — GitHub Flow, CI/CD, promotion, audit trail

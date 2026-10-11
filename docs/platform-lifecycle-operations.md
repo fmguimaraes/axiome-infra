@@ -82,7 +82,13 @@ one-shot — until this one-time conversion is done, once, per box:
 scripts/asset-sync.sh pull s3://<project>-<env>-system/onbox /opt/axiome
 
 # 2. Point the systemd unit at the new boot wrapper instead of a bare
-#    `docker compose up -d` (do this on the box, over SSM/SSH):
+#    `docker compose up -d` (do this on the box, over SSM/SSH). boot.sh
+#    exits immediately without ONBOX_S3_PREFIX, and refresh-env.sh needs
+#    SSM_PARAMETER_PREFIX, so the unit needs these lines, not ExecStart alone
+#    (same unit cloud-init writes on a new box, cloud-init/init.sh.tftpl):
+#    Environment=AXIOME_DIR=/opt/axiome
+#    Environment=ONBOX_S3_PREFIX=s3://<project>-<env>-system/onbox
+#    Environment=SSM_PARAMETER_PREFIX=<parameter prefix>
 #    ExecStart=/opt/axiome/scripts/boot.sh
 # 3. Reload the unit:
 systemctl daemon-reload
@@ -869,10 +875,14 @@ vice versa:
   an alert on AWS's own 7-day auto-restart of a stopped RDS instance.
 - The rendered `user_data` on the EC2 compute module changes (the systemd
   `ExecStart` now points at `/opt/axiome/scripts/boot.sh`, cloud-init
-  bootstraps the on-box layout); **production uses the Lightsail module, not
-  EC2** — there, ANY cloud-init change destroys and recreates the instance
-  (pre-existing behaviour, unrelated to this epic, per `providers/RUNBOOK.md`'s
-  `use_legacy_stack = true` default). After this one change, on-box file
+  bootstraps the on-box layout). **Production is configured for the EC2
+  module** (`environments/production/terraform.tfvars`: `use_ec2_compute =
+  true`, `use_legacy_stack = false`), which sets
+  `user_data_replace_on_change = false`: the instance is not replaced, and
+  an existing box does not re-run cloud-init, which is why §1's one-time
+  conversion is manual. In the Lightsail module (`use_legacy_stack = true`,
+  the variable's default, not used by production) ANY cloud-init change
+  destroys and recreates the instance. After this one change, on-box file
   updates happen entirely through `aws_s3_object` + `asset-sync.sh pull` —
   no further `user_data` changes are expected from future on-box file
   additions.
@@ -1001,20 +1011,17 @@ not what the code is capable of:
   `power.sh down`'s pre-stop backup-and-verify step and whatever cron
   already exists on the box; the "catches up a missed run" guarantee only
   starts once an operator runs the installer against a real box.
-- **The next approved `terraform apply` recreates the Lightsail instance.**
-  Verified directly in `providers/aws/modules/compute/main.tf`:
-  `aws_lightsail_instance.main` carries `lifecycle { replace_triggered_by =
-  [terraform_data.user_data_hash] }` — any change to the rendered
-  `user_data`/cloud-init (including the on-box asset-bundle publishing
-  described in §9) destroys and recreates the instance. This is unrelated
-  to this epic and pre-exists it; it is restated here only because the next
-  apply this epic's own changes would trigger lands on this same resource.
-  (The separate EC2 compute module sets `user_data_replace_on_change =
-  false` — it is not replaced on a `user_data` change; production today
-  runs the Lightsail path, per `providers/RUNBOOK.md`'s
-  `use_legacy_stack = true` default, not the EC2 one, so the `user_data`
-  change above recreates the production instance via Lightsail's
-  behaviour, not EC2's.)
+- **The next approved `terraform apply` changes the production EC2
+  `user_data` but should not replace the instance.** Production's tfvars
+  select the EC2 compute module (`use_ec2_compute = true`,
+  `use_legacy_stack = false`), which sets `user_data_replace_on_change =
+  false`. An earlier version of this section said the apply would recreate
+  a Lightsail instance; that is true only of the Lightsail module
+  (`aws_lightsail_instance.main` carries `replace_triggered_by =
+  [terraform_data.user_data_hash]`), which production does not use. Neither
+  statement has been checked against the AWS account or a real plan: read
+  the plan before approving, and do not approve one that replaces the
+  instance.
 - **Control-plane health checks are skipped in production until wired.**
   The gateway only calls `CONTROL_PLANE_SERVICE` for `/health`/`/health/ready`
   when `controlPlane.healthEnabled` is configured on (§8); it is off by
