@@ -43,17 +43,22 @@
 # "Release apply lock (FR42, always)" steps further down) BEFORE the
 # `terraform apply` step, via `lock_acquire_exclusive` (atomic S3
 # `put-object --if-none-match '*'`, strongly read-after-write consistent),
-# naming `deploy` and `data-tier` as the locks it conflicts with — THEN
-# checks those are free. `power-data.sh down` mirrors this: it acquires
-# `data-tier` first, then checks `deploy`/`apply`. Because each side
+# naming `deploy`, `data-tier` and `compute` as the locks it conflicts with
+# — THEN checks those are free. `power-data.sh down` mirrors this: it
+# acquires `data-tier` first, then checks `deploy`/`apply`/`compute`.
+# `power.sh down`/`up` (AXI-1981) mirror it too: each acquires its own
+# `compute` lock first, then checks `deploy`/`apply` (deliberately NOT
+# `data-tier` — see that script's header for why). Because each side
 # acquires its own lock before ever checking the other's, whichever side's
 # acquire happens later is guaranteed to observe the earlier one on its own
 # very next check and back out — at most one of {apply, deploy, park} ever
-# proceeds; two of them can never both run. See
-# docs/platform-lifecycle-operations.md §4 for the full statement
-# (including the mutual-back-out and stuck-lock-after-failed-release cases,
-# and the one exception: `power.sh`'s compute park/unpark, which does not
-# follow this acquire-then-check pattern at all).
+# proceeds, and a compute power operation never runs alongside an apply or
+# a deploy. The one pair that is NOT mutually exclusive is compute and
+# park: a park/unpark refuses to start while `compute` is held, but a
+# compute power operation can start while data is being parked or is
+# parked. See docs/platform-lifecycle-operations.md §4 for the full
+# statement (including the mutual-back-out and
+# stuck-lock-after-failed-release cases).
 #
 # workflow_dispatch remains for manual plan/apply (plan_only input).
 #
@@ -181,21 +186,22 @@ jobs:
       - name: Check data-tier lock (AC20, FR29)
         run: bash scripts/lock.sh production status data-tier
 
-      # AXI-1967 (FR42/FR43, AC34/AC35): acquire the `apply` lock HERE —
-      # the job's first Terraform-affecting step, and crucially AFTER the
-      # `environment: production` approval wait above (that wait blocks the
-      # whole job before ANY step runs, so acquiring inside a step can
-      # never hold the lock across the approval gate). Acquire-then-check
-      # (lock_acquire_exclusive, scripts/lock.sh — AXI-1967): take `apply`
-      # first, then require `deploy` and `data-tier` both free; on either
-      # being held, the helper releases `apply` itself and this step exits
-      # non-zero, naming the holder, before `scripts/deploy.sh` ever runs.
+      # AXI-1967 (FR42/FR43, AC34/AC35; extended to `compute` by AXI-1981):
+      # acquire the `apply` lock HERE — the job's first Terraform-affecting
+      # step, and crucially AFTER the `environment: production` approval
+      # wait above (that wait blocks the whole job before ANY step runs, so
+      # acquiring inside a step can never hold the lock across the approval
+      # gate). Acquire-then-check (lock_acquire_exclusive, scripts/lock.sh):
+      # take `apply` first, then require `deploy`, `data-tier` and `compute`
+      # all free; on any being held, the helper releases `apply` itself and
+      # this step exits non-zero, naming the holder, before
+      # `scripts/deploy.sh` ever runs.
       - name: Acquire apply lock (FR42/FR43, AC34)
         shell: bash
         run: |
           set -euo pipefail
           . scripts/lock.sh
-          OUT="$(lock_acquire_exclusive production apply "terraform apply run=${{ github.run_id }}" deploy data-tier)"
+          OUT="$(lock_acquire_exclusive production apply "terraform apply run=${{ github.run_id }}" deploy data-tier compute)"
           echo "$OUT"
           TOKEN="$(printf '%s\n' "$OUT" | sed -n 's/.*token=\([^ ]*\).*/\1/p')"
           echo "APPLY_LOCK_TOKEN=${TOKEN}" >> "$GITHUB_ENV"

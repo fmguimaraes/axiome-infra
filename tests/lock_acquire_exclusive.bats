@@ -124,6 +124,29 @@ setup() {
   refute_output --partial "rc=0"
 }
 
+# UT-INFRA-639 (AXI-1981, FR43, AC35): the race pair this story adds —
+# acquiring the NEW 'compute' name and checking 'apply' free follows
+# exactly the same acquire-then-check contract as the pre-existing
+# 'deploy' name above: acquires 'compute' first, THEN discovers 'apply'
+# held, releases 'compute' (never 'apply'), and returns non-zero. (Only
+# 'apply' is checked here, not 'deploy' — this fixture's locks/deploy.json
+# get-object arm is reserved for the pre-existing "deploy is the acquired
+# name" tests above and always echoes a valid lock body; the real
+# compute-vs-deploy pair is proven end-to-end through power.sh's own
+# tests, UT-INFRA-414/590.)
+@test "UT-INFRA-639: lock_acquire_exclusive releases its own lock and refuses when apply is held, acquiring 'compute' (AC35)" {
+  export LOCK_EXCLUSIVE_APPLY_STATE=held
+
+  run bash -c ". '${INFRA_ROOT}/scripts/lock.sh'; lock_acquire_exclusive dev compute 'compute-down' apply; echo \"rc=\$?\""
+
+  assert_output --partial "lock 'apply' is not free"
+  assert_output --partial "acquired 'compute' but 'apply' is not free — releasing 'compute' and refusing"
+  assert_output --partial "RELEASED compute"
+  refute_output --partial "rc=0"
+  run grep -cx "delete-object" "$STUB_LOG"
+  assert_output "1"
+}
+
 @test "UT-INFRA-413: lock_acquire_exclusive passes through a failure to acquire its own lock untouched" {
   stub_use_rules aws "${TESTS_DIR}/fixtures/lock-acquire.rules.sh"
 

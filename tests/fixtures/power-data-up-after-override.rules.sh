@@ -24,6 +24,16 @@ stub_respond() {
       echo "An error occurred (404) when calling the GetObject operation: Not Found"
       return 254
       ;;
+    *"get-object"*"locks/compute.json"*)
+      if [ "${POWER_DATA_FIXTURE_COMPUTE_STATE:-free}" = "held" ]; then
+        local outfile="${argv##* }"
+        printf '%s' '{"name":"compute","actor":"ops@example.com","operation":"compute-down","host":"h","acquired_at":"2026-10-10T00:00:00Z","token":"t"}' > "${outfile}"
+        echo '{"ETag":"\"cl\""}'
+        return 0
+      fi
+      echo "An error occurred (404) when calling the GetObject operation: Not Found"
+      return 254
+      ;;
     *"describe-db-instances"*"DBInstanceStatus"*)
       echo "available"
       return 0

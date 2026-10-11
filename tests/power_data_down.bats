@@ -158,6 +158,23 @@ refute_stub_called_with() {
   refute_stub_called_with aws "delete-replication-group"
 }
 
+# UT-INFRA-586 (AXI-1981, FR43): new for this story — the compute lock is
+# held (a power.sh down/up is in progress) — down must release the
+# data-tier lock it just took and refuse, never touching RDS/Redis, same
+# shape as the existing deploy/apply checks above.
+@test "UT-INFRA-586: power-data.sh down releases data-tier and refuses when the compute lock is held (FR43)" {
+  stub_use_rules aws "${TESTS_DIR}/fixtures/power-data-down-ok.rules.sh"
+  export POWER_DATA_FIXTURE_COMPUTE_STATE=held
+
+  run "${INFRA_ROOT}/providers/aws/scripts/power-data.sh" dev down
+
+  assert_failure
+  assert_output --partial "the compute lock is held"
+  assert_stub_called aws "delete-object"
+  refute_stub_called_with aws "stop-db-instance"
+  refute_stub_called_with aws "delete-replication-group"
+}
+
 # refute_park_state_rm — the stub log is ONE ARGV ELEMENT PER LINE (never a
 # joined command string), so `aws s3 rm <key>` shows up as a "s3" line
 # immediately followed by a "rm" line — never a single line containing
@@ -165,6 +182,21 @@ refute_stub_called_with() {
 refute_park_state_rm() {
   run bash -c "grep -A1 -x 's3' '${STUB_LOG}' | grep -x 'rm'"
   [ "$status" -ne 0 ] || fail "expected NO 'aws s3 rm' call but one was recorded in ${STUB_LOG}"
+}
+
+# UT-INFRA-588 (AXI-1981, FR43): same bounce-#1-shape guarantee as
+# UT-INFRA-428/429 below, for the new compute check — never deletes an
+# earlier run's park-state record.
+@test "UT-INFRA-588: power-data.sh down refused by a held compute lock releases data-tier but never deletes park-state" {
+  stub_use_rules aws "${TESTS_DIR}/fixtures/power-data-down-ok.rules.sh"
+  export POWER_DATA_FIXTURE_COMPUTE_STATE=held
+
+  run "${INFRA_ROOT}/providers/aws/scripts/power-data.sh" dev down
+
+  assert_failure
+  assert_output --partial "the compute lock is held"
+  assert_stub_called aws "delete-object"
+  refute_park_state_rm
 }
 
 # UT-INFRA-428 (bounce #1, AXI-1967): review bounce — `down` refused by a

@@ -2,15 +2,17 @@
 # scripts/lock.sh — exclusive S3-object locks for the production lifecycle
 # (FR28/FR29/FR30, EC7, AC19/AC20).
 #
-# Three operations can otherwise run against the one production box at once:
-# two deploys (scripts/deploy-prod.sh), a deploy during a power-down
-# (providers/aws/scripts/power.sh), and — the dangerous one — a `terraform
-# apply` from `terraform-cd` while the data tier is parked
+# Several operations can otherwise run against the one production box at
+# once: two deploys (scripts/deploy-prod.sh), a deploy during a compute
+# power-down/up (providers/aws/scripts/power.sh), and — the dangerous one — a
+# `terraform apply` from `terraform-cd` while the data tier is parked
 # (providers/aws/scripts/power-data.sh snapshots+deletes Redis and stops RDS,
 # then recreates on unpark; an apply in that window "repairs" what it sees as
 # drift and collides with the restore). This script is the single lock
 # primitive both AXI-1951 (power/deploy scripts) and the `terraform-cd`
-# workflow (this story) call.
+# workflow (this story) call. AXI-1981 added the fourth lock, `compute`,
+# taken by `providers/aws/scripts/power.sh down`/`up` for the duration of a
+# compute power operation.
 #
 # THIS FILE IS A SOURCED LIBRARY FIRST, A CLI SECOND. AXI-1951/AXI-1954
 # `source` it from deploy/power scripts that already run their own traps,
@@ -31,10 +33,10 @@
 #
 # ---------------------------------------------------------------------------
 # CLI
-#   scripts/lock.sh <dev|staging|production> acquire  <deploy|data-tier|apply> --operation <text>
-#   scripts/lock.sh <dev|staging|production> release  <deploy|data-tier|apply> --token <token>
-#   scripts/lock.sh <dev|staging|production> status   [<deploy|data-tier|apply>]
-#   scripts/lock.sh <dev|staging|production> override <deploy|data-tier|apply> --reason <text> --confirm
+#   scripts/lock.sh <dev|staging|production> acquire  <deploy|data-tier|apply|compute> --operation <text>
+#   scripts/lock.sh <dev|staging|production> release  <deploy|data-tier|apply|compute> --token <token>
+#   scripts/lock.sh <dev|staging|production> status   [<deploy|data-tier|apply|compute>]
+#   scripts/lock.sh <dev|staging|production> override <deploy|data-tier|apply|compute> --reason <text> --confirm
 #
 #   acquire prints `ACQUIRED <name> token=<token> actor=<actor> at=<iso>` on
 #   stdout on success — the caller MUST capture <token> (it is the only proof
@@ -221,7 +223,7 @@ readonly LOCK_RC_UNKNOWN=2
 readonly LOCK_RC_REFUSED=3
 readonly LOCK_MIN_AWS_CLI_PUT="2.17.34"
 readonly LOCK_MIN_AWS_CLI_DELETE="2.22.3"
-readonly LOCK_NAMES="deploy data-tier apply"
+readonly LOCK_NAMES="deploy data-tier apply compute"
 
 # --- env / naming (mirrors providers/aws/scripts/power-data.sh) --------------
 # Sets ONLY `_LOCK_`-prefixed globals — never bare PROJECT/REGION/
@@ -241,8 +243,8 @@ lock_env_defaults() {
 
 lock_validate_name() {
   case "$1" in
-    deploy|data-tier|apply) return 0 ;;
-    *) echo "ERROR: unknown lock name '$1'. Valid: deploy|data-tier|apply" >&2; return "$LOCK_RC_UNKNOWN" ;;
+    deploy|data-tier|apply|compute) return 0 ;;
+    *) echo "ERROR: unknown lock name '$1'. Valid: deploy|data-tier|apply|compute" >&2; return "$LOCK_RC_UNKNOWN" ;;
   esac
 }
 
@@ -764,7 +766,13 @@ lock_install_exit_trap() {
 
 # --- CLI dispatch ----------------------------------------------------------------
 _lock_usage() {
-  sed -n '34,37p' "${BASH_SOURCE[0]}" >&2
+  # Review bounce #1 (item 4): this used to be a hard-coded `sed -n
+  # '36,39p'` line range, which a header edit already shifted once
+  # (AXI-1981) and silently printed the wrong lines until caught by
+  # re-grepping the new numbers. Grep the four usage lines by their own
+  # fixed `#   scripts/lock.sh ` prefix instead — correct regardless of
+  # where the header comment grows or shrinks above it.
+  grep '^#   scripts/lock\.sh ' "${BASH_SOURCE[0]}" | sed 's/^#   //' >&2
   exit "${LOCK_RC_UNKNOWN}"
 }
 

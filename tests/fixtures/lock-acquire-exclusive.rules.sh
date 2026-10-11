@@ -45,6 +45,27 @@ stub_respond() {
       return 0
       ;;
 
+    # --- acquiring "compute" always succeeds (AXI-1981, UT-INFRA-639) ------
+    # Same captured-token pattern as "deploy" above, on its own scratch
+    # file so the two acquired-name fixtures never collide.
+    *"put-object"*"locks/compute.json"*)
+      cat > "${BATS_TEST_TMPDIR:-/tmp}/lock-acquire-exclusive.compute-token.body"
+      echo '{"ETag":"\"cmp1\""}'
+      return 0
+      ;;
+    *"get-object"*"locks/compute.json"*)
+      if [ -s "${BATS_TEST_TMPDIR:-/tmp}/lock-acquire-exclusive.compute-token.body" ]; then
+        cat "${BATS_TEST_TMPDIR:-/tmp}/lock-acquire-exclusive.compute-token.body" > "${outfile}"
+      else
+        printf '%s' '{"name":"compute","actor":"me","operation":"x","host":"h","acquired_at":"2026-10-10T10:00:00Z","token":"self-token"}' > "${outfile}"
+      fi
+      echo '{"ETag":"\"cmp1\""}'
+      return 0
+      ;;
+    *"delete-object"*"locks/compute.json"*)
+      return 0
+      ;;
+
     # --- "data-tier" is FREE or HELD per LOCK_EXCLUSIVE_DATATIER_STATE ------
     *"get-object"*"locks/data-tier.json"*)
       if [ "${LOCK_EXCLUSIVE_DATATIER_STATE:-free}" = "held" ]; then

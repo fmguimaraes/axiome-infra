@@ -420,28 +420,52 @@ production`.
 
 ## 4. Locks
 
-**There are three lock names, not two: `deploy`, `data-tier`, and `apply`**
-(`LOCK_NAMES="deploy data-tier apply"`, `scripts/lock.sh`). `apply` is held
-across a `terraform-cd` apply run (acquired/released by the workflow itself,
-AXI-1967/FR42/AC34 — see `.github/workflows/terraform-cd.yml`'s
+**There are four lock names: `deploy`, `data-tier`, `apply`, and `compute`**
+(`LOCK_NAMES="deploy data-tier apply compute"`, `scripts/lock.sh`). `apply` is
+held across a `terraform-cd` apply run (acquired/released by the workflow
+itself, AXI-1967/FR42/AC34 — see `.github/workflows/terraform-cd.yml`'s
 `lock_acquire_exclusive production apply "terraform apply run=${{
-github.run_id }}" deploy data-tier` step, released `if: always()` via
-`scripts/lock.sh production release apply --token "${APPLY_LOCK_TOKEN}"`),
-and is what makes apply/deploy/park mutually exclusive:
+github.run_id }}" deploy data-tier compute` step, released `if: always()` via
+`scripts/lock.sh production release apply --token "${APPLY_LOCK_TOKEN}"`).
+`compute` is held for the duration of a `providers/aws/scripts/power.sh`
+`down`/`up` run (AXI-1981/FR43) — acquired first, released on every exit path
+via `lock_mark_for_auto_release` + `lock_install_exit_trap`, the same pattern
+`deploy` uses. Together these make deploy/apply/park/compute mutually
+exclusive:
 
 | Caller | Check | Exact message | Effect |
 |---|---|---|---|
-| `providers/aws/scripts/power.sh` (compute `down`) | apply lock held? | `ABORT: the apply lock for ${ENV} is held — refusing to stop compute while a Terraform apply is in progress.` | refuses before any SSM/stop call |
-| `providers/aws/scripts/power-data.sh` (`down`, after acquiring data-tier) | apply lock held? | `ABORT: the apply lock is held — releasing the data-tier lock just acquired and refusing to park while a Terraform apply is in progress.` | releases the data-tier lock it just took, then refuses — never leaves data-tier held on this path |
-| `power-data.sh` (`up`) | apply lock held? | **stderr:** `ABORT: the apply lock for ${ENV} is held — refusing to start/recreate the data tier while a Terraform apply is in progress. Re-run '$0 ${ENV} up' once the apply finishes.` **report line:** `ABORT: the apply lock is held — refusing to unpark while a Terraform apply is in progress. The data-tier lock itself is untouched (it is this park's own lock).` (one branch, two surfaces — `providers/aws/scripts/power-data.sh`'s `up` action emits both from the same `if ! lock_require_free "$ENV" apply; then` check) | refuses before starting/recreating RDS/ElastiCache; the park's own data-tier lock is left held (it is not released on this path) |
+| `providers/aws/scripts/power.sh` (`down`) | deploy or apply lock held? | `ABORT: could not acquire the compute lock for ${ENV}, or the deploy/apply lock is held — refusing to stop compute. See above for which lock is held.` | releases the just-acquired `compute` lock, refuses before any SSM/backup/stop call |
+| `providers/aws/scripts/power.sh` (`up`) | deploy or apply lock held? | `ABORT: could not acquire the compute lock for ${ENV}, or the deploy/apply lock is held — refusing to start compute. See above for which lock is held.` | releases the just-acquired `compute` lock, refuses before any start call |
+| `providers/aws/scripts/power-data.sh` (`down`, after acquiring data-tier) | compute lock held? | `ABORT: the compute lock is held — releasing the data-tier lock just acquired and refusing to park while a compute power operation is in progress.` | releases the data-tier lock it just took, then refuses — never leaves data-tier held on this path |
+| `power-data.sh` (`up`) | compute lock held? | **stderr:** `ABORT: the compute lock for ${ENV} is held — refusing to start/recreate the data tier while a compute power operation is in progress. Re-run '$0 ${ENV} up' once it finishes.` **report line:** `ABORT: the compute lock is held — refusing to unpark while a compute power operation is in progress. The data-tier lock itself is untouched (it is this park's own lock).` | refuses before starting/recreating RDS/ElastiCache; the park's own data-tier lock is left held (it is not released on this path) |
 | `power-data.sh` (`down`, acquiring data-tier) | could not acquire data-tier at all | `ABORT: could not acquire the data-tier lock (rc=${LOCK_RC}) — refusing to park. Another park, deploy, or terraform-cd apply may be in progress; see '$0 ${ENV} status'.` | refuses before any AWS mutation |
+| `scripts/deploy-prod.sh` (initial acquire) | data-tier, apply, or compute lock held? | `FAIL-CLOSED: could not acquire the deploy lock for ${ENV}, or the data-tier/apply/compute lock is held — refusing to deploy. See above for which lock is held.` | releases the just-acquired `deploy` lock, refuses before any build/push/roll call |
+| `scripts/deploy-prod.sh` (post-preflight re-check) | compute lock held? | `FAIL-CLOSED: the compute lock for ${ENV} is now held (a compute power operation started during preflight) — refusing to snapshot/roll against it.` | refuses before the snapshot/roll step; the `deploy` lock it holds is released on this exit path like any other |
 
-`terraform-cd` itself acquires `apply` naming `deploy` and `data-tier` as the
-locks it conflicts with — so a deploy or a park already in progress blocks a
-new `apply` from starting in the first place, symmetric with the table
-above (apply blocks a NEW deploy/park; an in-progress deploy/park blocks a
-new apply). See below for why this makes apply/deploy/park mutually
-exclusive, and the one path (`power.sh` compute park/unpark) that is not.
+Every refusal in the table above (and the pre-existing data-tier/apply
+re-checks it mirrors) also prints a second, remedy line pointing the
+operator at the right next step without inviting a reckless override —
+e.g. `power.sh`'s exact wording: `  If the lock named above is stale (its
+holder is confirmed dead): scripts/lock.sh ${ENV} status <name>, then
+scripts/lock.sh ${ENV} override <name> --reason "<text>" --confirm. Never
+override a lock that is still legitimately held.` A script that already
+knows the specific lock name (power-data.sh/deploy-prod.sh's per-lock
+checks) prints that name directly instead of `<name>`, e.g. `  If the
+compute lock is stale (its holder is confirmed dead): scripts/lock.sh
+${ENV} status compute, then scripts/lock.sh ${ENV} override compute
+--reason "<text>" --confirm. Never override a lock that is still
+legitimately held.` — the exact CLI forms from §4's own "Inspect"/
+"Override" examples above.
+
+`terraform-cd` itself acquires `apply` naming `deploy`, `data-tier` and
+`compute` as the locks it conflicts with — so a deploy, a park, or a compute
+power operation already in progress blocks a new `apply` from starting in
+the first place, symmetric with the table above. `scripts/deploy-prod.sh`
+likewise names `data-tier`, `apply` and `compute` as the locks it conflicts
+with (see below). See below for why this makes deploy/apply/park/compute
+mutually exclusive, and the one deliberately one-directional pair
+(`compute`/`data-tier`).
 
 **Inspect:**
 
@@ -457,7 +481,7 @@ is never treated as free (fail-closed).
 **Override (the only way to remove a lock you do not hold):**
 
 ```bash
-scripts/lock.sh <env> override <deploy|data-tier> --reason "<text>" --confirm
+scripts/lock.sh <env> override <deploy|data-tier|apply|compute> --reason "<text>" --confirm
 ```
 
 Requires both `--reason` and `--confirm`; refuses if the lock is already
@@ -543,24 +567,32 @@ The remaining effects are not a safety race; they are:
   `LOCK_RC_UNKNOWN=2`) is refused by `lock_require_free` exactly like a
   held lock — never treated as free.
 
-**The one exception: `providers/aws/scripts/power.sh`'s compute park
-(`down`)/unpark (`up`) do NOT follow acquire-then-check at all.**
-`power.sh down` only performs read-only `lock_require_free` checks against
-`deploy`/`apply` — by its own comment, "compute power-down has no lock of
-its own" — so it never acquires anything of its own for `terraform-cd` /
-`deploy-prod.sh` / `power-data.sh` to observe; an apply or deploy that
-starts strictly AFTER `power.sh down`'s check has already passed is not
-detected by anyone. `power.sh up` performs no lock check or acquisition at
-all. **In practice:** an operator running `power.sh down`/`up` cannot rely
-on it to refuse against a concurrent apply/deploy the way `power-data.sh`
-and `terraform-cd` refuse against each other — only `power.sh down`'s own
-point-in-time check narrows the window, it does not close it, and
-`power.sh up` offers no protection at all. This is a real, narrow gap
-specific to compute-only park/unpark, not the apply/deploy/data-tier trio
-above, which the acquire-then-check pattern makes provably mutually
-exclusive; it does not satisfy FR43's acquire-first requirement and is
-tracked as a separate follow-up (compute power-down does not acquire its
-own lock before checking the others).
+**`providers/aws/scripts/power.sh`'s compute park (`down`)/unpark (`up`)
+follow the same acquire-then-check pattern as `deploy`/`apply`.** Each
+acquires its own `compute` lock first (`lock_acquire_exclusive`), then
+verifies `deploy` and `apply` are free; on either being held it releases
+`compute` and refuses before any backup/stop/start call. This makes
+`compute` mutually exclusive with `deploy` and `apply` in both directions —
+a `deploy-prod.sh` run or a `terraform-cd` apply that starts after
+`power.sh` has already acquired `compute` is refused by their own
+`compute` check (see the Locks table in §3), and a `power.sh` run that
+starts after either of those already holds its lock is refused by
+`power.sh`'s own check. `compute` is deliberately checked one-directionally
+against `data-tier`: `power-data.sh`'s `down`/`up` check `compute` is free,
+but `power.sh` does not check `data-tier` — `data-tier` is held for the
+entire parked window (potentially days), and making `compute` wait on it
+would make compute power operations unusable for that whole window. This
+one-directional check only stops a park/unpark operation from STARTING
+while `compute` is held; it does not stop a compute power operation from
+starting while a park/unpark operation (or the parked state after it) is
+already under way. That is acceptable because `power.sh` only stops/
+starts the EC2 instance and triggers an on-box Mongo backup over SSM — it
+never writes RDS, ElastiCache, or Terraform state, so there is nothing for
+it to corrupt by overlapping with a data-tier operation. In practice: a
+`power.sh up` started during a park, or while already parked, starts the
+instance but then fails its own readiness poll (the app cannot reach a
+stopped/deleted RDS/Redis) and exits non-zero, releasing `compute` on the
+way out — a failed, retriable `up`, not a corrupted state.
 
 ---
 
@@ -704,8 +736,7 @@ nothing. It has never been run by CI or against any real box.
     of, which is exactly how `DOCKER_COMPOSE=/usr/bin/docker-compose` and
     `DOCKER_COMPOSE="docker-compose -f x"` (AXI-1955 follow-up) and, later,
     leading/trailing whitespace, a `sudo`/`env VAR=…` prefix, and any other
-    non-Compose override (AXI-1971 review bounce #1) all slipped an
-    earlier, narrower check.
+    non-Compose override all slipped an earlier, narrower check.
 
   **Scripts that invoke Compose but are deliberately NOT resolver-routed**
   (excluded from the UT-INFRA-519/606 scan, each for a stated reason — see
@@ -902,7 +933,10 @@ against the script, not against this table):
   readiness, `:stable` advance, lock-acquire failure); exit `2` at the
   unknown-argument, bad `--env`/`--service`/`--tag` value branches
   (the `--tag` shape check is one of these — confirmed via Read of its
-  `case "${TAG}" in [0-9a-f]{8}) ;; *) ... exit 2 ;; esac` block).
+  `case "${TAG}" in` block, whose first arm is the bash glob pattern
+  `[0-9a-f]` repeated eight times, i.e. eight lowercase hex characters;
+  `{8}` is a regex-quantifier shorthand that does not apply to a bash
+  `case` glob and is not how the source is written).
 - `scripts/seed-environment.sh`: exit `0` only at `-h|--help`; exit `1` at
   the unknown-argument/bad-`-e`-value/`compose_resolve`-failure branches
   AND at the mismatch branch (`if [ "${FAILED}" -ne 0 ]; then ... exit 1;
@@ -923,17 +957,6 @@ independently re-specified here.
 
 ## 11. Known gaps
 
-- `providers/aws/scripts/power.sh`'s compute park/unpark (`down`/`up`, §4)
-  do not acquire a lock of their own — `down` only checks `deploy`/`apply`
-  (read-only), and `up` checks nothing at all. This does not meet FR43's
-  acquire-first requirement (compute power-down must acquire its own lock
-  before checking the others) and is tracked as a separate follow-up. In
-  practice, an operator cannot rely on `power.sh` to refuse against a
-  concurrent apply/deploy the way `power-data.sh` and `terraform-cd` refuse
-  against each other. Apply, deploy, and data-tier park (`power-data.sh`)
-  ARE proven mutually exclusive by the acquire-then-check pattern (§4,
-  AXI-1967); `power.sh`'s compute-only park/unpark is the one path that
-  does not follow it.
 - AXI-1968 added `axiome-back`/`axiome-bio-compute`/`axiome-front` checkouts
   and `AXIOME_BACK_PATH` to `deploy-production.yml` (FR45/AC37), so
   `seed-environment.sh --check`'s baseline verification now has a real
@@ -1103,3 +1126,26 @@ confirm the runbook is still true:
    `providers/scaleway/README.md` → `../aws/README.md`) and confirm each
    resolves to the intended anchor/file in a rendered (GitHub) view, not
    just a path that exists on disk (UT-INFRA-387 only checks the latter).
+10. **The `compute` lock (FR43, AXI-1981)** — manual/deferred:
+    (a) with `deploy` held, run `power.sh <env> down` and confirm it
+    acquires then releases `compute` and refuses, naming `deploy`; repeat
+    for `power.sh <env> up`; (b) with `apply` held, repeat (a) for both
+    `down` and `up`, naming `apply`; (c) with `compute` held (a `power.sh`
+    run in progress), start `deploy-prod.sh` and confirm it refuses at the
+    initial lock acquire, naming `compute`; (d) with `compute` held,
+    separately start a `terraform-cd` apply and confirm the "Acquire apply
+    lock" step refuses, naming `compute`; (e) with `compute` held, run
+    `power-data.sh <env> down` and confirm it releases the data-tier lock
+    it just took and refuses, naming `compute`; (f) start `power.sh <env>
+    up` while a `power-data.sh <env> down` (park) is genuinely in progress,
+    or while already parked, and confirm the EXPECTED, ACCEPTABLE overlap
+    from §4: the instance starts but the readiness poll fails (the app
+    cannot reach a stopped/deleted RDS/Redis), exiting non-zero with
+    `compute` released — not a corrupted state; (g) with a `compute` lock
+    stale from a dead run, confirm `scripts/lock.sh <env> status compute`
+    shows `HELD by … (age …s)`, then (only once the holder is confirmed
+    dead) `scripts/lock.sh <env> override compute --reason "<text>"
+    --confirm` clears it and a subsequent `power.sh <env> up` proceeds;
+    (h) run `power-up-all.sh <env> --yes` end to end against a real
+    environment and confirm each lock (`data-tier`, then `compute`) is
+    acquired and released in turn, never both held at once, per §4/§6.

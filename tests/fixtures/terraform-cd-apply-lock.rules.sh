@@ -1,8 +1,9 @@
 # shellcheck shell=bash
 # Fixture for the aws stub — exercises terraform-cd.yml's REAL "Acquire
 # apply lock" step `run:` text (tests/lock_terraform_cd_apply_lock.bats,
-# AXI-1967), acquiring 'apply' as its own lock and checking 'deploy' and
-# 'data-tier' as the others, all under the production bucket. UT-INFRA-423/424.
+# AXI-1967; extended to `compute` by AXI-1981), acquiring 'apply' as its
+# own lock and checking 'deploy', 'data-tier' and 'compute' as the others,
+# all under the production bucket. UT-INFRA-423/424.
 stub_respond() {
   local argv="$1" outfile
   outfile="${argv##* }"
@@ -36,6 +37,15 @@ stub_respond() {
       return 254
       ;;
     *"get-object"*"locks/data-tier.json"*)
+      echo "An error occurred (404) when calling the GetObject operation: Not Found"
+      return 254
+      ;;
+    *"get-object"*"locks/compute.json"*)
+      if [ "${TF_APPLY_LOCK_FIXTURE_COMPUTE_STATE:-free}" = "held" ]; then
+        printf '%s' '{"name":"compute","actor":"ops@example.com","operation":"compute-down","host":"h","acquired_at":"2026-10-10T10:00:00Z","token":"t"}' > "${outfile}"
+        echo '{"ETag":"\"cp1\""}'
+        return 0
+      fi
       echo "An error occurred (404) when calling the GetObject operation: Not Found"
       return 254
       ;;

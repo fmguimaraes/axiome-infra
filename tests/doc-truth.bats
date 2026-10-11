@@ -109,10 +109,24 @@ setup() {
     "providers/aws/scripts/power-data.sh|ABORT: could not acquire the data-tier lock"
     # AXI-1977 Part 2 additions — every new verbatim message/exit code the
     # runbook now quotes, checked against its own script source.
-    "providers/aws/scripts/power.sh|ABORT: the apply lock for \${ENV} is held — refusing to stop compute while a Terraform apply is in progress."
-    "providers/aws/scripts/power-data.sh|ABORT: the apply lock is held — releasing the data-tier lock just acquired and refusing to park while a Terraform apply is in progress."
-    "providers/aws/scripts/power-data.sh|ABORT: the apply lock for \${ENV} is held — refusing to start/recreate the data tier while a Terraform apply is in progress. Re-run '\$0 \${ENV} up' once the apply finishes."
-    "providers/aws/scripts/power-data.sh|ABORT: the apply lock is held — refusing to unpark while a Terraform apply is in progress. The data-tier lock itself is untouched (it is this park's own lock)."
+    # AXI-1981 (FR43): power.sh now acquires its OWN compute lock first
+    # (acquire-then-check, same lock_acquire_exclusive helper), so its old
+    # per-lock ABORT text is gone — these are its current, generic messages.
+    "providers/aws/scripts/power.sh|ABORT: could not acquire the compute lock for \${ENV}, or the deploy/apply lock is held — refusing to stop compute. See above for which lock is held."
+    "providers/aws/scripts/power.sh|ABORT: could not acquire the compute lock for \${ENV}, or the deploy/apply lock is held — refusing to start compute. See above for which lock is held."
+    "providers/aws/scripts/power-data.sh|ABORT: the compute lock is held — releasing the data-tier lock just acquired and refusing to park while a compute power operation is in progress."
+    "providers/aws/scripts/power-data.sh|ABORT: the compute lock for \${ENV} is held — refusing to start/recreate the data tier while a compute power operation is in progress. Re-run '\$0 \${ENV} up' once it finishes."
+    "providers/aws/scripts/power-data.sh|ABORT: the compute lock is held — refusing to unpark while a compute power operation is in progress. The data-tier lock itself is untouched (it is this park's own lock)."
+    # Review bounce #1 (item 3): a stale lock blocking power.sh up during
+    # an incident had no remedy printed — every acquire-refusal now also
+    # prints a status/override pointer, worded not to invite overriding a
+    # lock that is still legitimately held. Checked against all three
+    # scripts that print it; the shared tail (never the escaped
+    # --reason "<text>" portion, which differs byte-for-byte between the
+    # script source and prose) is the dual-checked substring.
+    "providers/aws/scripts/power.sh|Never override a lock that is still legitimately held."
+    "providers/aws/scripts/power-data.sh|Never override a lock that is still legitimately held."
+    "scripts/deploy-prod.sh|Never override a lock that is still legitimately held."
     "scripts/lock.sh|ERROR: acquire of '\${name}' REFUSED — the given --operation resembles a secret-shaped string"
     "scripts/lock.sh|ERROR: lock_mark_for_auto_release refuses 'data-tier' (FR29)"
     "providers/aws/onbox/mongo-backup.sh|ERROR: MONGO_ROOT_PASSWORD contains a newline, a carriage return, or another control character"
@@ -121,7 +135,10 @@ setup() {
     "scripts/deploy-prod.sh|The given value also looks secret-shaped, so it is not printed here"
     "scripts/deploy-prod.sh|expected exactly 8 lowercase hex characters, e.g. 'a1b2c3d4'"
     # §3's Locks table quotes this deploy-lock-acquisition refusal verbatim.
-    "scripts/deploy-prod.sh|could not acquire the deploy lock for \${ENV}, or the data-tier/apply lock is held"
+    # AXI-1981: extended to name 'compute' too (FR43).
+    "scripts/deploy-prod.sh|could not acquire the deploy lock for \${ENV}, or the data-tier/apply/compute lock is held"
+    # AXI-1981: the post-preflight compute re-check deploy-prod.sh added.
+    "scripts/deploy-prod.sh|the compute lock for \${ENV} is now held (a compute power operation started during preflight) — refusing to snapshot/roll against it."
   )
   # The runbook's own text, markdown-stripped and whitespace-collapsed —
   # this, not a copy in this test, is what each dual-checked needle is
@@ -246,6 +263,9 @@ def slug(h):
 
 slugs = {slug(h) for h in headings}
 anchors = re.findall(r'\]\(#([a-z0-9-]+)\)', doc)
+if not anchors:
+    print('no internal anchor links found at all — the regex may have stopped matching')
+    sys.exit(1)
 missing = [a for a in anchors if a not in slugs]
 if missing:
     print('missing: ' + ', '.join(sorted(set(missing))))
@@ -278,6 +298,7 @@ def slug(h):
 slugs = {slug(h) for h in headings}
 
 missing = []
+found_any = False
 for path in glob.glob(os.path.join(infra_root, '**/*.md'), recursive=True):
     if os.path.abspath(path) == os.path.abspath(runbook):
         continue
@@ -285,10 +306,14 @@ for path in glob.glob(os.path.join(infra_root, '**/*.md'), recursive=True):
     # a markdown link whose target ends in platform-lifecycle-operations.md
     # (any relative path to it) followed by a #anchor fragment.
     for m in re.finditer(r'\]\(([^)]*platform-lifecycle-operations\.md)#([a-z0-9-]+)\)', text):
+        found_any = True
         anchor = m.group(2)
         if anchor not in slugs:
             missing.append('%s -> #%s' % (path, anchor))
 
+if not found_any:
+    print('no cross-file links into the runbook were found at all — the regex may have stopped matching')
+    sys.exit(1)
 if missing:
     print('missing: ' + ', '.join(sorted(set(missing))))
     sys.exit(1)

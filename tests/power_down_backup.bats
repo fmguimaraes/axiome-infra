@@ -43,6 +43,23 @@ refute_stub_called_with() {
   assert_stub_called aws "stop-instances"
 }
 
+# UT-INFRA-594 (AXI-1981, FR43): new for this story — a successful down
+# acquires its OWN compute lock AND releases it before exiting (via the
+# same lock_mark_for_auto_release + lock_install_exit_trap mechanism
+# deploy-prod.sh/power-data.sh use) — the lock is not left behind on the
+# happy path either.
+@test "UT-INFRA-594: power.sh down acquires and then releases the compute lock on a successful run" {
+  stub_use_rules aws "${TESTS_DIR}/fixtures/power-down-backup-ok.rules.sh"
+
+  run "${INFRA_ROOT}/providers/aws/scripts/power.sh" dev down
+  local power_output="$output"
+
+  assert_success
+  assert_stub_called aws "delete-object"
+  printf '%s' "$power_output" | grep -qF "RELEASED compute" \
+    || fail "expected 'RELEASED compute' in output, got: ${power_output}"
+}
+
 # UT-INFRA-181: a failed backup refuses the stop outright (no override given).
 @test "UT-INFRA-181: power.sh down refuses to stop compute when the backup fails (FR31)" {
   stub_use_rules aws "${TESTS_DIR}/fixtures/power-down-backup-fail.rules.sh"
@@ -52,6 +69,24 @@ refute_stub_called_with() {
   assert_failure
   assert_output --partial "backup not verified"
   refute_stub_called_with aws "stop-instances"
+}
+
+# UT-INFRA-636 (AXI-1981, FR43): new for this story — compute is also
+# released when the OPERATION ITSELF fails AFTER the lock was already
+# acquired (the backup-verification refusal, UT-INFRA-181's own path) —
+# not just on the two "other lock held" refusals above, which release
+# before ever reaching the backup step.
+@test "UT-INFRA-636: power.sh down releases the compute lock when the backup fails, after having acquired it" {
+  stub_use_rules aws "${TESTS_DIR}/fixtures/power-down-backup-fail.rules.sh"
+
+  run "${INFRA_ROOT}/providers/aws/scripts/power.sh" dev down
+  local power_output="$output"
+
+  assert_failure
+  assert_output --partial "backup not verified"
+  assert_stub_called aws "delete-object"
+  printf '%s' "$power_output" | grep -qF "RELEASED compute" \
+    || fail "expected 'RELEASED compute' in output, got: ${power_output}"
 }
 
 # UT-INFRA-182: --skip-backup with a real reason stops anyway, audited.
@@ -169,30 +204,95 @@ refute_stub_called_with() {
   refute_stub_called_with aws "stop-instances"
 }
 
-# UT-INFRA-414 (AXI-1967, FR43): power.sh down has no lock of its own — it
-# only checks deploy/apply are free, BEFORE the FR31 backup step (no
-# head-object/stop-instances call is ever reached).
-@test "UT-INFRA-414: power.sh down refuses to stop compute when the deploy lock is held (FR43)" {
+# UT-INFRA-414 (CHANGED by AXI-1981, FR43) — power.sh down now acquires its
+# OWN compute lock FIRST (acquire-then-check, same lock_acquire_exclusive
+# helper deploy-prod.sh/power-data.sh use), not the old "no lock of its own,
+# only check deploy/apply" shape. So this now DOES touch locks/compute.json
+# — it is acquired, then released (RELEASED compute / delete-object) when
+# deploy is found held, leaving nothing behind. Assertions updated to match
+# (the exact message changed from "the deploy lock ... is held" to
+# lock_acquire_exclusive's own "'deploy' is not free" / "releasing
+# 'compute' and refusing"); still no head-object/stop-instances call is
+# ever reached.
+@test "UT-INFRA-414: power.sh down acquires then releases the compute lock when the deploy lock is held (FR43)" {
   stub_use_rules aws "${TESTS_DIR}/fixtures/power-down-backup-ok.rules.sh"
   export POWER_FIXTURE_DEPLOY_STATE=held
 
   run "${INFRA_ROOT}/providers/aws/scripts/power.sh" dev down
 
   assert_failure
-  assert_output --partial "deploy lock"
+  assert_output --partial "'deploy' is not free"
+  assert_output --partial "releasing 'compute' and refusing"
+  assert_output --partial "RELEASED compute"
+  assert_stub_called aws "delete-object"
   refute_stub_called_with aws "head-object"
   refute_stub_called_with aws "stop-instances"
 }
 
-# UT-INFRA-415 (AXI-1967, FR43): same, for the apply lock.
-@test "UT-INFRA-415: power.sh down refuses to stop compute when the apply lock is held (FR43)" {
+# UT-INFRA-593 (AXI-1981, FR43): new for this story — a deploy-lock check
+# that cannot determine state at all (a transport error, not a clean
+# "Not Found") is refused by lock_require_free exactly like a held lock
+# (LOCK_RC_UNKNOWN is never treated as free, NFR2) — same release/refuse
+# shape as UT-INFRA-414.
+@test "UT-INFRA-593: power.sh down acquires then releases the compute lock when the deploy lock state is UNKNOWN (FR43)" {
+  stub_use_rules aws "${TESTS_DIR}/fixtures/power-down-backup-ok.rules.sh"
+  export POWER_FIXTURE_DEPLOY_STATE=unknown
+
+  run "${INFRA_ROOT}/providers/aws/scripts/power.sh" dev down
+
+  assert_failure
+  assert_output --partial "'deploy' is not free"
+  assert_output --partial "releasing 'compute' and refusing"
+  assert_output --partial "RELEASED compute"
+  assert_stub_called aws "delete-object"
+  refute_stub_called_with aws "head-object"
+  refute_stub_called_with aws "stop-instances"
+}
+
+# UT-INFRA-415 (CHANGED by AXI-1981, FR43): same, for the apply lock.
+@test "UT-INFRA-415: power.sh down acquires then releases the compute lock when the apply lock is held (FR43)" {
   stub_use_rules aws "${TESTS_DIR}/fixtures/power-down-backup-ok.rules.sh"
   export POWER_FIXTURE_APPLY_STATE=held
 
   run "${INFRA_ROOT}/providers/aws/scripts/power.sh" dev down
 
   assert_failure
-  assert_output --partial "apply lock"
+  assert_output --partial "'apply' is not free"
+  assert_output --partial "releasing 'compute' and refusing"
+  assert_output --partial "RELEASED compute"
+  assert_stub_called aws "delete-object"
   refute_stub_called_with aws "head-object"
   refute_stub_called_with aws "stop-instances"
+}
+
+# UT-INFRA-640 (AXI-1981, FR43): new for this story — the compute lock is
+# released and the process exits non-zero when TERM is delivered WHILE a
+# stubbed aws call (the SSM backup send-command, the first genuinely
+# in-flight call after compute is acquired) is actually in progress.
+# Signalled on a STUB-LOG MARKER (the send-command argv actually being
+# logged), never a bare sleep race — same deterministic pattern as
+# tests/asset-sync.bats's UT-INFRA-585 and tests/lock_cleanup.bats's
+# UT-INFRA-536.
+@test "UT-INFRA-640: power.sh down releases the compute lock and exits non-zero when TERM arrives mid-backup (stub-log-marker timing)" {
+  stub_use_rules aws "${TESTS_DIR}/fixtures/power-down-slow-ssm.rules.sh"
+
+  setsid "${INFRA_ROOT}/providers/aws/scripts/power.sh" dev down &
+  local pid=$!
+  local tries=0
+  while ! grep -qx "send-command" "$STUB_LOG" 2>/dev/null; do
+    tries=$((tries + 1))
+    if [ "$tries" -gt 1000 ]; then
+      kill -TERM -- "-$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      fail "the slow send-command call was never reached — cannot exercise the in-flight abort path"
+    fi
+    sleep 0.005
+  done
+  kill -TERM -- "-$pid" 2>/dev/null || true
+  local rc=0
+  wait "$pid" || rc=$?
+
+  [ "$rc" -ne 0 ]
+  run grep -c "^delete-object$" "$STUB_LOG"
+  [ "$output" -ge 1 ]
 }

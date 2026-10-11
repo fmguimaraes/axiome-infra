@@ -130,3 +130,21 @@ refute_stub_called_with() {
   refute_stub_called_with aws "locks/data-tier.json"
   refute_stub_called_with aws "start-db-instance"
 }
+
+# UT-INFRA-589 (AXI-1981, FR43): new for this story — the compute lock is
+# held (a power.sh down/up is in progress) — up must refuse before any
+# RDS/Redis mutation, and must never touch the data-tier lock, same shape
+# as the existing deploy/apply checks above.
+@test "UT-INFRA-589: power-data.sh up refuses when the compute lock is held, never touching data-tier (FR43)" {
+  stub_use_rules aws "${TESTS_DIR}/fixtures/power-data-up-ok.rules.sh"
+  export POWER_DATA_FIXTURE_COMPUTE_STATE=held
+  export DATA_UP_TIMEOUT=5
+  export DATA_UP_POLL_INTERVAL=1
+
+  run "${INFRA_ROOT}/providers/aws/scripts/power-data.sh" dev up
+
+  assert_failure
+  assert_output --partial "the compute lock"
+  refute_stub_called_with aws "locks/data-tier.json"
+  refute_stub_called_with aws "start-db-instance"
+}

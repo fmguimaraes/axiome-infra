@@ -89,6 +89,21 @@ assert_stub_not_called_substring() {
   assert_stub_not_called_substring "describe-images"
 }
 
+# UT-INFRA-590 (AXI-1981, FR43): new for this story — same acquire-then-
+# check shape as UT-INFRA-333 above, for the new 'compute' name: a
+# power.sh down/up in progress refuses a deploy, releasing the
+# just-acquired deploy lock, leaving nothing behind.
+@test "UT-INFRA-590: deploy-prod.sh acquires then releases the deploy lock when compute is held (FR43)" {
+  export DEPLOY_FIXTURE_COMPUTE_STATE=held
+  run "$SCRIPT"
+  assert_failure
+  assert_output --partial "compute"
+  run grep -F "locks/deploy.json" "$STUB_LOG"
+  assert_success
+  assert_stub_called aws "delete-object"
+  assert_stub_not_called_substring "describe-images"
+}
+
 # UT-INFRA-334 — EC13: a frontend deploy skips the migrate/snapshot/baseline
 # steps but still takes the lock, rolls and advances :stable.
 @test "UT-INFRA-334: deploy-prod.sh skips migrate/snapshot/baseline for a non-backend service (EC13)" {
@@ -531,6 +546,20 @@ EOF
   assert_failure
   assert_output --partial "Re-checking the data-tier lock"
   assert_output --partial "now held (parked during preflight)"
+  assert_stub_not_called_substring "put-image"
+  assert_stub_not_called_substring "rds create-db-snapshot"
+}
+
+# UT-INFRA-591 (AXI-1981, FR43): new for this story — same post-preflight
+# re-check shape as UT-INFRA-379 above, for the new 'compute' lock: a
+# power.sh down/up that starts strictly DURING preflight is caught by the
+# re-check, before the snapshot/roll step.
+@test "UT-INFRA-591: deploy-prod.sh re-checks the compute lock after preflight and before snapshot/roll" {
+  export DEPLOY_FIXTURE_COMPUTE_STATE_RACE_FILE="${BATS_TEST_TMPDIR}/compute-race"
+  run "$SCRIPT"
+  assert_failure
+  assert_output --partial "Re-checking the compute lock"
+  assert_output --partial "now held (a compute power operation started during preflight)"
   assert_stub_not_called_substring "put-image"
   assert_stub_not_called_substring "rds create-db-snapshot"
 }

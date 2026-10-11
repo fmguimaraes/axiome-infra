@@ -22,6 +22,7 @@
 #   DEPLOY_FIXTURE_SOURCE_DIGEST / _STABLE_DIGEST  default sha256:source / sha256:priorstable
 #   DEPLOY_FIXTURE_RETAG_RC                       put-image :stable exit code (0)
 #   DEPLOY_FIXTURE_DATATIER_STATE  free|held       (free)
+#   DEPLOY_FIXTURE_COMPUTE_STATE   free|held       (free; AXI-1981)
 #   DEPLOY_FIXTURE_DEPLOY_LOCK_STATE free|held     (free)
 #   DEPLOY_FIXTURE_LOCK_TOKEN_FILE                 scratch file this fixture
 #                                                   uses to remember the REAL
@@ -119,6 +120,29 @@ stub_respond() {
         local a_outfile="${argv##* }"
         printf '%s' '{"name":"apply","actor":"ci-apply@example.com","operation":"terraform apply run=1","host":"h","acquired_at":"2026-10-10T00:00:00Z","token":"t"}' > "${a_outfile}"
         echo '{"ETag":"\"ap\""}'
+        return 0
+      fi
+      echo "An error occurred (404) when calling the GetObject operation: Not Found"
+      return 254 ;;
+
+    *"get-object"*"locks/compute.json"*)
+      # AXI-1981 (FR42/FR43): same race-file/state shape as data-tier/apply
+      # above, for the new compute lock. DEPLOY_FIXTURE_COMPUTE_STATE
+      # free|held (default free); DEPLOY_FIXTURE_COMPUTE_STATE_RACE_FILE
+      # simulates a compute power operation starting BETWEEN the two
+      # lock_require_free calls.
+      local c_race_file="${DEPLOY_FIXTURE_COMPUTE_STATE_RACE_FILE:-}" c_state="${DEPLOY_FIXTURE_COMPUTE_STATE:-free}"
+      if [ -n "${c_race_file}" ]; then
+        local cn=0
+        [ -f "${c_race_file}" ] && cn="$(cat "${c_race_file}")"
+        cn=$((cn + 1))
+        printf '%s' "${cn}" > "${c_race_file}"
+        [ "${cn}" -gt 1 ] && c_state="held"
+      fi
+      if [ "${c_state}" = "held" ]; then
+        local c_outfile="${argv##* }"
+        printf '%s' '{"name":"compute","actor":"ops@example.com","operation":"compute-down","host":"h","acquired_at":"2026-10-10T00:00:00Z","token":"t"}' > "${c_outfile}"
+        echo '{"ETag":"\"cp\""}'
         return 0
       fi
       echo "An error occurred (404) when calling the GetObject operation: Not Found"

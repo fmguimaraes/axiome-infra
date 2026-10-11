@@ -17,6 +17,31 @@
 #   restart: unless-stopped. Images already live on EBS, so there is no ECR
 #   pull — start is boot + container warm-up only.
 #
+# LOCKING (FR43, AXI-1981, scripts/lock.sh): `down` and `up` each acquire
+# their OWN `compute` lock first (lock_acquire_exclusive — same helper
+# deploy-prod.sh/power-data.sh/terraform-cd use) and only then verify
+# `deploy`/`apply` are free; on either being held this releases `compute`
+# itself (this run's own just-acquired token, never anyone else's) and
+# refuses, naming the holder, before the backup step, any instance
+# start/stop, or the health poll. `compute` is held for the rest of the
+# action and released on every exit path — success, a later failure, or a
+# signal (TERM/INT) — via lock_mark_for_auto_release + lock_install_exit_trap,
+# never a blind trap. `status` is read-only and takes no lock. `compute` is
+# deliberately NOT checked against `data-tier`: power-data.sh's `down` holds
+# `data-tier` for the entire parked window (days), so making a compute
+# operation wait on it would make compute power ops unusable while data is
+# parked; power-data.sh's own `down`/`up` instead check `compute` is free
+# (the narrower rule — see that script's header). This is ONE-DIRECTIONAL:
+# it stops a park/unpark operation from starting while `compute` is held,
+# but does NOT stop THIS script from starting while a park/unpark
+# operation (or the parked state after it) is already under way — this
+# script never checks `data-tier`. That is acceptable because this script
+# only stops/starts the EC2 instance and triggers an on-box Mongo backup
+# over SSM; it never writes RDS, ElastiCache, or Terraform state. The
+# practical outcome: an `up` started during/after a park fails its own
+# readiness poll (the app cannot reach a stopped/deleted RDS/Redis),
+# exiting non-zero with `compute` released — not a corrupted state.
+#
 # Usage:  ./power.sh <dev|staging|production> <up|down|status>
 #         ./power.sh <dev|staging|production> down --skip-backup "<reason>"
 #           (FR31 override — compute is stopped WITHOUT a verified backup;
@@ -196,17 +221,24 @@ case "$ACTION" in
     ;;
 
   down)
-    # FR43 (AXI-1967): compute power-down has no lock of its own — it only
-    # refuses when deploy or apply is held, checked BEFORE the backup step
-    # (before anything else in this action).
-    if ! lock_require_free "$ENV" deploy; then
-      echo "ABORT: the deploy lock for ${ENV} is held — refusing to stop compute while a deploy is in progress." >&2
+    # FR43 (AXI-1981): compute power-down now takes its OWN lock first
+    # (acquire-then-check, same lock_acquire_exclusive helper deploy/apply/
+    # data-tier already use), and only then verifies deploy/apply are free.
+    # On a held deploy/apply this releases 'compute' itself (the token this
+    # call just acquired, never anyone else's) and refuses, naming the
+    # holder, before the backup step or any AWS mutation. compute is held
+    # for the rest of this action and released on every exit path —
+    # success, a later failure, or a signal — via lock_mark_for_auto_release
+    # + lock_install_exit_trap (installed LAST, after any other setup).
+    COMPUTE_LOCK_OUT="$(lock_acquire_exclusive "$ENV" compute "compute-down" deploy apply)" || {
+      echo "ABORT: could not acquire the compute lock for ${ENV}, or the deploy/apply lock is held — refusing to stop compute. See above for which lock is held." >&2
+      echo "  If the lock named above is stale (its holder is confirmed dead): scripts/lock.sh ${ENV} status <name>, then scripts/lock.sh ${ENV} override <name> --reason \"<text>\" --confirm. Never override a lock that is still legitimately held." >&2
       exit 1
-    fi
-    if ! lock_require_free "$ENV" apply; then
-      echo "ABORT: the apply lock for ${ENV} is held — refusing to stop compute while a Terraform apply is in progress." >&2
-      exit 1
-    fi
+    }
+    echo "$COMPUTE_LOCK_OUT"
+    COMPUTE_LOCK_TOKEN="$(printf '%s\n' "$COMPUTE_LOCK_OUT" | sed -n 's/.*token=\([^ ]*\).*/\1/p')"
+    lock_mark_for_auto_release "$ENV" compute "$COMPUTE_LOCK_TOKEN"
+    lock_install_exit_trap
 
     pl_report_init "$ENV" "compute-down"
     pl_report_section "Before"; pl_report_line "EC2 ${IID}: $(state)"
@@ -251,6 +283,21 @@ case "$ACTION" in
     ;;
 
   up)
+    # FR43 (AXI-1981): same acquire-then-check as 'down' above — compute
+    # takes its OWN lock first, then verifies deploy/apply are free, before
+    # starting the instance or polling readiness. Released on every exit
+    # path (success, health-timeout failure, or a signal) via the same
+    # lock_mark_for_auto_release + lock_install_exit_trap pair.
+    COMPUTE_LOCK_OUT="$(lock_acquire_exclusive "$ENV" compute "compute-up" deploy apply)" || {
+      echo "ABORT: could not acquire the compute lock for ${ENV}, or the deploy/apply lock is held — refusing to start compute. See above for which lock is held." >&2
+      echo "  If the lock named above is stale (its holder is confirmed dead): scripts/lock.sh ${ENV} status <name>, then scripts/lock.sh ${ENV} override <name> --reason \"<text>\" --confirm. Never override a lock that is still legitimately held." >&2
+      exit 1
+    }
+    echo "$COMPUTE_LOCK_OUT"
+    COMPUTE_LOCK_TOKEN="$(printf '%s\n' "$COMPUTE_LOCK_OUT" | sed -n 's/.*token=\([^ ]*\).*/\1/p')"
+    lock_mark_for_auto_release "$ENV" compute "$COMPUTE_LOCK_TOKEN"
+    lock_install_exit_trap
+
     pl_report_init "$ENV" "compute-up"
     pl_report_section "Before"; pl_report_line "EC2 ${IID}: $(state)"
     start_epoch="$(date +%s)"

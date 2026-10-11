@@ -96,6 +96,23 @@ print('OK')
   assert_output "0"
 }
 
+# UT-INFRA-592 (AXI-1981, FR43): new for this story — the SAME real run:
+# text, executed when 'compute' is held (a power.sh down/up is in
+# progress), exits non-zero and writes NO token to \$GITHUB_ENV, same
+# shape as UT-INFRA-424 for 'deploy'.
+@test "UT-INFRA-592: the acquire-apply-lock step's run text refuses and records no token when compute is held" {
+  stub_use_rules aws "${TESTS_DIR}/fixtures/terraform-cd-apply-lock.rules.sh"
+  export TF_APPLY_LOCK_FIXTURE_COMPUTE_STATE=held
+  local script
+  script="$(py_step_run 'Acquire apply lock (FR42/FR43, AC34)')"
+
+  run bash -c "cd '${INFRA_ROOT}' && GITHUB_ENV='${GITHUB_ENV}' bash -c \"\$1\"" _ "${script//\$\{\{ github.run_id \}\}/1}"
+
+  assert_failure
+  run grep -c "^APPLY_LOCK_TOKEN=" "${GITHUB_ENV}"
+  assert_output "0"
+}
+
 # UT-INFRA-425: the release step's run: text releases the token it finds
 # in APPLY_LOCK_TOKEN, and no-ops cleanly (exit 0, no lock.sh call at all)
 # when the env var was never set (the acquire step refused earlier).

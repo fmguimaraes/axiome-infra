@@ -57,6 +57,35 @@
 #   whether `deploy`/`apply` is free (network/CLI error, rc=2) is treated
 #   the same as held — never as free.
 #
+#   `compute` (FR43, AXI-1981): `down` and `up` ALSO check `compute` is
+#   free, same acquire-then-check order as `deploy`/`apply` above —
+#   `data-tier` is acquired/held FIRST, then `deploy`/`apply`/`compute` are
+#   all required free. This is deliberately ONE-DIRECTIONAL, and narrower
+#   than full mutual exclusion: `providers/aws/scripts/power.sh down`/`up`
+#   do NOT check `data-tier` back. `data-tier` is held for the ENTIRE
+#   parked window (days — see above, `up` releases it only after both
+#   tiers verify available), so making a compute power operation wait on
+#   it would make compute power ops unusable for the whole time data is
+#   parked, which is not the intended behaviour (box maintenance during a
+#   long idle window must still work).
+#
+#   What this one-directional check actually buys: it stops a park/unpark
+#   OPERATION (this script's `down`/`up` invocation) from STARTING while a
+#   compute power operation already holds `compute`. It does NOT stop a
+#   compute power operation from starting while a park/unpark operation
+#   (or the long parked state after it) is already under way — `power.sh`
+#   never checks `data-tier`, so the two CAN run concurrently in that
+#   direction. This is acceptable because `power.sh` only stops/starts the
+#   EC2 instance and triggers an on-box Mongo backup over SSM; it never
+#   writes RDS, ElastiCache, or Terraform state, so there is nothing for it
+#   to corrupt by running alongside a data-tier operation. The practical
+#   outcome of that overlap: a `power.sh up` started while a park (`down`)
+#   is mid-flight, or while data is already parked, starts the instance
+#   but then fails its own readiness poll (the app cannot reach a stopped/
+#   deleted RDS/Redis) and exits non-zero, releasing `compute` on the way
+#   out — not a corrupted or partially-applied state, just a failed,
+#   retriable `up`.
+#
 # Usage:  ./power-data.sh <dev|staging|production> <down|up|status>
 # Env overrides: AWS_REGION, AXIOME_PROJECT, AXIOME_SYSTEM_BUCKET, REPORTS_DIR,
 #                DATA_UP_TIMEOUT (seconds, default 1200), DATA_UP_POLL_INTERVAL
@@ -343,11 +372,21 @@ case "$ACTION" in
     # lock, never a shared record this run did not create.
     if ! lock_require_free "$ENV" deploy; then
       echo "ABORT: the deploy lock is held — releasing the data-tier lock just acquired and refusing to park while a deploy is in progress." >&2
+      echo "  If the deploy lock is stale (its holder is confirmed dead): scripts/lock.sh ${ENV} status deploy, then scripts/lock.sh ${ENV} override deploy --reason \"<text>\" --confirm. Never override a lock that is still legitimately held." >&2
       _power_data_release_or_warn data-tier "$TOKEN"
       exit 1
     fi
     if ! lock_require_free "$ENV" apply; then
       echo "ABORT: the apply lock is held — releasing the data-tier lock just acquired and refusing to park while a Terraform apply is in progress." >&2
+      echo "  If the apply lock is stale (its holder is confirmed dead): scripts/lock.sh ${ENV} status apply, then scripts/lock.sh ${ENV} override apply --reason \"<text>\" --confirm. Never override a lock that is still legitimately held." >&2
+      _power_data_release_or_warn data-tier "$TOKEN"
+      exit 1
+    fi
+    # FR43 (AXI-1981): same check, for the new compute lock — a compute
+    # power operation in flight must not race a park starting underneath it.
+    if ! lock_require_free "$ENV" compute; then
+      echo "ABORT: the compute lock is held — releasing the data-tier lock just acquired and refusing to park while a compute power operation is in progress." >&2
+      echo "  If the compute lock is stale (its holder is confirmed dead): scripts/lock.sh ${ENV} status compute, then scripts/lock.sh ${ENV} override compute --reason \"<text>\" --confirm. Never override a lock that is still legitimately held." >&2
       _power_data_release_or_warn data-tier "$TOKEN"
       exit 1
     fi
@@ -450,12 +489,22 @@ case "$ACTION" in
       report_line "ABORT: the deploy lock is held — refusing to unpark while a deploy is in progress. The data-tier lock itself is untouched (it is this park's own lock)."
       report_finish "failed-deploy-held"
       echo "ABORT: the deploy lock for ${ENV} is held — refusing to start/recreate the data tier while a deploy is in progress. Re-run '$0 ${ENV} up' once the deploy finishes." >&2
+      echo "  If the deploy lock is stale (its holder is confirmed dead): scripts/lock.sh ${ENV} status deploy, then scripts/lock.sh ${ENV} override deploy --reason \"<text>\" --confirm. Never override a lock that is still legitimately held." >&2
       exit 1
     fi
     if ! lock_require_free "$ENV" apply; then
       report_line "ABORT: the apply lock is held — refusing to unpark while a Terraform apply is in progress. The data-tier lock itself is untouched (it is this park's own lock)."
       report_finish "failed-apply-held"
       echo "ABORT: the apply lock for ${ENV} is held — refusing to start/recreate the data tier while a Terraform apply is in progress. Re-run '$0 ${ENV} up' once the apply finishes." >&2
+      echo "  If the apply lock is stale (its holder is confirmed dead): scripts/lock.sh ${ENV} status apply, then scripts/lock.sh ${ENV} override apply --reason \"<text>\" --confirm. Never override a lock that is still legitimately held." >&2
+      exit 1
+    fi
+    # FR43 (AXI-1981): same check, for the new compute lock.
+    if ! lock_require_free "$ENV" compute; then
+      report_line "ABORT: the compute lock is held — refusing to unpark while a compute power operation is in progress. The data-tier lock itself is untouched (it is this park's own lock)."
+      report_finish "failed-compute-held"
+      echo "ABORT: the compute lock for ${ENV} is held — refusing to start/recreate the data tier while a compute power operation is in progress. Re-run '$0 ${ENV} up' once it finishes." >&2
+      echo "  If the compute lock is stale (its holder is confirmed dead): scripts/lock.sh ${ENV} status compute, then scripts/lock.sh ${ENV} override compute --reason \"<text>\" --confirm. Never override a lock that is still legitimately held." >&2
       exit 1
     fi
 

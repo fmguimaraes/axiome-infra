@@ -332,3 +332,23 @@ EOF
   run grep -cx "delete-object" "$STUB_LOG"
   assert_output "1"
 }
+
+# UT-INFRA-644 (review bounce #1, item 4): _lock_usage used to be a
+# hard-coded `sed -n '36,39p'` line range, which a header edit already
+# shifted once silently. This pins the OUTPUT CONTENT instead of line
+# numbers: the usage text must mention all four subcommands and all four
+# lock names, so the next header edit cannot silently print the wrong
+# lines without this test catching it.
+@test "UT-INFRA-644: lock.sh usage (no args) lists all four subcommands and all four lock names" {
+  run "${INFRA_ROOT}/scripts/lock.sh"
+
+  assert_failure
+  assert_output --partial "acquire"
+  assert_output --partial "release"
+  assert_output --partial "status"
+  assert_output --partial "override"
+  assert_output --partial "deploy"
+  assert_output --partial "data-tier"
+  assert_output --partial "apply"
+  assert_output --partial "compute"
+}
