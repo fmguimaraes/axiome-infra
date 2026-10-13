@@ -306,7 +306,7 @@ wt_backup_shared_postgres() {
   dump="${WT_BACKUP_DIR}/axiome-localhost-$(date -u +%Y%m%dT%H%M%SZ).sql"
   err="${dump}.err"
   log "Backing up Postgres DB \"${PG_ADMIN_DB}\" to ${dump}"
-  if ! docker exec -T "${WT_PG_HOST_CONTAINER}" pg_dump -U "${PG_USER}" -d "${PG_ADMIN_DB}" >"${dump}" 2>"${err}"; then
+  if ! docker exec "${WT_PG_HOST_CONTAINER}" pg_dump -U "${PG_USER}" -d "${PG_ADMIN_DB}" >"${dump}" 2>"${err}"; then
     warn "backup command failed (see ${err})"; rm -f "${dump}"; return 1
   fi
   if [ ! -s "${dump}" ]; then
