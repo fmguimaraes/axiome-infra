@@ -40,7 +40,12 @@ set -uo pipefail
 # No `set -e`: an SSM failure must fall through to "keep existing file",
 # not abort before that decision is made.
 
-PRESERVE_KEYS="BACKEND_IMAGE_TAG BIOCOMPUTE_IMAGE_TAG FRONTEND_IMAGE_TAG ENVIRONMENT PROJECT_NAME ECR_REGISTRY FQDN"
+# AXI-2080 (SI-041): BIOCOMPUTE_IMAGE_DIGEST joins the image-identity keys
+# above — like them, it is recorded locally by roll-service.sh and is never
+# published to SSM, so it must be preserved the same way or a refresh with
+# no digest key in SSM would fail outright (compose_new_env requires every
+# non-preserved key to resolve from SSM).
+PRESERVE_KEYS="BACKEND_IMAGE_TAG BIOCOMPUTE_IMAGE_TAG FRONTEND_IMAGE_TAG BIOCOMPUTE_IMAGE_DIGEST ENVIRONMENT PROJECT_NAME ECR_REGISTRY FQDN"
 
 usage() { echo "usage: refresh-env.sh <env-file>" >&2; exit 1; }
 

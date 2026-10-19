@@ -323,3 +323,17 @@ make_path_without_jq() {
   run grep '^ODD_KEY=' "$ENV_FILE"
   assert_output "ODD_KEY=${raw_value}"
 }
+
+# UT-INFRA-628 (AXI-2080, SI-041) — BIOCOMPUTE_IMAGE_DIGEST is recorded
+# locally by roll-service.sh and never published to SSM; it must be
+# preserved the same way as the decision-5 image-tag keys, or a refresh
+# on a box that has one would fail outright (compose_new_env requires
+# every non-preserved key to resolve from SSM).
+@test "UT-INFRA-628: refresh-env.sh preserves BIOCOMPUTE_IMAGE_DIGEST though SSM never carries it" {
+  printf 'BIOCOMPUTE_IMAGE_DIGEST=sha256:deadbeef\n' >> "$ENV_FILE"
+  export REFRESH_ENV_FIXTURE_SSM_TSV="$(ssm_tsv)"
+  run "$SCRIPT" "$ENV_FILE"
+  assert_success
+  run grep '^BIOCOMPUTE_IMAGE_DIGEST=' "$ENV_FILE"
+  assert_output "BIOCOMPUTE_IMAGE_DIGEST=sha256:deadbeef"
+}

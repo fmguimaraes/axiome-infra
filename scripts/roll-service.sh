@@ -93,6 +93,14 @@ set -euo pipefail
 : "${IMAGE_TAG:?IMAGE_TAG env var required}"
 : "${SERVICE:?SERVICE env var required}"
 
+# AXI-2080 (SI-041), optional: the pushed image's content digest, read by
+# reusable-build.yml AFTER push (never a build-arg) and dispatched through
+# notify-infra. Caller-supplied; absent on an older dispatch payload or
+# when `docker inspect` found no RepoDigest, and "not recorded" is correct
+# in that case, not an error — this script never derives a digest itself.
+IMAGE_DIGEST="${IMAGE_DIGEST:-}"
+DIGEST_KEY="${DIGEST_KEY:-}"
+
 ENV_FILE="${ENV_FILE:-/opt/axiome/.env}"
 COMPOSE_FILE="${COMPOSE_FILE:-/opt/axiome/docker-compose.yml}"
 REFRESH_ENV_SCRIPT="${REFRESH_ENV_SCRIPT:-/opt/axiome/scripts/refresh-env.sh}"
@@ -226,6 +234,15 @@ if [[ "${SERVICE}" == "backend" ]]; then
 fi
 
 update_env_key
+
+# AXI-2080 (SI-041): recorded the same way as IMAGE_TAG above, before the
+# gate runs — and, like IMAGE_TAG, left naming a failed digest on gate
+# failure (same pre-existing gap noted above for the tag; not newly
+# introduced here). Skipped entirely when the caller supplied no digest.
+if [ -n "${IMAGE_DIGEST}" ] && [ -n "${DIGEST_KEY}" ]; then
+    KEY="${DIGEST_KEY}" IMAGE_TAG="${IMAGE_DIGEST}" update_env_key
+fi
+
 refresh_env_from_ssm
 
 echo "=== docker compose pull ${TARGETS[*]} ==="

@@ -42,11 +42,19 @@ jobs:
     steps:
       - name: Resolve SSM key for service
         id: key
+        # AXI-2080 (SI-041): `digest_key` is only non-empty for biocompute —
+        # it is the one service this story wires IMAGE_DIGEST into
+        # (providers/aws/onbox/docker-compose.yml). Empty for the others,
+        # which is how the next two steps know to skip it rather than
+        # record a digest nothing reads.
         run: |
           case "${{ github.event.client_payload.service }}" in
-            backend)    echo "name=BACKEND_IMAGE_TAG"    >> "$GITHUB_OUTPUT" ;;
-            biocompute) echo "name=BIOCOMPUTE_IMAGE_TAG" >> "$GITHUB_OUTPUT" ;;
-            frontend)   echo "name=FRONTEND_IMAGE_TAG"   >> "$GITHUB_OUTPUT" ;;
+            backend)    echo "name=BACKEND_IMAGE_TAG"    >> "$GITHUB_OUTPUT"
+                        echo "digest_key="                >> "$GITHUB_OUTPUT" ;;
+            biocompute) echo "name=BIOCOMPUTE_IMAGE_TAG"  >> "$GITHUB_OUTPUT"
+                        echo "digest_key=BIOCOMPUTE_IMAGE_DIGEST" >> "$GITHUB_OUTPUT" ;;
+            frontend)   echo "name=FRONTEND_IMAGE_TAG"    >> "$GITHUB_OUTPUT"
+                        echo "digest_key="                >> "$GITHUB_OUTPUT" ;;
             *) echo "Unknown service '${{ github.event.client_payload.service }}'" >&2; exit 1 ;;
           esac
 
@@ -88,6 +96,12 @@ jobs:
           KEY: ${{ steps.key.outputs.name }}
           IMAGE_TAG: ${{ github.event.client_payload.image_tag }}
           SERVICE: ${{ github.event.client_payload.service }}
+          # AXI-2080 (SI-041): both empty for backend/frontend (resolved
+          # above), and IMAGE_DIGEST may be empty even for biocompute when
+          # the build job found no RepoDigest — roll-service.sh skips the
+          # digest record entirely unless BOTH are non-empty.
+          DIGEST_KEY: ${{ steps.key.outputs.digest_key }}
+          IMAGE_DIGEST: ${{ github.event.client_payload.image_digest }}
         # AXI-1953 (FR12/FR18): roll-service.sh runs the migration gate via
         # the on-box compose dependency graph (no --no-deps) before any
         # backend container is swapped, and refreshes /opt/axiome/.env from
@@ -112,7 +126,7 @@ jobs:
         run: |
           set -euo pipefail
           ssh -o StrictHostKeyChecking=accept-new "${DEV_USER}@${DEV_HOST}" \
-            "KEY='${KEY}' IMAGE_TAG='${IMAGE_TAG}' SERVICE='${SERVICE}' SSM_PARAMETER_PREFIX='${SSM_PARAMETER_PREFIX}' bash -s" \
+            "KEY='${KEY}' IMAGE_TAG='${IMAGE_TAG}' SERVICE='${SERVICE}' DIGEST_KEY='${DIGEST_KEY}' IMAGE_DIGEST='${IMAGE_DIGEST}' SSM_PARAMETER_PREFIX='${SSM_PARAMETER_PREFIX}' bash -s" \
             < scripts/roll-service.sh \
             2>&1 | tee roll-output.log
 

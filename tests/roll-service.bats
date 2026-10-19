@@ -286,3 +286,36 @@ MIGRATION_FACTS: SERVICE=user-service SCHEMA_VERSION=20250102_init APPLIED=1 PRE
   assert_success
   refute_output --partial "MIGRATION_FACTS"
 }
+
+# UT-INFRA-626 (AXI-2080, SI-041) — a caller supplying both DIGEST_KEY and
+# IMAGE_DIGEST gets a second ENV_FILE key recorded, alongside IMAGE_TAG.
+@test "UT-INFRA-626: roll-service.sh records the image digest when both DIGEST_KEY and IMAGE_DIGEST are supplied" {
+  write_ungated_compose
+  export SERVICE="biocompute"
+  export KEY="BIOCOMPUTE_IMAGE_TAG"
+  export DIGEST_KEY="BIOCOMPUTE_IMAGE_DIGEST"
+  export IMAGE_DIGEST="sha256:deadbeef"
+  run "$SCRIPT"
+  assert_success
+  run grep '^BIOCOMPUTE_IMAGE_DIGEST=' "$ENV_FILE"
+  assert_output "BIOCOMPUTE_IMAGE_DIGEST=sha256:deadbeef"
+  # IMAGE_TAG itself must be untouched by the digest write.
+  run grep '^BIOCOMPUTE_IMAGE_TAG=' "$ENV_FILE"
+  assert_output "BIOCOMPUTE_IMAGE_TAG=sha-new123"
+}
+
+# UT-INFRA-627 — the digest record is skipped entirely (no ENV_FILE write,
+# no failure) when the caller omits DIGEST_KEY, IMAGE_DIGEST, or both —
+# an older dispatch payload, or a build that found no RepoDigest (EC: "not
+# recorded" is correct, never a refusal).
+@test "UT-INFRA-627: roll-service.sh skips the digest record when either DIGEST_KEY or IMAGE_DIGEST is empty" {
+  write_ungated_compose
+  export SERVICE="biocompute"
+  export KEY="BIOCOMPUTE_IMAGE_TAG"
+  export DIGEST_KEY=""
+  export IMAGE_DIGEST="sha256:deadbeef"
+  run "$SCRIPT"
+  assert_success
+  run grep -c '_IMAGE_DIGEST=' "$ENV_FILE"
+  assert_output "0"
+}

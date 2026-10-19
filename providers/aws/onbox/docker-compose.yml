@@ -260,6 +260,17 @@ services:
       BIO_COMPUTE_DASHBOARD_DB_URL: ${DATABASE_URL}
       BIO_COMPUTE_JWT_SECRET: ${JWT_SECRET}
       BIO_COMPUTE_S3_BUCKET: ${S3_BUCKET_ARTIFACTS}
+      # AXI-2080 (SI-041): the pushed image's content digest, read back by
+      # /version and reported on every step-run callback. BUILD_SHA needs
+      # no entry here — it is already baked in at build time via the
+      # Dockerfile's ARG/ENV (see axiome-bio-compute/Dockerfile). The
+      # digest is only known AFTER push, so it travels the opposite path:
+      # reusable-build.yml -> notify-infra dispatch -> roll-service.sh
+      # writes BIOCOMPUTE_IMAGE_DIGEST into /opt/axiome/.env (env_file,
+      # above) -> surfaced here as a plain container env var. Empty/unset
+      # when no digest was ever recorded for this box — read_image_digest()
+      # then reports None, which is correct (EC2), not an error.
+      IMAGE_DIGEST: ${BIOCOMPUTE_IMAGE_DIGEST}
     networks:
       - axiome
     healthcheck:
