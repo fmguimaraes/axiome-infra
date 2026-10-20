@@ -62,6 +62,12 @@ services:
       # App-to-app calls use slug-scoped hostnames (unique on the shared net).
       BIO_COMPUTE_URL: http://biocompute-${WT_SLUG}:8000
       CALLBACK_BASE_URL: http://backend-${WT_SLUG}:3004
+      # AXI-2081: server-side fetch of the R-equivalence statement index (front
+      # public/r-equivalence/index.json). Must be container-reachable, never localhost.
+      # See docs/r-equivalence-statement-index.md.
+      R_EQUIVALENCE_BASE_URL: http://frontend-${WT_SLUG}:5173
+      # Browser-facing base for links printed in audit reports / emails.
+      FRONTEND_URL: http://localhost:${FRONTEND_PORT}
       JWT_SECRET: ${JWT_SECRET:-local-dev-jwt-secret-change-in-production}
       BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-admin@axiome.local}
       BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-admin}

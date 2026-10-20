@@ -84,6 +84,12 @@ services:
       S3_FORCE_PATH_STYLE: "true"
       BIO_COMPUTE_URL: http://axiome-demo-biocompute:8000
       CALLBACK_BASE_URL: http://axiome-demo-backend:3004
+      # AXI-2081: server-side fetch of the R-equivalence statement index (front
+      # public/r-equivalence/index.json). Must be container-reachable, never localhost.
+      # See docs/r-equivalence-statement-index.md.
+      R_EQUIVALENCE_BASE_URL: http://axiome-demo-frontend:5173
+      # Browser-facing base for links printed in audit reports / emails.
+      FRONTEND_URL: http://localhost:5173
       JWT_SECRET: local-dev-jwt-secret-change-in-production
       # AXI-1829: control-plane's EnvSigningKeyProvider fails closed (throws, refuses to
       # boot) when this is unset — docker-compose.yml (per-worktree stack) already

@@ -26,6 +26,10 @@ services:
     environment:
       # AXI-1758: required at boot (live|recorded). Served stacks = live; dev/demo = recorded (CLAUDE.md).
       GUIDED_ANALYSIS_LLM_TRANSPORT: live
+      # AXI-2081: server-side fetch of the R-equivalence statement index (front
+      # public/r-equivalence/index.json). Must be container-reachable, never localhost.
+      # See docs/r-equivalence-statement-index.md.
+      R_EQUIVALENCE_BASE_URL: http://frontend:80
     networks:
       - axiome
     healthcheck:

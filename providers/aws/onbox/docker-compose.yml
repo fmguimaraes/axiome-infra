@@ -193,6 +193,10 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       BIO_COMPUTE_URL: http://biocompute:8000
       CALLBACK_BASE_URL: http://organization-service:3004
+      # AXI-2081: server-side fetch of the R-equivalence statement index (front
+      # public/r-equivalence/index.json). Must be container-reachable, never localhost.
+      # See docs/r-equivalence-statement-index.md.
+      R_EQUIVALENCE_BASE_URL: http://frontend:80
     depends_on:
       migrate:
         condition: service_completed_successfully

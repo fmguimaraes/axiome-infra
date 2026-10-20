@@ -44,12 +44,12 @@ build time.
 
 ## Value per environment
 
-| Environment | Compose file | Set `R_EQUIVALENCE_BASE_URL` to | Status today |
+| Environment | Compose file | Set `R_EQUIVALENCE_BASE_URL` to | Status |
 | --- | --- | --- | --- |
-| Shared demo stack | `docker-compose.demo.yml` (`axiome-demo-backend`) | `http://axiome-demo-frontend:5173` | **unset** (and `FRONTEND_URL` unset) → every demo report says "statement index unavailable" |
-| Per-worktree stack | `docker-compose.yml` (`backend`) | `http://frontend-${WT_SLUG}:5173` (alias on `axiome-shared-net`) | unset → unavailable |
-| Production (AWS on-box) | `providers/aws/onbox/docker-compose.yml` (`organization-service`) | `http://axiome-frontend:80` (same `axiome` network) | unset → falls back to `FRONTEND_URL=https://<fqdn>` (SSM). That works only if the host can reach its own public name through Caddy; set the internal URL to remove that dependency |
-| Scaleway / on-prem | `providers/scaleway/cloud-init/docker-compose.yml`, `providers/onprem/compose/*.yml` | `http://<frontend service name>:80` | unset |
+| Shared demo stack | `docker-compose.demo.yml` (`axiome-demo-backend`) | `http://axiome-demo-frontend:5173` | set (with `FRONTEND_URL`) |
+| Per-worktree stack | `docker-compose.yml` (`backend`) | `http://frontend-${WT_SLUG}:5173` (alias on `axiome-shared-net`) | set (with `FRONTEND_URL`) |
+| Production (AWS on-box) | `providers/aws/onbox/docker-compose.yml` (`organization-service`) | `http://axiome-frontend:80` (same `axiome` network) | set to `http://frontend:80` (service name on the `axiome` network); `FRONTEND_URL` stays from SSM |
+| Scaleway / on-prem | `providers/scaleway/cloud-init/docker-compose.yml`, `providers/onprem/compose/*.yml` | `http://frontend:80` | set |
 
 Also set `FRONTEND_URL` explicitly on the demo backend (`http://localhost:5173`).
 Otherwise the printed link relies on the code default.
