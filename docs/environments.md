@@ -24,6 +24,9 @@ Each environment has its own configuration in `environments/<env>/`:
 - `terraform.tfvars` — Environment-specific variable values
 - `backend.hcl` — Remote state backend configuration
 
+Service environment variables are set inline in each provider's compose file.
+Per-variable notes: [`R_EQUIVALENCE_BASE_URL`](r-equivalence-statement-index.md) (audit report → R-equivalence statement index).
+
 ### Key Differences by Environment
 
 | Setting | Dev | Staging | Production |
