@@ -322,11 +322,31 @@ _aws_run() {
 }
 
 _lock_put_object() {
-  local bucket="$1" key="$2" body="$3" was_e
+  local bucket="$1" key="$2" body="$3" was_e tmpfile
   was_e="$(_lock_was_errexit)"
   set +e
-  _AWS_OUT="$(printf '%s' "${body}" | aws s3api put-object --region "${_LOCK_REGION}" --bucket "${bucket}" --key "${key}" --body /dev/stdin --if-none-match '*' --content-type application/json 2>&1)"
+  # AXI-1973/FR63 pattern (see _lock_fetch): a real file, tracked via
+  # axiome_create_tracked_tempfile, not `--body /dev/stdin`. Piping into
+  # /dev/stdin works on some aws-cli builds but fails others' blob
+  # validation outright ("Blob values must be a path to a file"),
+  # aborting the acquire before the request is even sent — not real lock
+  # contention, just an unsupported invocation shape.
+  axiome_create_tracked_tempfile tmpfile || {
+    [ "${was_e}" = "1" ] && set -e
+    _AWS_OUT="could not create a temp file to write the lock body"
+    _AWS_RC=1
+    return 0
+  }
+  printf '%s' "${body}" >"${tmpfile}"
+  # The body is ALSO piped on stdin (unread by the real aws-cli, which
+  # reads --body from the path given, not from its own stdin) purely so
+  # every existing test double that captures the acquire token by reading
+  # its own inherited stdin (tests/fixtures/*.rules.sh's `cat > ...`
+  # arms for put-object) keeps working unchanged against this call shape.
+  _AWS_OUT="$(printf '%s' "${body}" | aws s3api put-object --region "${_LOCK_REGION}" --bucket "${bucket}" --key "${key}" --body "${tmpfile}" --if-none-match '*' --content-type application/json 2>&1)"
   _AWS_RC=$?
+  rm -f "${tmpfile}"
+  axiome_unregister_cleanup "${tmpfile}"
   [ "${was_e}" = "1" ] && set -e
   return 0
 }
