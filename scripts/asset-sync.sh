@@ -189,9 +189,19 @@ verify_checksums() {
 }
 
 validate_compose() {
-  local staging="$1"
+  local staging="$1" check rc
   [ -f "${staging}/docker-compose.yml" ] || return 0
-  docker compose -f "${staging}/docker-compose.yml" config -q
+  # Validate a throwaway copy beside an empty .env: the services' `env_file:
+  # .env` is resolved next to the compose file and compose refuses a missing
+  # one, while the real .env is never part of the bundle (refresh-env.sh owns
+  # it). The placeholder must not land in staging — publish uploads every file.
+  check="$(mktemp -d)" || return 1
+  cp "${staging}/docker-compose.yml" "${check}/docker-compose.yml"
+  : > "${check}/.env"
+  rc=0
+  docker compose -f "${check}/docker-compose.yml" config -q || rc=$?
+  rm -rf "$check"
+  return "$rc"
 }
 
 # all_files_current <staging> <dest> — true (0) iff every manifest-listed
