@@ -29,8 +29,8 @@ resource "aws_s3_object" "mongo_backup_script" {
 locals {
   onbox_compose_path              = "${path.module}/../../onbox/docker-compose.yml"
   onbox_boot_sh_path              = "${path.module}/../../onbox/boot.sh"
-  onbox_asset_sync_path           = "${path.module}/../../scripts/asset-sync.sh"
-  onbox_refresh_env_path          = "${path.module}/../../scripts/refresh-env.sh"
+  onbox_asset_sync_path           = "${path.module}/../../../../scripts/asset-sync.sh"
+  onbox_refresh_env_path          = "${path.module}/../../../../scripts/refresh-env.sh"
   onbox_mongo_backup_path         = "${path.module}/../../onbox/mongo-backup.sh"
   onbox_mongo_backup_service_path = "${path.module}/../../onbox/mongo-backup.service"
   onbox_mongo_backup_timer_path   = "${path.module}/../../onbox/mongo-backup.timer"
