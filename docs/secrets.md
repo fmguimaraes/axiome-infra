@@ -38,6 +38,7 @@ you put them at the organization level.
 | `AWS_ACCESS_KEY_ID` | Secret | IAM key with ECR push perms | Login to ECR. |
 | `AWS_SECRET_ACCESS_KEY` | Secret | Paired with above | Login to ECR. |
 | `GH_PAT` | Secret | PAT with `Contents: write` on `axiome-infra` | Used by `reusable-build.yml`'s `Notify Infra` step to POST `repository_dispatch`. Also used by the `promote-staging` / `promote-production` jobs to check out `axiome-infra` and run `update-manifest.sh`. |
+| `AXIOME_BIO_COMPUTE_READ_TOKEN` | Secret (**`axiome-back` only**) | Fine-grained PAT, owner `fmguimaraes`, repository access **only `axiome-bio-compute`**, permission **Contents: Read-only**. Token name on GitHub: `axiome-back CI read bio-compute`. | `axiome-back`'s `ci.yml` checks out `axiome-bio-compute` for the cross-repo contract test (`Test` job, AXI-1580/AXI-1675) and the mandatory method-validation contract drift check (AXI-1990, epic AXI-1911). **If it is missing or expired, `CI — Backend` fails on every run, no backend image is built, and no production deploy can be offered.** It has an expiry date: see "Rotating a secret" below. |
 
 IAM policy for the service-repo AWS key needs at minimum:
 - `ecr:GetAuthorizationToken`
@@ -108,6 +109,30 @@ different AWS accounts.
    `promote` steps, and `axiome-infra` for `dev-auto-promote`).
 5. Document the rotation date in the team log; CI keys deserve an
    expiry rhythm.
+6. For `AXIOME_BIO_COMPUTE_READ_TOKEN` (created 2026-10-26; it was
+   missing before that date, which kept backend CI red):
+   - GitHub emails the account owner before a fine-grained PAT expires.
+     Regenerate it **before** that date: profile picture → Settings →
+     Developer settings → Personal access tokens → Fine-grained tokens →
+     `axiome-back CI read bio-compute` → **Regenerate token**. Keep the
+     same scope: only `axiome-bio-compute`, Contents: Read-only.
+   - Paste the new value at
+     `github.com/fmguimaraes/axiome-back/settings/secrets/actions` →
+     `AXIOME_BIO_COMPUTE_READ_TOKEN` → **Update secret**.
+   - Re-run `CI — Backend` and check that the `Test` job's
+     "Checkout axiome-bio-compute" step and the "Method-validation
+     contract drift" job pass.
+   - Symptom of an expired or missing token: `Input required and not
+     supplied: token` (checkout step) or `AXIOME_BIO_COMPUTE_READ_TOKEN
+     is not configured` (drift job).
+
+> **Not a secret, but the same failure shape:** the GitHub account's
+> **Actions budget** (`github.com/settings/billing/budgets`). On
+> 2026-10-26 it was set to **$0 / Usage blocked**, and every CI job
+> failed in about 2 s with *"recent account payments have failed or your
+> spending limit needs to be increased"*. That happened even though no
+> payment had failed and the usage was covered by the free discount.
+> Raising that budget fixes it.
 
 ## Verifying a secret before re-running CI
 
