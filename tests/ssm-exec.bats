@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # tests/ssm-exec.bats — scripts/ssm-exec.sh (AXI-1953, epic AXI-1944, FR20).
-# UT-INFRA-294..300, 316..317 (review bounce #1: distinct exit codes, -t
+# UT-INFRA-294..300, 316..317, 646 (review bounce #1: distinct exit codes, -t
 # validation, and a STUB_LOG grep-needle fix — see UT-INFRA-299 below).
 
 load 'helpers/setup'
@@ -121,4 +121,23 @@ assert_stub_not_called_cancel() {
   assert_failure
   assert_output --partial "must be a positive integer"
   assert_stub_not_called aws
+}
+
+# UT-INFRA-646 — AWS-RunShellScript runs the command text with /bin/sh (dash
+# on Ubuntu) and ignores a shebang, so roll-service.sh's `set -o pipefail`
+# died on line one and every production roll failed before doing anything
+# (2026-10-26). The command must reach SSM wrapped to run under bash: the
+# recorded parameter, executed by dash, runs a bash-only script intact.
+@test "UT-INFRA-646: ssm-exec.sh ships the command so /bin/sh runs it under bash" {
+  command -v dash >/dev/null 2>&1 || skip "dash not installed on this host"
+  export SSM_EXEC_FIXTURE_STATUS_SEQUENCE="Success"
+  export SSM_EXEC_FIXTURE_STDOUT="ok"
+  run "$SCRIPT" -t 5 -i i-0123456789abcdef0 $'set -euo pipefail\necho "it\'s $((6*7))" | cat'
+  assert_success
+  local wrapped
+  wrapped="$(awk '/^### CALL: aws$/{c=1;next} /^### CALL: /{c=0} c && /^\{/{j=1} j{print} j && /^\}/{exit}' "$STUB_LOG" | jq -r '.commands[0]')"
+  [[ "$wrapped" == *'bash "$f"'* ]] || fail "no bash-wrapped command recorded in ${STUB_LOG}"
+  run dash -c "$wrapped"
+  assert_success
+  assert_output "it's 42"
 }

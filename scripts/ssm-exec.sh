@@ -104,8 +104,25 @@ fi
 
 echo "==> ${ENVIRONMENT} (${INSTANCE_ID}, ${REGION})" >&2
 
+# AWS-RunShellScript runs the command text with /bin/sh (dash on Ubuntu) and
+# ignores any shebang, so a bash script — roll-service.sh's `set -o pipefail`
+# — dies on line one ("Illegal option -o pipefail") before doing anything.
+# Write the command verbatim through a quoted heredoc (sh expands nothing in
+# it, and the text stays readable in CloudTrail) and run that file with bash;
+# the command's own stdin is left alone.
+SSM_EOF="__AXIOME_SSM_EXEC_EOF__"
+if printf '%s\n' "${REMOTE_CMD}" | grep -qxF "${SSM_EOF}"; then
+  echo "ERROR: the command contains the reserved line '${SSM_EOF}'." >&2
+  exit 1
+fi
+REMOTE_WRAPPED="f=\$(mktemp) || exit 1
+cat > \"\$f\" <<'${SSM_EOF}'
+${REMOTE_CMD}
+${SSM_EOF}
+bash \"\$f\"; rc=\$?; rm -f \"\$f\"; exit \$rc"
+
 # Build the parameters JSON via jq so the command is escaped safely.
-PARAMS=$(jq -n --arg c "${REMOTE_CMD}" '{commands: [$c]}')
+PARAMS=$(jq -n --arg c "${REMOTE_WRAPPED}" '{commands: [$c]}')
 
 COMMAND_ID=$(aws ssm send-command --region "${REGION}" \
   --instance-ids "${INSTANCE_ID}" \
