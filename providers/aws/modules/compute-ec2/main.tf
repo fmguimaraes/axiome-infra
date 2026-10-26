@@ -439,8 +439,12 @@ resource "aws_instance" "main" {
   # Pin the AMI: data.aws_ami.ubuntu uses most_recent, so each new Canonical
   # release would otherwise force-replace this stateful VM (wiping the in-VM
   # mongo_data volume + causing downtime). OS patching happens in-place via apt.
+  # user_data too: the AWS provider applies an in-place user_data edit by
+  # STOPPING and starting the instance (production downtime). A create still
+  # renders the current cloud-init; the running box gets its boot path from the
+  # on-box channel (scripts/onbox-convert.sh), not from re-running cloud-init.
   lifecycle {
-    ignore_changes = [ami]
+    ignore_changes = [ami, user_data]
   }
 }
 
