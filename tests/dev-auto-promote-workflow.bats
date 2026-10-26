@@ -59,6 +59,7 @@ run_roll_step() {
   script="$(roll_step_run)"
   (cd "${WORKDIR}" && \
     KEY=BACKEND_IMAGE_TAG IMAGE_TAG=sha-new123 SERVICE=backend \
+    DIGEST_KEY= IMAGE_DIGEST= \
     DEV_USER=ubuntu DEV_HOST=dev.example.test SSM_PARAMETER_PREFIX=/dev/axiome-dev \
     bash -c "${script}")
 }
