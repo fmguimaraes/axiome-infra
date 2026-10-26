@@ -8,7 +8,7 @@ terraform {
     }
     neon = {
       source  = "kislerdm/neon"
-      version = "~> 0.6"
+      version = ">= 0.6, < 0.16" # 0.16+ dropped neon_project.default_endpoint_settings
     }
     random = {
       source  = "hashicorp/random"
