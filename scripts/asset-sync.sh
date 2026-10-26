@@ -174,6 +174,10 @@ fetch_listed_files() {
     dest_path="${staging}/${rel}"
     mkdir -p "$(dirname "$dest_path")"
     aws s3 cp "${prefix%/}/${rel}" "$dest_path" >/dev/null 2>&1 || return 1
+    # S3 carries no file mode: `aws s3 cp` writes 0644, and the install mv keeps
+    # it. boot.sh (systemd ExecStart), mongo-backup.sh (timer ExecStart) and the
+    # scripts boot.sh calls must stay executable, or the next boot fails 203/EXEC.
+    case "$rel" in *.sh) chmod 700 "$dest_path" || return 1 ;; esac
   done < "${staging}/${MANIFEST_NAME}"
 }
 

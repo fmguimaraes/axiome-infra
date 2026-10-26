@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # tests/asset-sync.bats — scripts/asset-sync.sh (AXI-1950, epic AXI-1944
-# decision 8, FR11/EC9/AC9/AC32). UT-INFRA-130..138, UT-INFRA-570.
+# decision 8, FR11/EC9/AC9/AC32). UT-INFRA-130..138, UT-INFRA-570, UT-INFRA-645.
 
 load 'helpers/setup'
 
@@ -50,6 +50,21 @@ seed_bucket() {
   [ -f "${DEST}/scripts/asset-sync.sh" ]
   [ -f "${DEST}/scripts/refresh-env.sh" ]
   [ -f "${DEST}/manifest.sha256" ]
+}
+
+# UT-INFRA-645 — S3 carries no file mode (`aws s3 cp` writes 0644), so pull
+# must leave every installed *.sh executable: boot.sh is the systemd
+# ExecStart and mongo-backup.sh the timer's, and a 0644 copy fails 203/EXEC
+# on the next boot. Non-script files keep their default mode.
+@test "UT-INFRA-645: asset-sync.sh pull installs every *.sh executable" {
+  seed_bucket
+  chmod 644 "${ASSET_SYNC_FIXTURE_BUCKET}"/scripts/*.sh
+  run "$SCRIPT" pull "$ASSET_SYNC_FIXTURE_PREFIX" "$DEST"
+  assert_success
+  [ -x "${DEST}/scripts/boot.sh" ]
+  [ -x "${DEST}/scripts/asset-sync.sh" ]
+  [ -x "${DEST}/scripts/refresh-env.sh" ]
+  [ ! -x "${DEST}/docker-compose.yml" ]
 }
 
 # UT-INFRA-131 — given dest-dir already has an installed copy, when pull
