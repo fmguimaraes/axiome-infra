@@ -20,8 +20,8 @@ resource "scaleway_container" "backend" {
   deploy         = false
 
   environment_variables = {
-    NODE_ENV = "production"
-    PORT     = "3000"
+    NODE_ENV                      = "production"
+    PORT                          = "3000"
     GUIDED_ANALYSIS_LLM_TRANSPORT = "live"
   }
 }

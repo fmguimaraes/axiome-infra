@@ -136,7 +136,7 @@ resource "aws_iam_user_policy" "runtime" {
   user = aws_iam_user.runtime.name
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
+    Statement = concat([
       {
         Effect = "Allow"
         Action = ["ssm:GetParameter", "ssm:GetParameters", "ssm:GetParametersByPath"]
@@ -160,7 +160,16 @@ resource "aws_iam_user_policy" "runtime" {
         Action   = ["s3:ListBucket", "s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
         Resource = var.platform_bucket_arns
       },
-    ]
+      ],
+      # Same SSE-KMS need as the instance role below: root's static credentials
+      # on the box are THIS user's, and asset-sync/boot read the on-box bundle
+      # from the KMS-encrypted system bucket — without Decrypt every pull 403s.
+      var.data_cmk_arn == "" ? [] : [{
+        Sid      = "DataCmkForS3Sse"
+        Effect   = "Allow"
+        Action   = ["kms:GenerateDataKey", "kms:Decrypt", "kms:DescribeKey"]
+        Resource = [var.data_cmk_arn]
+    }])
   })
 }
 
