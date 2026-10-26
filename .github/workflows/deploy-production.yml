@@ -174,7 +174,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          : "${GH_PAT:?GH_PAT secret is required to check out axiome-back, axiome-bio-compute and axiome-front for this deploy's baseline check and deployed-commit checkout — missing. Add it as a repo secret (same PAT reusable-build.yml and terraform-cd.yml already use).}"
+          : "${GH_PAT:?GH_PAT secret is required to check out axiome-back, axiome-bio-compute and axiome-front for the deploy baseline check and deployed-commit checkout — missing. Add it as a repo secret (same PAT reusable-build.yml and terraform-cd.yml already use).}"
 
       # Lead decision (epic AXI-1944 debt-closure pass): the repository of
       # the SERVICE BEING DEPLOYED is checked out at the exact commit the
