@@ -109,8 +109,9 @@ different AWS accounts.
    `promote` steps, and `axiome-infra` for `dev-auto-promote`).
 5. Document the rotation date in the team log; CI keys deserve an
    expiry rhythm.
-6. For `AXIOME_BIO_COMPUTE_READ_TOKEN` (created 2026-10-26; it was
-   missing before that date, which kept backend CI red):
+6. For `AXIOME_BIO_COMPUTE_READ_TOKEN` (created 2026-10-26, **expires
+   2027-10-26**; it was missing before its creation date, which kept
+   backend CI red):
    - GitHub emails the account owner before a fine-grained PAT expires.
      Regenerate it **before** that date: profile picture → Settings →
      Developer settings → Personal access tokens → Fine-grained tokens →
@@ -125,6 +126,11 @@ different AWS accounts.
    - Symptom of an expired or missing token: `Input required and not
      supplied: token` (checkout step) or `AXIOME_BIO_COMPUTE_READ_TOKEN
      is not configured` (drift job).
+   - Symptom of a token that exists but has the wrong repository access
+     (e.g. left on the default "Public repositories"): both checkout
+     steps fail with `Not Found - .../repos#get-a-repository`. Edit the
+     token's Repository access to include `axiome-bio-compute`; the
+     token value, and so the secret, does not change.
 
 > **Not a secret, but the same failure shape:** the GitHub account's
 > **Actions budget** (`github.com/settings/billing/budgets`). On
