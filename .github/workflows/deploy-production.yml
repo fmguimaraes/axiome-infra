@@ -91,8 +91,12 @@ on:
 permissions:
   contents: read
 
+# One group PER SERVICE: GitHub keeps a single pending run per group and a newer
+# one silently cancels it, so a shared group dropped every image-published deploy
+# but the last (2026-10-26: frontend + biocompute lost behind backend). Rollouts
+# across services stay serialized by the S3 deploy lock in deploy-prod.sh.
 concurrency:
-  group: deploy-production
+  group: deploy-production-${{ inputs.service || github.event.client_payload.service }}
   cancel-in-progress: false
 
 env:
