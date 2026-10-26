@@ -39,6 +39,8 @@ you put them at the organization level.
 | `AWS_SECRET_ACCESS_KEY` | Secret | Paired with above | Login to ECR. |
 | `GH_PAT` | Secret | PAT with `Contents: write` on `axiome-infra` | Used by `reusable-build.yml`'s `Notify Infra` step to POST `repository_dispatch`. Also used by the `promote-staging` / `promote-production` jobs to check out `axiome-infra` and run `update-manifest.sh`. |
 | `AXIOME_BIO_COMPUTE_READ_TOKEN` | Secret (**`axiome-back` only**) | Fine-grained PAT, owner `fmguimaraes`, repository access **only `axiome-bio-compute`**, permission **Contents: Read-only**. Token name on GitHub: `axiome-back CI read bio-compute`. | `axiome-back`'s `ci.yml` checks out `axiome-bio-compute` for the cross-repo contract test (`Test` job, AXI-1580/AXI-1675) and the mandatory method-validation contract drift check (AXI-1990, epic AXI-1911). **If it is missing or expired, `CI — Backend` fails on every run, no backend image is built, and no production deploy can be offered.** It has an expiry date: see "Rotating a secret" below. |
+| `AXIOME_DOCS_READ_TOKEN` | Secret (**`axiome-back` only**) | Fine-grained PAT, owner `fmguimaraes`, repository access **only `axiome-docs`**, permission **Contents: Read-only**. Token name on GitHub: `axiome-back CI read docs`. | `axiome-back`'s `ci.yml` (`Test` job) checks out `axiome-docs` for the docs drift test (UT-CONTRACTS-1688-001) and the `libs/` unit suites (`AXIOME_DOCS_ROOT`). **If it is missing or expired, the `Test` job fails at "Checkout axiome-docs" and no backend image is built.** It has an expiry date: see "Rotating a secret" below. |
+| `SLACK_WEBHOOK_URL` | Secret (**not set as of 2026-10-26**) | Slack incoming-webhook URL | Used by `ci-failure-alert.yml` and `deploy-drift.yml`. While it is unset, a red `main` or a deploy drift alerts **nobody**. Tracked in AXI-2280 (AXI-2282). |
 
 IAM policy for the service-repo AWS key needs at minimum:
 - `ecr:GetAuthorizationToken`
@@ -131,6 +133,16 @@ different AWS accounts.
      steps fail with `Not Found - .../repos#get-a-repository`. Edit the
      token's Repository access to include `axiome-bio-compute`; the
      token value, and so the secret, does not change.
+7. For `AXIOME_DOCS_READ_TOKEN` (created 2026-10-26, 1-year expiry, so
+   **expires about 2027-10-26**; check the date on the token's GitHub
+   page. It was missing before its creation date, which kept backend CI
+   red once the earlier steps were fixed):
+   - Same regeneration path as step 6, but the token is `axiome-back CI
+     read docs` and its scope is only `axiome-docs`, Contents: Read-only.
+   - Update secret `AXIOME_DOCS_READ_TOKEN` on `axiome-back`.
+   - Re-run `CI — Backend` and check that the `Test` job's
+     "Checkout axiome-docs" step passes.
+   - Symptoms are the same as step 6, on the "Checkout axiome-docs" step.
 
 > **Not a secret, but the same failure shape:** the GitHub account's
 > **Actions budget** (`github.com/settings/billing/budgets`). On
