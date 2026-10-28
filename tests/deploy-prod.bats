@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # tests/deploy-prod.bats — scripts/deploy-prod.sh (AXI-1954, epic AXI-1944,
-# FR14-21/EC1/EC13/AC11-14/18/19/28). UT-INFRA-330..352, 480..483, 508..509.
+# FR14-21/EC1/EC13/AC11-14/18/19/28). UT-INFRA-330..352, 480..483, 508..509, 647.
 
 load 'helpers/setup'
 
@@ -675,4 +675,39 @@ EOF
   assert_output --partial "baseline output line withheld"
   refute_output --partial "Ut1968HostileSecret"
   refute_output --partial "postgres://axiome:"
+}
+
+# UT-INFRA-647 (AXI-1954) — the preflight's migrate-gate status check must
+# read the image being DEPLOYED, not whatever the box currently serves: the
+# box's current backend image can predate migrate-gate entirely (the first
+# deploy after AXI-1950/1953 introduced it), which crashes `migrate-gate
+# status` ("Cannot find module") and was misclassified as a connectivity
+# REFUSE, blocking every later deploy too (2026-10-26). This extracts the
+# REAL remote script text deploy-prod.sh ships inside preflight_on_box and
+# runs it against a fake box with a stub `docker` that records the
+# BACKEND_IMAGE_TAG it was invoked with — proving the override, not just
+# asserting its text.
+@test "UT-INFRA-647: preflight's migrate-gate status check overrides to the tag being deployed, not the box's current one" {
+  local remote
+  remote="$(sed -n "/<<'REMOTE'/,/^REMOTE\$/p" "${BATS_TEST_DIRNAME}/../scripts/deploy-prod.sh" | sed '1d;$d')"
+  local work="${BATS_TEST_TMPDIR}/box"
+  mkdir -p "${work}/bin"
+  printf 'BACKEND_IMAGE_TAG=stable-old\n' > "${work}/env-file"
+  printf 'services:\n  migrate:\n    image: x\n' > "${work}/compose-file"
+  cat > "${work}/bin/docker" <<'DOCKEREOF'
+#!/usr/bin/env bash
+if [ "$1" = "compose" ]; then
+  echo "SAW_BACKEND_IMAGE_TAG=${BACKEND_IMAGE_TAG:-<unset>}"
+  exit 0
+fi
+exit 0
+DOCKEREOF
+  chmod +x "${work}/bin/docker"
+  run env -i "PATH=${work}/bin:/usr/bin:/bin" \
+    "ENV_FILE=${work}/env-file" "COMPOSE_FILE=${work}/compose-file" \
+    KEY=BACKEND_IMAGE_TAG BACKEND_PREFLIGHT=1 NEW_TAG=newtag123 \
+    bash -c "${remote}"
+  assert_success
+  assert_output --partial "SAW_BACKEND_IMAGE_TAG=newtag123"
+  refute_output --partial "SAW_BACKEND_IMAGE_TAG=stable-old"
 }

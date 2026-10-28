@@ -281,11 +281,23 @@ roll_on_box() {
 preflight_on_box() {
   local wait="${SSM_PREFLIGHT_WAIT}"
   {
-    printf 'export KEY=%q BACKEND_PREFLIGHT=%q\n' "${ROLL_KEY}" "${IS_BACKEND}"
+    # NEW_TAG is the tag this run is about to roll to. The status check below
+    # overrides ${KEY} to NEW_TAG (compose: an exported shell var wins over
+    # .env) so it reads the migrate-gate baked into the IMAGE BEING DEPLOYED,
+    # not whatever is currently serving — the box's current image can predate
+    # migrate-gate entirely (e.g. the first deploy after AXI-1950/1953 added
+    # it), which crashes `migrate-gate status` ("Cannot find module") and was
+    # misclassified as a connectivity REFUSE, blocking every later deploy too
+    # (2026-10-26). roll_on_box runs the real (mutating) gate against this
+    # same NEW_TAG image right after, so this just reads it one step early.
+    printf 'export KEY=%q BACKEND_PREFLIGHT=%q NEW_TAG=%q\n' "${ROLL_KEY}" "${IS_BACKEND}" "${TAG}"
     cat <<'REMOTE'
 set +e
-ENV_FILE=/opt/axiome/.env
-COMPOSE_FILE=/opt/axiome/docker-compose.yml
+# Overridable (matches roll-service.sh's own ENV_FILE/COMPOSE_FILE pattern)
+# only so this remote script can run against a fake box in tests; the real
+# box never sets these, so it gets the /opt/axiome default as before.
+ENV_FILE="${ENV_FILE:-/opt/axiome/.env}"
+COMPOSE_FILE="${COMPOSE_FILE:-/opt/axiome/docker-compose.yml}"
 if [ ! -f "${ENV_FILE}" ]; then
   echo "ENV_FILE_MISSING"
   exit 0
@@ -312,7 +324,7 @@ else
   echo "COMPOSE_GATE=absent"
   exit 0
 fi
-STATUS_OUT="$(docker compose -f "${COMPOSE_FILE}" run --rm -T migrate migrate-gate status 2>&1)"
+STATUS_OUT="$(export "${KEY}=${NEW_TAG}"; docker compose -f "${COMPOSE_FILE}" run --rm -T migrate migrate-gate status 2>&1)"
 STATUS_RC=$?
 echo "MIGRATE_STATUS_RC=${STATUS_RC}"
 printf '%s\n' "${STATUS_OUT}"
