@@ -28,6 +28,8 @@ networks:
 
 services:
   backend:
+    env_file:
+      - ../axiome-back/.env
     # GLIBC base (Debian node:20-slim) + a baked system Chromium — see
     # docker/demo-node.Dockerfile. GLIBC so the mounted primary-checkout node_modules
     # (bcrypt has only a glibc binding; sharp/prisma carry glibc engines) loads as-is
@@ -136,6 +138,11 @@ services:
       BIO_COMPUTE_JWT_SECRET: local-dev-jwt-secret-change-in-production
       BIO_COMPUTE_LOG_LEVEL: ${BIO_COMPUTE_LOG_LEVEL:-INFO}
       BIO_COMPUTE_PORT: "8000"
+      # Build identity stamped on every run (rule_runs.build_sha). Set at recreate:
+      # BIOCOMPUTE_BUILD_SHA=$(git -C .../axiome-bio-compute rev-parse HEAD). The
+      # bind-mounted source can drift after recreate — re-stamp on each pull.
+      # IMAGE_DIGEST stays unset: a local image has no registry digest.
+      BUILD_SHA: ${BIOCOMPUTE_BUILD_SHA:-}
 
   frontend:
     image: node:20-slim   # glibc — matches the host-built node_modules (esbuild/rollup gnu binaries)
