@@ -206,9 +206,58 @@ redis_cli() { shared_compose exec -T redis redis-cli "$@"; }
 rabbitmqctl() { shared_compose exec -T rabbitmq rabbitmqctl "$@"; }
 
 # Run `mc ...` commands against the shared MinIO with alias `local` preset.
+# `minio/mc` is no longer pullable from Docker Hub/quay.io (registry-level denial,
+# believed tied to MinIO Inc.'s 2026 AGPLv3 relicensing) — this shims the handful of
+# `mc` subcommands the three wt-*.sh scripts use on top of `amazon/aws-cli`'s
+# S3-compatible `aws s3api`/`aws s3`, so callers keep writing `mc ... local/<bucket>`.
 mc_sh() {  # $1 = a shell snippet using the `mc` binary and alias `local`
-  docker run --rm --network "${SHARED_NET}" --entrypoint /bin/sh minio/mc:latest -c \
-    "mc alias set local http://minio:9000 '${S3_ACCESS_KEY}' '${S3_SECRET_KEY}' >/dev/null 2>&1 && $1"
+  docker run --rm --network "${SHARED_NET}" \
+    -e AWS_ACCESS_KEY_ID="${S3_ACCESS_KEY}" -e AWS_SECRET_ACCESS_KEY="${S3_SECRET_KEY}" \
+    -e AWS_DEFAULT_REGION=us-east-1 \
+    --entrypoint /bin/bash amazon/aws-cli:latest -c \
+    "$(cat <<'MC_SHIM'
+aws() { command aws --endpoint-url http://minio:9000 "$@"; }
+mc() {
+  local sub="$1"; shift
+  case "$sub" in
+    mb)
+      local ignore=0
+      while [ "${1:-}" = "--ignore-existing" ]; do ignore=1; shift; done
+      local rc=0 b bucket
+      for b in "$@"; do
+        bucket="${b#local/}"
+        if ! aws s3api create-bucket --bucket "$bucket" >/dev/null 2>&1; then
+          [ "$ignore" = 1 ] || rc=1
+        fi
+      done
+      return "$rc"
+      ;;
+    version)
+      if [ "${1:-}" = "enable" ]; then
+        local bucket="${2#local/}"
+        aws s3api put-bucket-versioning --bucket "$bucket" --versioning-configuration Status=Enabled
+      fi
+      ;;
+    ls)
+      local bucket="${1#local/}"
+      aws s3api list-objects-v2 --bucket "$bucket" >/dev/null
+      ;;
+    rb)
+      local force=0
+      while [ "${1:-}" = "--force" ]; do force=1; shift; done
+      local bucket="${1#local/}"
+      [ "$force" = 1 ] && aws s3 rm "s3://$bucket" --recursive >/dev/null 2>&1
+      aws s3api delete-bucket --bucket "$bucket"
+      ;;
+    *)
+      echo "mc-shim: unsupported command: $sub" >&2
+      return 1
+      ;;
+  esac
+}
+MC_SHIM
+)
+$1"
 }
 
 # Is the per-worktree app stack (axiome-<slug>) running?
