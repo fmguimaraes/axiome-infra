@@ -352,20 +352,13 @@ locals {
   })
 }
 
-# Public edge SG for the single-VM: 22 (SSH), 80 (ACME), 443 (HTTPS).
+# Public edge SG for the single-VM: 80 (ACME), 443 (HTTPS). No SSH ingress —
+# shell access is SSM only (no key pair on the instance).
 resource "aws_security_group" "instance" {
   name        = "${var.naming_prefix}-ec2"
   description = "EC2 compute (Caddy edge + app stack)"
   vpc_id      = var.vpc_id
   tags        = merge(var.tags, { Name = "${var.naming_prefix}-ec2" })
-}
-
-resource "aws_vpc_security_group_ingress_rule" "ssh" {
-  security_group_id = aws_security_group.instance.id
-  cidr_ipv4         = "0.0.0.0/0"
-  from_port         = 22
-  to_port           = 22
-  ip_protocol       = "tcp"
 }
 
 resource "aws_vpc_security_group_ingress_rule" "http" {
