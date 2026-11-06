@@ -129,6 +129,26 @@ class PartnerReportTest(unittest.TestCase):
         # Assert
         self.assertEqual(missing, [])
 
+    def test_ut_infra_677_annex_ends_with_a_glossary_in_its_language(self):
+        # Arrange
+        report = _report()
+        # Act
+        fr, en = partner.render_partner(report, "fr"), partner.render_partner(report, "en")
+        # Assert
+        self.assertIn("## Glossaire", fr)
+        self.assertIn("- **RES** : Contrôles de résidence des données", fr.split("## Glossaire")[1])
+        self.assertIn("## Glossary", en)
+        self.assertIn("- **SEC**: Hosting security checks", en.split("## Glossary")[1])
+
+    def test_ut_infra_678_every_check_prefix_the_scanner_emits_is_in_both_glossaries(self):
+        # Arrange
+        prefixes = {c.id.split("-")[0] for c in scan.build_report(_PROVIDER, "production").checks}
+        # Act
+        missing = [(p, lang) for p in prefixes for lang in ("fr", "en")
+                   if p not in {term for term, _ in partner.GLOSSARY[lang]}]
+        # Assert
+        self.assertEqual(missing, [])
+
 
 class ScanRevisionTest(unittest.TestCase):
     def test_ut_infra_673_revision_is_recorded_and_no_absolute_path_is_reported(self):

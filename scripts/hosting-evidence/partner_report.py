@@ -45,6 +45,7 @@ LABELS = {
         "fail": "Non conforme",
         "detail": "Détail technique",
         "detail_text": "Élément de configuration relevé pour chaque contrôle :",
+        "glossary": "Glossaire",
     },
     "en": {
         "title": "Annex 1 — Hosting evidence report",
@@ -76,7 +77,67 @@ LABELS = {
         "fail": "Fail",
         "detail": "Technical detail",
         "detail_text": "Configuration item read for each check:",
+        "glossary": "Glossary",
     },
+}
+
+# One entry per term a partner meets in the annex. Check-id prefixes (RES, SEC) must be
+# defined here: UT-INFRA-678 fails if the scanner emits a prefix the glossary lacks.
+GLOSSARY = {
+    "fr": [
+        ("RES", "Contrôles de résidence des données : ils vérifient que les données restent en France."),
+        ("SEC", "Contrôles de sécurité de l'hébergement : chiffrement, sauvegardes et accès."),
+        ("AWS (Amazon Web Services)", "Hébergeur de l'infrastructure de la plateforme, certifié HDS."),
+        ("HDS", "Hébergeur de Données de Santé : certification obligatoire pour héberger des données de "
+                "santé à caractère personnel pour le compte d'un tiers (art. L.1111-8 du Code de la "
+                "santé publique)."),
+        ("Région AWS, `eu-west-3`", "Ensemble de centres de données d'AWS dans une même zone "
+                                    "géographique. `eu-west-3` est la région Europe (Paris), en France."),
+        ("Terraform", "Outil qui décrit l'infrastructure sous forme de code. Ce code est la référence de "
+                      "ce qui est déployé, et c'est lui que lit ce rapport."),
+        ("axiome-infra", "Dépôt de code d'Axiome (GitHub, privé) qui contient la configuration "
+                         "d'infrastructure."),
+        ("Révision", "Identifiant unique d'une version du code dans le dépôt. Il permet de retrouver "
+                     "exactement la configuration lue pour ce rapport."),
+        ("GitHub Actions", "Service qui exécute automatiquement les déploiements. Chaque exécution porte "
+                           "un numéro et produit un journal."),
+        ("AWS KMS", "Service AWS de gestion des clés de chiffrement (Key Management Service)."),
+        ("Rotation des clés", "Renouvellement automatique et périodique des clés de chiffrement."),
+        ("CloudFront (CDN)", "Réseau de diffusion de contenu d'AWS, qui conserve des copies des contenus "
+                             "dans des sites répartis dans le monde."),
+        ("SSH", "Protocole d'accès à distance à un serveur en ligne de commande (port 22)."),
+        ("AWS Systems Manager", "Service AWS qui permet d'administrer un serveur sans ouvrir de port "
+                                "réseau. L'accès exige un compte AWS autorisé."),
+        ("Service de métadonnées (IMDSv2)", "Service interne qui fournit au serveur ses identifiants AWS "
+                                            "temporaires. La version 2 exige un jeton de session."),
+    ],
+    "en": [
+        ("RES", "Data residency checks: they verify that the data stays in France."),
+        ("SEC", "Hosting security checks: encryption, backups and access."),
+        ("AWS (Amazon Web Services)", "Infrastructure host of the platform, HDS certified."),
+        ("HDS", "Hébergeur de Données de Santé (health data host): the certification required in France "
+                "to host personal health data on behalf of a third party (article L.1111-8 of the French "
+                "Public Health Code)."),
+        ("AWS region, `eu-west-3`", "A set of AWS data centres in one geographic area. `eu-west-3` is "
+                                    "the Europe (Paris) region, in France."),
+        ("Terraform", "Tool that describes the infrastructure as code. That code is the reference for "
+                      "what is deployed, and it is what this report reads."),
+        ("axiome-infra", "Axiome's code repository (GitHub, private) that holds the infrastructure "
+                         "configuration."),
+        ("Revision", "Unique identifier of one version of the code in the repository. It lets anyone "
+                     "retrieve the exact configuration read for this report."),
+        ("GitHub Actions", "Service that runs the deployments automatically. Each run has a number and "
+                           "produces a log."),
+        ("AWS KMS", "AWS service that manages encryption keys (Key Management Service)."),
+        ("Key rotation", "Automatic, periodic renewal of the encryption keys."),
+        ("CloudFront (CDN)", "AWS's content delivery network, which keeps copies of content at sites "
+                             "around the world."),
+        ("SSH", "Protocol for remote command-line access to a server (port 22)."),
+        ("AWS Systems Manager", "AWS service for administering a server without opening a network port. "
+                                "Access requires an authorised AWS account."),
+        ("Metadata service (IMDSv2)", "Internal service that gives the server its temporary AWS "
+                                      "credentials. Version 2 requires a session token."),
+    ],
 }
 
 CHECK_TEXT = {
@@ -221,6 +282,13 @@ def detail(report: dict, lang: str) -> list[str]:
     return lines + [""]
 
 
+def glossary(lang: str) -> list[str]:
+    sep = " : " if lang == "fr" else ": "
+    lines = [f"## {LABELS[lang]['glossary']}", ""]
+    lines += [f"- **{term}**{sep}{text}" for term, text in GLOSSARY[lang]]
+    return lines + [""]
+
+
 def deployment(dep: dict | None, lang: str) -> list[str]:
     if dep is None:
         return []
@@ -235,7 +303,7 @@ def render_partner(report: dict, lang: str, dep: dict | None = None) -> str:
     t = LABELS[lang]
     how = [f"## {t['how']}", "", t["how_text"], ""]
     body = header(report, lang) + summary(report, lang) + how + deployment(dep, lang)
-    return "\n".join(body + results(report, lang) + detail(report, lang))
+    return "\n".join(body + results(report, lang) + detail(report, lang) + glossary(lang))
 
 
 def main(argv: list[str] | None = None) -> int:

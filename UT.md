@@ -501,3 +501,5 @@ ranges are allocated by the lead per sibling story.
 | UT-INFRA-674 | AXI-2416 | `tests/hosting_evidence/test_partner_report.py` | `last_deployment.py` reads the apply summary and resource changes from a timestamped, ANSI-coloured log; no summary gives None. |
 | UT-INFRA-675 | AXI-2416 | `tests/hosting_evidence/test_partner_report.py` | `last_deployment.py` skips runs whose production job did not succeed or applied nothing, and returns the first real apply. |
 | UT-INFRA-676 | AXI-2416 | `tests/hosting_evidence/test_partner_report.py` | `last_deployment.py` raises when no recent run applied to production. |
+| UT-INFRA-677 | AXI-2416 | `tests/hosting_evidence/test_partner_report.py` | The partner annex ends with a glossary in its own language (FR `Glossaire`, EN `Glossary`). |
+| UT-INFRA-678 | AXI-2416 | `tests/hosting_evidence/test_partner_report.py` | Every check-id prefix the scanner emits (RES, SEC) is defined in both glossaries. |
