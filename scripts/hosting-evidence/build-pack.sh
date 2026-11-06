@@ -6,8 +6,9 @@
 # Usage: scripts/hosting-evidence/build-pack.sh [<pack-dir>] [<docs-root>]
 #   default pack: ../axiome-docs/04 - architecture/infrastructure/hosting-assurance/aphm-mag4
 # Needs: python3, pandoc, an authenticated gh; libreoffice (soffice) for PDF (skipped with a warning if absent).
-# Refuses (exit 3) when providers/aws differs from the last production apply (committed or
-# not), so the annex only ever describes the configuration that is live.
+# Refuses (exit 3) when the apply inputs (providers/aws plus the two repo-root scripts it
+# uploads) differ from the last production apply, committed or not, so the annex only ever
+# describes the configuration that is live.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -20,6 +21,7 @@ command -v pandoc >/dev/null || { echo "pandoc is required" >&2; exit 1; }
 [ -d "${PACK}/fr" ] || { echo "not a pack (no fr/): ${PACK}" >&2; exit 1; }
 
 REPORTS="${DOCS_ROOT}/reports/hosting"
+APPLY_INPUTS=(providers/aws scripts/asset-sync.sh scripts/refresh-env.sh)
 REV="$(git -C "${REPO_ROOT}" rev-parse HEAD)"
 [ -z "$(git -C "${REPO_ROOT}" status --porcelain)" ] || REV="${REV}-dirty"
 
@@ -32,9 +34,9 @@ deployment="${latest%__hosting-evidence.json}__last-deployment.json"
 python3 "${SCRIPT_DIR}/last_deployment.py" > "${deployment}"
 deployed="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["head_sha"])' "${deployment}")"
 git -C "${REPO_ROOT}" cat-file -e "${deployed}^{commit}" 2>/dev/null || git -C "${REPO_ROOT}" fetch -q origin
-if ! git -C "${REPO_ROOT}" diff --quiet "${deployed}" -- providers/aws \
-   || [ -n "$(git -C "${REPO_ROOT}" status --porcelain -- providers/aws)" ]; then
-  echo "providers/aws differs from the last production apply (${deployed}); apply or revert first" >&2
+if ! git -C "${REPO_ROOT}" diff --quiet "${deployed}" -- "${APPLY_INPUTS[@]}" \
+   || [ -n "$(git -C "${REPO_ROOT}" status --porcelain -- "${APPLY_INPUTS[@]}")" ]; then
+  echo "apply inputs differ from the last production apply (${deployed}); apply or revert first" >&2
   rm -f "${deployment}"
   exit 3
 fi
