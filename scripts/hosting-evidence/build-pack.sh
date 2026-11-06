@@ -43,7 +43,9 @@ fi
 
 mkdir -p "${DIST}"
 render() { # <markdown> <basename>
-  pandoc "$1" --from gfm --to docx --output "${DIST}/$2.docx"
+  # pandoc markdown, not gfm: gfm gives DOCX tables no column widths, and soffice then
+  # collapses them to the first column. Widths follow the separator-row dash counts.
+  pandoc "$1" --from markdown+autolink_bare_uris --to docx --output "${DIST}/$2.docx"
   if command -v soffice >/dev/null; then
     soffice --headless --convert-to pdf --outdir "${DIST}" "${DIST}/$2.docx" >/dev/null 2>&1
   else
