@@ -469,3 +469,25 @@ ranges are allocated by the lead per sibling story.
 | UT-INFRA-645 | AXI-1950 | `tests/asset-sync.bats` | `asset-sync.sh pull` installs every `*.sh` executable (S3 carries no file mode; `boot.sh` is the systemd ExecStart and fails 203/EXEC at 0644); non-script files keep the default mode. |
 | UT-INFRA-646 | AXI-1953 | `tests/ssm-exec.bats` | `ssm-exec.sh` ships the command base64-wrapped under `bash -c`, so AWS-RunShellScript's `/bin/sh` (dash) runs a bash-only script (`set -o pipefail`, quotes) intact — every production roll died on line one without it. |
 | UT-INFRA-647 | AXI-1954 | `tests/deploy-prod.bats` | The preflight's `migrate-gate status` check overrides the migrate image tag to the one being DEPLOYED, not the box's current one — the current image can predate migrate-gate entirely (first deploy after AXI-1950/1953), crashing the check and misclassifying it as a connectivity REFUSE. |
+
+### AXI-2416 — hosting evidence generator (`python3 -m unittest discover -s tests/hosting_evidence`)
+
+| ID | Story | File | Behaviour |
+|----|-------|------|-----------|
+| UT-INFRA-650 | AXI-2416 | `tests/hosting_evidence/test_scan.py` | Paris (`eu-west-3`) primary region passes the residency verdict and is labelled France (Paris). |
+| UT-INFRA-651 | AXI-2416 | `tests/hosting_evidence/test_scan.py` | A non-French primary region (`eu-central-1`) fails RES-01 and the residency verdict. |
+| UT-INFRA-652 | AXI-2416 | `tests/hosting_evidence/test_scan.py` | `use_legacy_stack = true` (Neon, Frankfurt) fails RES-02 and the residency verdict. |
+| UT-INFRA-653 | AXI-2416 | `tests/hosting_evidence/test_scan.py` | `use_cloudfront_edge` absent from tfvars is resolved from its `variables.tf` default (false) and passes RES-03. |
+| UT-INFRA-654 | AXI-2416 | `tests/hosting_evidence/test_scan.py` | A database module without `storage_encrypted = true` fails SEC-01 without failing residency. |
+| UT-INFRA-655 | AXI-2416 | `tests/hosting_evidence/test_scan.py` | Secret-looking tfvars names (`*_key`, `*password*`, …) are never parsed, so never printed (NFR4). |
+| UT-INFRA-656 | AXI-2416 | `tests/hosting_evidence/test_scan.py` | Outputs are a bilingual FR/EN Markdown report plus a JSON payload carrying `residency_ok`. |
+| UT-INFRA-657 | AXI-2416 | `tests/hosting_evidence/test_scan.py` | `main` exits 2 when the residency verdict fails (pipeline gate). |
+| UT-INFRA-658 | AXI-2416 | `tests/hosting_evidence/test_scan.py` | The real `providers/aws` production Terraform passes the residency verdict (region `eu-west-3`). |
+| UT-INFRA-659 | AXI-2416 | `tests/hosting_evidence/test_scan.py` | A `0.0.0.0/0` ingress rule on port 22 in the compute module fails SEC-09. |
+| UT-INFRA-660 | AXI-2416 | `tests/hosting_evidence/test_scan.py` | A compute module without a public SSH rule passes SEC-09. |
+| UT-INFRA-661 | AXI-2416 | `tests/hosting_evidence/test_scan.py` | A commented-out control (`# http_tokens = "required"`) never counts as present: SEC-08 fails. |
+| UT-INFRA-662 | AXI-2416 | `tests/hosting_evidence/test_scan.py` | One bucket without a public-access block fails SEC-05 even when a sibling bucket has one (every resource, not first match). |
+| UT-INFRA-663 | AXI-2416 | `tests/hosting_evidence/test_scan.py` | SSE-KMS conditional with the storage module's `kms_key_arn` not wired to `module.kms.key_arn` fails SEC-04 (effective value, not a literal). |
+| UT-INFRA-664 | AXI-2416 | `tests/hosting_evidence/test_scan.py` | Public SSH is detected whatever the attribute order, for a port range covering 22, and for `ip_protocol = "-1"`. |
+| UT-INFRA-665 | AXI-2416 | `tests/hosting_evidence/test_scan.py` | The inline `aws_security_group` `ingress { cidr_blocks = ["0.0.0.0/0"] }` form fails SEC-09. |
+| UT-INFRA-666 | AXI-2416 | `tests/hosting_evidence/test_scan.py` | A public HTTPS-only (443/tcp) rule is not reported as SSH. |
