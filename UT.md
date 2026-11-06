@@ -491,3 +491,13 @@ ranges are allocated by the lead per sibling story.
 | UT-INFRA-664 | AXI-2416 | `tests/hosting_evidence/test_scan.py` | Public SSH is detected whatever the attribute order, for a port range covering 22, and for `ip_protocol = "-1"`. |
 | UT-INFRA-665 | AXI-2416 | `tests/hosting_evidence/test_scan.py` | The inline `aws_security_group` `ingress { cidr_blocks = ["0.0.0.0/0"] }` form fails SEC-09. |
 | UT-INFRA-666 | AXI-2416 | `tests/hosting_evidence/test_scan.py` | A public HTTPS-only (443/tcp) rule is not reported as SSH. |
+| UT-INFRA-667 | AXI-2416 | `tests/hosting_evidence/test_partner_report.py` | The French partner annex lists each check as a plain-language line with its result, and no code formatting. |
+| UT-INFRA-668 | AXI-2416 | `tests/hosting_evidence/test_partner_report.py` | A check with no partner text makes the render fail, so no control reaches a partner unexplained. |
+| UT-INFRA-669 | AXI-2416 | `tests/hosting_evidence/test_partner_report.py` | A failed blocking check shows residency "non conforme", the line as NON CONFORME and the right count. |
+| UT-INFRA-670 | AXI-2416 | `tests/hosting_evidence/test_partner_report.py` | The axiome-infra revision is printed in the annex header when the report carries one, and only then. |
+| UT-INFRA-671 | AXI-2416 | `tests/hosting_evidence/test_partner_report.py` | The last-deployment section names the run, the applied revision, the date (dd/mm/yyyy) and the apply summary; it is absent without deployment data. |
+| UT-INFRA-672 | AXI-2416 | `tests/hosting_evidence/test_partner_report.py` | Every check the scanner emits for production has French and English partner text. |
+| UT-INFRA-673 | AXI-2416 | `tests/hosting_evidence/test_partner_report.py` | `scan.py` records the revision in the report and Markdown, and reports a repo-relative source path (no home path). |
+| UT-INFRA-674 | AXI-2416 | `tests/hosting_evidence/test_partner_report.py` | `last_deployment.py` reads the apply summary and resource changes from a timestamped, ANSI-coloured log; no summary gives None. |
+| UT-INFRA-675 | AXI-2416 | `tests/hosting_evidence/test_partner_report.py` | `last_deployment.py` skips runs whose production job did not succeed or applied nothing, and returns the first real apply. |
+| UT-INFRA-676 | AXI-2416 | `tests/hosting_evidence/test_partner_report.py` | `last_deployment.py` raises when no recent run applied to production. |

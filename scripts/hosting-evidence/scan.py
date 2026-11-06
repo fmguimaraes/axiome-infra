@@ -57,6 +57,7 @@ class Report:
     generated_at: str
     region: str
     region_label: str
+    revision: str = ""
     checks: list[Check] = field(default_factory=list)
 
     @property
@@ -221,12 +222,21 @@ def check_ssh_closed(mod: str) -> Check:
                  f"{len(public_ssh)} ingress rule(s) open to 0.0.0.0/0 covering port 22")
 
 
-def build_report(root: Path, environment: str) -> Report:
+def display_root(root: Path) -> str:
+    """Provider path relative to the repo, so no local home path reaches a report."""
+    repo = Path(__file__).resolve().parents[2]
+    try:
+        return str(Path("axiome-infra") / root.resolve().relative_to(repo))
+    except ValueError:
+        return root.name
+
+
+def build_report(root: Path, environment: str, revision: str = "") -> Report:
     tfvars = parse_tfvars(read(root / "environments" / environment / "terraform.tfvars"))
     variables, mods = read(root / "variables.tf"), root / "modules"
     region = resolve("aws_region", tfvars, variables) or "unknown"
-    report = Report(environment, str(root), _now(), region,
-                    EEA_AWS_REGIONS.get(region, "outside EEA / hors EEE"))
+    report = Report(environment, display_root(root), _now(), region,
+                    EEA_AWS_REGIONS.get(region, "outside EEA / hors EEE"), revision)
     report.checks.append(check_region(region))
     report.checks += residency_toggles(tfvars, variables)
     retention = resolve("rds_backup_retention_days", tfvars, variables)
@@ -259,6 +269,7 @@ def render_markdown(report: Report) -> str:
         "",
         f"- Generated / Généré : `{report.generated_at}`",
         f"- Source : `{report.provider_root}` (Terraform, static read / lecture statique)",
+        f"- Revision / Révision : `{report.revision or 'unknown'}`",
         f"- Region / Région : **{report.region} — {report.region_label}**",
         f"- Residency verdict / Verdict de résidence : **{verdict}**",
         "",
@@ -294,12 +305,13 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--environment", default="production")
     p.add_argument("--out-dir", type=Path, default=repo.parent / "axiome-docs" / "reports" / "hosting")
     p.add_argument("--json-only", action="store_true", help="print JSON to stdout, write nothing")
+    p.add_argument("--revision", default="", help="axiome-infra commit scanned (full SHA, -dirty suffix if uncommitted changes)")
     return p.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(sys.argv[1:] if argv is None else argv)
-    report = build_report(args.provider_root, args.environment)
+    report = build_report(args.provider_root, args.environment, args.revision)
     if args.json_only:
         print(json.dumps(asdict(report) | {"residency_ok": report.residency_ok}, indent=2))
     else:
