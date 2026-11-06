@@ -25,7 +25,7 @@ LABELS = {
             "La configuration d'infrastructure lue pour ce rapport est identique à celle appliquée en "
             "production le {date} à {time} UTC par la chaîne de déploiement automatisée (GitHub Actions, "
             "exécution n° {run}, révision `{sha}`). "
-            "Résultat consigné dans le journal : `{summary}`. Un extrait de ce journal est archivé "
+            "Résultat consigné dans le journal : `{summary}` Un extrait de ce journal est archivé "
             "avec ce rapport et peut être présenté lors d'un audit."
         ),
         "summary": "Synthèse",
@@ -56,7 +56,7 @@ LABELS = {
             "The infrastructure configuration read for this report is identical to the one applied to "
             "production on {date} at {time} UTC by the automated deployment pipeline (GitHub Actions, "
             "run no. {run}, revision `{sha}`). "
-            "Result recorded in the log: `{summary}`. An extract of this log is archived with this "
+            "Result recorded in the log: `{summary}` An extract of this log is archived with this "
             "report and can be presented during an audit."
         ),
         "summary": "Summary",
