@@ -503,3 +503,6 @@ ranges are allocated by the lead per sibling story.
 | UT-INFRA-676 | AXI-2416 | `tests/hosting_evidence/test_partner_report.py` | `last_deployment.py` raises when no recent run applied to production. |
 | UT-INFRA-677 | AXI-2416 | `tests/hosting_evidence/test_partner_report.py` | The partner annex ends with a glossary in its own language (FR `Glossaire`, EN `Glossary`). |
 | UT-INFRA-678 | AXI-2416 | `tests/hosting_evidence/test_partner_report.py` | Every check-id prefix the scanner emits (RES, SEC) is defined in both glossaries. |
+| UT-INFRA-800 | AXI-2464 | `tests/seed-approval-runbook.bats` | `docs/deploy-procedure.md` has exactly one "Post-migration data steps" section. |
+| UT-INFRA-801 | AXI-2464 | `tests/seed-approval-runbook.bats` | That section lists `axiome-back/scripts/approve_seeded_template_versions.sql` under AXI-2464. |
+| UT-INFRA-802 | AXI-2464 | `tests/seed-approval-runbook.bats` | The listed psql command runs the script with `-v ON_ERROR_STOP=1` and `-v owner_email=`. |

@@ -119,6 +119,25 @@ migrations of the release that introduced it. Each is idempotent.
   (expect `t`; a re-run neither bumps the version nor adds a row).
   Applied on the demo (`axiome-localhost`) 2026-11-07; production still owed.
 
+- **Owner approval of the boot-seeded template versions (AXI-2464, TPL FR59 / EC27 / AC27, owner
+  ruling 5).** The boot seed publishes the system Analysis Template versions (T1 / T3 / T4 / T5
+  `0.3`, and each version epic AXI-2455 seeds) without the author ≠ approver gate. This script
+  records the owner's approval afterwards: one `content_approval_records` row and one
+  `version_published` audit row per version, by the owner. Run it after the backend of the
+  release has booted, since the boot seed must have written the versions first. The owner must be
+  an ACTIVE `ADMIN` user; on production that is the `BOOTSTRAP_ADMIN_EMAIL` account unless the
+  owner names another.
+  ```bash
+  psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -v owner_email='<owner email>' \
+    -f axiome-back/scripts/approve_seeded_template_versions.sql
+  ```
+  It prints one line per version (`written` or `already`). A re-run writes nothing. It aborts and
+  writes nothing if a version is missing or its content hash differs from the approved one, or if
+  the owner is not a platform admin or is one of the version's authors. Verify with
+  `SELECT v.template_version, t.template_id, r.approver_id FROM organization_svc.content_approval_records r JOIN organization_svc.analysis_template_versions v ON v.id = r.content_id JOIN organization_svc.analysis_templates t ON t.id = v.analysis_template_id WHERE t.scope = 'system' AND v.created_by = 'system';`
+  (one row per seeded version, the owner's id). Applied on the demo (`axiome-localhost`,
+  `admin@axiome.local`) 2026-11-07; production still owed.
+
 ---
 
 ## 5. Rollback & health
