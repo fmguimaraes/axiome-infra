@@ -49,3 +49,16 @@ section() {
   [[ "$cmd" == *"-v owner_email="* ]] || fail "psql command lacks -v owner_email=: $cmd"
   [[ "$cmd" == *"-f axiome-back/scripts/approve_seeded_template_versions.sql"* ]] || fail "psql command does not run the script: $cmd"
 }
+
+# UT-INFRA-803
+@test "UT-INFRA-803: the approver has no default and the runbook warns against re-running with another email" {
+  run section
+  assert_success
+  # The AXI-2464 bullet only: from its heading line to the next bullet.
+  local bullet
+  bullet="$(printf '%s\n' "$output" | awk '/^- \*\*Owner approval of the boot-seeded/ { on=1 } on && /^- \*\*/ && !/Owner approval/ { exit } on { print }')"
+  [ -n "$bullet" ] || fail "no AXI-2464 bullet in the section"
+  [[ "$bullet" != *"BOOTSTRAP_ADMIN_EMAIL"* ]] || fail "the runbook still defaults the approver to BOOTSTRAP_ADMIN_EMAIL"
+  [[ "$bullet" == *"Decide the approver first; never re-run with a different email."* ]] || fail "missing the decide-the-approver-first warning"
+  [[ "$bullet" == *"There is no default"* ]] || fail "the runbook does not say the approver has no default"
+}

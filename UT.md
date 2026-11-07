@@ -506,3 +506,4 @@ ranges are allocated by the lead per sibling story.
 | UT-INFRA-800 | AXI-2464 | `tests/seed-approval-runbook.bats` | `docs/deploy-procedure.md` has exactly one "Post-migration data steps" section. |
 | UT-INFRA-801 | AXI-2464 | `tests/seed-approval-runbook.bats` | That section lists `axiome-back/scripts/approve_seeded_template_versions.sql` under AXI-2464. |
 | UT-INFRA-802 | AXI-2464 | `tests/seed-approval-runbook.bats` | The listed psql command runs the script with `-v ON_ERROR_STOP=1` and `-v owner_email=`. |
+| UT-INFRA-803 | AXI-2464 | `tests/seed-approval-runbook.bats` | The AXI-2464 runbook bullet gives the approver no default (no `BOOTSTRAP_ADMIN_EMAIL`) and warns "decide the approver first; never re-run with a different email". |
