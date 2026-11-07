@@ -101,6 +101,24 @@ and the header of [`scripts/deploy-prod.sh`](../scripts/deploy-prod.sh).
   ledger; do not run a routine deploy for it. Follow
   [AXI-1347-production-catch-up-plan.md](AXI-1347-production-catch-up-plan.md).
 
+### Post-migration data steps
+
+Data fixes that no migration or boot seed performs; run each once per environment, after the
+migrations of the release that introduced it. Each is idempotent.
+
+- **Workspace role grants, seed step 16 (`template:write`, AXI-2465, TPL FR43 / AC12 / AC27).**
+  Adds `template:write` to the seeded Admin role record (`...0104`), bumps its version and writes
+  a `role_versions` row. This brings the seeded Admin record into line with `ROLE_PERMISSIONS`
+  (the role-admin catalogue, and anything that reads or copies a Role's permissions). It does not
+  change who can author templates: Admin members already pass `TemplateWriteGuard` through the
+  legacy role fallback (`ROLE_PERMISSIONS[admin]`). Apply
+  `axiome-back/scripts/seed_workspace_roles.sql` (step 16 is the last block) against the
+  user-service database through `axiome-infra/scripts/seed-environment.sh` (Step 1), or run just
+  that block with `psql`. Verify with
+  `SELECT name, version, permissions ? 'template:write' FROM user_svc.roles WHERE id = '00000000-0000-0000-0000-000000000104';`
+  (expect `t`; a re-run neither bumps the version nor adds a row).
+  Applied on the demo (`axiome-localhost`) 2026-11-07; production still owed.
+
 ---
 
 ## 5. Rollback & health
