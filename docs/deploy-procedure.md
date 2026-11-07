@@ -97,6 +97,14 @@ and the header of [`scripts/deploy-prod.sh`](../scripts/deploy-prod.sh).
 - **Secrets never travel as literals to SSM** (they're logged to CloudTrail); the
   on-box roll reads everything from `/opt/axiome/.env`. See
   [connect-and-debug.md](connect-and-debug.md).
+- **Deploy bio-compute and the backend together (output conformance, AXI-2448).**
+  The backend checks every statistical/describe result table against the operation's
+  declared output columns and, by default (`OUTPUT_CONFORMANCE_MODE=block`), FAILS a run
+  whose table drifts (`errorCode OUTPUT_NONCONFORMING`). A backend rolled ahead of (or behind)
+  bio-compute with a changed output schema therefore turns into a run outage for that
+  operation. Per-environment relief: set `OUTPUT_CONFORMANCE_MODE=warn` in `/opt/axiome/.env`
+  and restart the backend. Runs then stay SUCCEEDED, with the finding in `statusMessage` and
+  a structured `output_conformance` log line.
 - **First-time DB catch-up is special** — `organization_svc` has no migration
   ledger; do not run a routine deploy for it. Follow
   [AXI-1347-production-catch-up-plan.md](AXI-1347-production-catch-up-plan.md).
