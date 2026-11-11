@@ -183,6 +183,18 @@ LOCAL_URL=$(echo "$URL" | sed -E 's#@[^/]+/#@127.0.0.1:55432/#')   # -> ...@127.
 psql "$LOCAL_URL"
 ```
 
+> ⚠️ **Known trap (found 2026-11-11, AXI-2490 prod backfill):** this SSM param can go
+> **stale** relative to the password the on-box `/opt/axiome/.env` actually holds —
+> `FATAL: password authentication failed for user "axiome_app"` even though the
+> param decrypts fine and the host/port are right. The **on-box `.env` value is
+> authoritative** (it's what the running `organization-service` container actually
+> authenticates with), not the SSM param. If you hit this, fetch the real URL
+> on-box instead: `ssm-exec.sh "grep ORGANIZATION_DATABASE_URL /opt/axiome/.env"`
+> (or script around it to avoid printing the secret to SSM command output), and
+> once confirmed correct, consider writing it back to the SSM param (`aws ssm
+> put-parameter --overwrite`) so this doc's documented path works again. Not yet
+> fixed as of this writing — root cause (what re-diverges them) unknown.
+
 **No `psql`?** Each backend service ships a generated Prisma client you can drive
 with a throwaway Node script — run it from inside `axiome-back/` so `node_modules`
 resolves. Note the per-service client output paths (the root `@prisma/client` is the
