@@ -2,7 +2,7 @@
 
 The **read** half of Behavior Tracking. Capture (front-end `analytics.track`, the
 `POST /api/v1/events` ingest, and the generic `organization_svc.analytics_events` table) lands
-elsewhere; this directory stands up **Metabase** over that table so the six target
+elsewhere; this directory stands up **Metabase** over that table so the seven target
 funnels are queryable — with **no third-party egress**.
 
 - Product approach: `axiome-docs/05 - product/Behavior-Tracking-Product-Approach.md`
@@ -19,7 +19,8 @@ funnels are queryable — with **no third-party egress**.
 |---|---|
 | `docker-compose.analytics.yml` | Metabase container overlay + one-shot init that creates Metabase's own app DB on the shared Postgres. |
 | `funnels/00_metabase_readonly_role.sql` | Least-privilege `metabase_ro` role — `SELECT` on `organization_svc.analytics_events` only (NFR2 / no egress, no product-data exposure). |
-| `funnels/01..06_*.sql` | The six funnels as Metabase-ready native SQL (distinct-actor, ordered-step, with entry/step conversion %). |
+| `funnels/01..06_*.sql` | The six product funnels as Metabase-ready native SQL (distinct-actor, ordered-step, with entry/step conversion %). |
+| `funnels/07_admin_governance.sql` | The admin-governance funnel (AXI-2507) — a flat per-event volume breakdown, not a step funnel (see below). |
 
 ## 1. Start Metabase
 
@@ -99,20 +100,23 @@ Locally the file is optional — `analytics-test` already defaults to `metabase_
 / `change_me_readonly` (what `make analytics-role` creates). The
 `change_me_readonly` placeholder must never reach production.
 
-## 3. Build the six funnel questions
+## 3. Build the funnel questions
 
 For each file in `funnels/01..06_*.sql`: Metabase → **+ New → SQL query** → select the
-deployment DB → paste the SQL → **Visualization: Funnel** → Save. Group the six saved
+deployment DB → paste the SQL → **Visualization: Funnel** → Save. For
+`funnels/07_admin_governance.sql` use **Visualization: Bar** instead (it is a flat
+per-event breakdown, not a step funnel — see §4 below). Group all seven saved
 questions into a **"Behavior Funnels"** dashboard.
 
-| # | Funnel | Persona | Query |
-|---|---|---|---|
-| 1 | Interpretation lifecycle *(headline)* | analyst | `funnels/01_interpretation_lifecycle.sql` |
-| 2 | Exploration mechanics | analyst | `funnels/02_exploration_mechanics.sql` |
-| 3 | Provenance navigation | analyst | `funnels/03_provenance_navigation.sql` |
-| 4 | Export | analyst | `funnels/04_export.sql` |
-| 5 | Collaboration | analyst | `funnels/05_collaboration.sql` |
-| 6 | Client engagement | client | `funnels/06_client_engagement.sql` |
+| # | Funnel | Persona | Query | Visualization |
+|---|---|---|---|---|
+| 1 | Interpretation lifecycle *(headline)* | analyst | `funnels/01_interpretation_lifecycle.sql` | Funnel |
+| 2 | Exploration mechanics | analyst | `funnels/02_exploration_mechanics.sql` | Funnel |
+| 3 | Provenance navigation | analyst | `funnels/03_provenance_navigation.sql` | Funnel |
+| 4 | Export | analyst | `funnels/04_export.sql` | Funnel |
+| 5 | Collaboration | analyst | `funnels/05_collaboration.sql` | Funnel |
+| 6 | Client engagement | client | `funnels/06_client_engagement.sql` | Funnel |
+| 7 | Admin governance (AXI-2507) | admin | `funnels/07_admin_governance.sql` | Bar |
 
 Each query optionally accepts `{{start_date}}` / `{{end_date}}` **Date** variables to
 window the funnel; leave them empty for all-time.
@@ -132,3 +136,15 @@ window the funnel; leave them empty for all-time.
   `pct_of_prev_step` (step-to-step drop-off).
 - **Schema:** the read layer only touches `organization_svc.analytics_events` and no other
   product table — nothing here obstructs the funnels, satisfying FR10 / AC4.
+
+## 4. Funnel 7 is deliberately flat, not a step funnel
+
+The admin-governance events (role CRUD/assignment, project access/visibility,
+org rule access, KG permission CRUD, org/workspace membership add/remove) are 15
+independent RBAC/permission-scope operations with no natural order and no shared
+entry step — an admin might only ever do one of them. Chaining them like funnels
+1-6 would force an arbitrary sequence onto unrelated actions, so
+`07_admin_governance.sql` instead groups by `event` and reports volume
+(`events`, `distinct_admins`) per action, identity keyed on `user_id` (admin
+actions are always authenticated — there is no pre-auth admin persona, so no
+`anonymous_id` fallback is needed).
