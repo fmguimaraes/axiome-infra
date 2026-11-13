@@ -21,6 +21,7 @@ funnels are queryable — with **no third-party egress**.
 | `funnels/00_metabase_readonly_role.sql` | Least-privilege `metabase_ro` role — `SELECT` on `organization_svc.analytics_events` only (NFR2 / no egress, no product-data exposure). |
 | `funnels/01..06_*.sql` | The six product funnels as Metabase-ready native SQL (distinct-actor, ordered-step, with entry/step conversion %). |
 | `funnels/07_admin_governance.sql` | The admin-governance funnel (AXI-2507) — a flat per-event volume breakdown, not a step funnel (see below). |
+| `funnels/08_feature_usage.sql` | Feature usage by domain (AXI-2520): volume and distinct users for each of the 169 feature-usage events, grouped into seven domains. A flat breakdown (see §5). |
 
 ## 1. Start Metabase
 
@@ -105,8 +106,10 @@ Locally the file is optional — `analytics-test` already defaults to `metabase_
 For each file in `funnels/01..06_*.sql`: Metabase → **+ New → SQL query** → select the
 deployment DB → paste the SQL → **Visualization: Funnel** → Save. For
 `funnels/07_admin_governance.sql` use **Visualization: Bar** instead (it is a flat
-per-event breakdown, not a step funnel — see §4 below). Group all seven saved
-questions into a **"Behavior Funnels"** dashboard.
+per-event breakdown, not a step funnel — see §4 below). For
+`funnels/08_feature_usage.sql` use **Visualization: Table**, or **Bar** grouped by
+`domain` (see §5). Group all eight saved questions into a **"Behavior Funnels"**
+dashboard.
 
 | # | Funnel | Persona | Query | Visualization |
 |---|---|---|---|---|
@@ -117,6 +120,7 @@ questions into a **"Behavior Funnels"** dashboard.
 | 5 | Collaboration | analyst | `funnels/05_collaboration.sql` | Funnel |
 | 6 | Client engagement | client | `funnels/06_client_engagement.sql` | Funnel |
 | 7 | Admin governance (AXI-2507) | admin | `funnels/07_admin_governance.sql` | Bar |
+| 8 | Feature usage by domain (AXI-2520) | all | `funnels/08_feature_usage.sql` | Table / Bar |
 
 Each query optionally accepts `{{start_date}}` / `{{end_date}}` **Date** variables to
 window the funnel; leave them empty for all-time.
@@ -148,3 +152,18 @@ entry step — an admin might only ever do one of them. Chaining them like funne
 (`events`, `distinct_admins`) per action, identity keyed on `user_id` (admin
 actions are always authenticated — there is no pre-auth admin persona, so no
 `anonymous_id` fallback is needed).
+
+> **AXI-2520:** funnel 7 is now limited to its 15 governance events. Admin-console
+> feature-usage events (`organization_*`, `user_*`, `workspace_*`, …) also carry
+> `actor_role = admin`, but query 8 reports them, not funnel 7.
+
+## 5. Query 8: feature usage by domain (AXI-2520)
+
+`08_feature_usage.sql` reports `events` and `distinct_users` (keyed on `user_id`,
+falling back to `anonymous_id`) for each `domain`, `event` and `actor_role`. These
+actions are independent, like funnel 7's, so the query is flat rather than a step
+funnel. It maps each event to its domain with an inline `VALUES` list that mirrors
+`ANALYTICS_EVENT_DOMAINS` in `axiome-front/src/lib/analytics.events.ts`. **When an
+event is added to the registry, add it to that list too**, or it will not appear
+in this query. The list of tracked actions and their props is in
+`axiome-docs/05 - product/features/Behavior-Tracking-Event-Catalogue.md`.

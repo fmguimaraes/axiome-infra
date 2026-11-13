@@ -22,6 +22,16 @@ SELECT
   max(ts_server)                    AS last_seen
 FROM organization_svc.analytics_events
 WHERE actor_role = 'admin'
+  -- AXI-2520: pinned to the 15 governance events. Admin-console feature-usage
+  -- events (organization_*, user_*, workspace_*, ...) also carry actor_role=admin
+  -- and are reported by 08_feature_usage.sql, not here.
+  AND event IN (
+    'role_created', 'role_updated', 'role_deleted', 'role_assigned',
+    'project_visibility_changed', 'project_access_granted', 'project_access_revoked',
+    'project_access_level_changed', 'org_rule_access_changed',
+    'kg_permission_created', 'kg_permission_updated', 'kg_permission_deleted',
+    'org_member_added', 'org_member_removed', 'workspace_member_added'
+  )
   [[ AND ts_server >= {{start_date}} ]]
   [[ AND ts_server <  {{end_date}} ]]
 GROUP BY event

@@ -6,10 +6,11 @@
 #   2. The least-privilege `metabase_ro` role can CONNECT + SELECT the events feed.
 #   3. `metabase_ro` is genuinely read-only — INSERT is denied (NFR2).
 #   4. Synthetic events seeded into `organization_svc.analytics_events` make every
-#      one of the seven funnel queries return its steps/rows, run AS metabase_ro
-#      (proving the funnel SQL, the table name, and the grants all line up
-#      end-to-end) — funnels 1-6 are step-ordered, funnel 7 (admin governance,
-#      AXI-2507) is a flat per-event breakdown.
+#      one of the eight read-layer queries return its steps/rows, run AS
+#      metabase_ro (proving the funnel SQL, the table name, and the grants all
+#      line up end-to-end) — funnels 1-6 are step-ordered, funnel 7 (admin
+#      governance, AXI-2507) and query 8 (feature usage by domain, AXI-2520) are
+#      flat per-event breakdowns.
 #   5. The headline funnel's completion count moves by exactly the number of
 #      complete journeys seeded — i.e. events actually flow into the funnel.
 #
@@ -123,6 +124,20 @@ admin_events=(
   kg_permission_created kg_permission_updated kg_permission_deleted
   org_member_added org_member_removed workspace_member_added
 )
+# feature usage (query 8, AXI-2520): one event per domain. organization_created
+# is emitted by an admin, so it also proves funnel 7 stays pinned to its 15
+# governance events and does not pick up admin feature-usage events.
+feature_admin_events=(organization_created)
+feature_events=(
+  rule_created summary_created guided_plan_generated project_created
+  glossary_term_created dashboard_created
+)
+feature_domains=(
+  administration:organization_created rule_library:rule_created
+  summaries:summary_created guided_analysis:guided_plan_generated
+  data_management:project_created knowledge:glossary_term_created
+  collaboration_outputs:dashboard_created
+)
 
 build_values() {
   local role=$1 actor=$2 n=0 ev
@@ -140,19 +155,20 @@ build_values() {
 } | owner_psql >/dev/null
 {
   echo "INSERT INTO organization_svc.analytics_events (event,actor_role,deployment_id,user_id,schema_version,ts_server) VALUES"
-  build_values admin e2e-admin-1 "${admin_events[@]}" | sed '$ s/,$/;/'
+  build_values admin e2e-admin-1 "${admin_events[@]}" "${feature_admin_events[@]}"
+  build_values analyst e2e-feature-1 "${feature_events[@]}" | sed '$ s/,$/;/'
 } | owner_psql >/dev/null
 seeded=$(owner_psql -tAc "SELECT count(*) FROM organization_svc.analytics_events WHERE deployment_id='$MARKER';" | tr -d '[:space:]')
-expected=$(( ${#seed_events[@]} + ${#client_events[@]} + ${#admin_events[@]} ))
+expected=$(( ${#seed_events[@]} + ${#client_events[@]} + ${#admin_events[@]} + ${#feature_admin_events[@]} + ${#feature_events[@]} ))
 if [ "$seeded" = "$expected" ]; then
-  pass "seeded $seeded events (1 analyst journey + 1 client journey + 1 admin's worth of every admin action)"
+  pass "seeded $seeded events (1 analyst journey + 1 client journey + every admin action + 1 feature event per domain)"
 else
   fail "expected $expected seeded rows, got '$seeded'"
 fi
 
 # ── Stage 5 — every funnel query runs as metabase_ro and returns its steps ───
 section "5. Funnel queries (run as metabase_ro)"
-for f in analytics/funnels/0[1-7]_*.sql; do
+for f in analytics/funnels/0[1-8]_*.sql; do
   rows=$(funnel_sql "$f" | ro_psql -tA 2>/dev/null | grep -c . || true)
   name=$(basename "$f")
   if [ "${rows:-0}" -ge 1 ]; then
@@ -182,6 +198,22 @@ if [ "${admin_row_count:-0}" -eq "${#admin_events[@]}" ] && [ "${bad_counts:-0}"
   pass "funnel 7 reports all ${#admin_events[@]} admin-governance events, 1 event/1 admin each"
 else
   fail "funnel 7 expected ${#admin_events[@]} rows of 1 event/1 admin, got $admin_row_count rows ($bad_counts off)"
+fi
+
+# Query 8 (AXI-2520) is flat too: every seeded feature event must be reported
+# under its registry domain (the VALUES map in 08 mirrors ANALYTICS_EVENT_DOMAINS).
+feature_rows=$(funnel_sql analytics/funnels/08_feature_usage.sql | ro_psql -tAF'|' 2>/dev/null)
+missing_domains=0
+for pair in "${feature_domains[@]}"; do
+  if ! printf '%s\n' "$feature_rows" | grep -q "^${pair%%:*}|${pair#*:}|"; then
+    missing_domains=$((missing_domains + 1))
+    note "query 8 did not report ${pair#*:} under ${pair%%:*}"
+  fi
+done
+if [ "$missing_domains" -eq 0 ]; then
+  pass "query 8 reports a seeded feature event in each of the ${#feature_domains[@]} domains"
+else
+  fail "query 8 missed $missing_domains of ${#feature_domains[@]} seeded domain events"
 fi
 
 # ── Stage 7 (optional) — round-trip through Metabase's own query API ──────────
