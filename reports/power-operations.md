@@ -37,3 +37,4 @@ scripts' `log_event`; do not edit past rows.
 | 2026-10-26T10:17:39Z | production | platform | TURN-ON completed (data + compute up) | arn:aws:iam::225201317100:user/axiome-terraform |
 | 2026-11-11T16:11:37Z | production | EC2 i-0fce8b81eab806118 | compute started, time-to-up 75s | arn:aws:iam::225201317100:user/axiome-terraform |
 | 2026-11-11T16:24:23Z | production | EC2 i-0fce8b81eab806118 | compute stopped | arn:aws:iam::225201317100:user/axiome-terraform |
+| 2026-11-14T16:31:13Z | production | EC2 i-0fce8b81eab806118 | compute stopped | arn:aws:iam::225201317100:user/axiome-terraform |
