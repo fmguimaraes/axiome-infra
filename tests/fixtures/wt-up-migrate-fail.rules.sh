@@ -12,7 +12,7 @@ stub_respond() {
       return 0
       ;;
     *"rabbitmqctl set_permissions"*) return 0 ;;
-    *"minio/mc:latest"*) return 0 ;;
+    *"amazon/aws-cli:latest"*) return 0 ;;  # mc_sh() shim (1520890 replaced unpullable minio/mc)
     *"up -d --build"*) return 0 ;;
     *"docker/migrate-gate/cli.js apply"*)
       echo "FAIL organization-service: unfinished migration in the ledger"
