@@ -507,3 +507,8 @@ ranges are allocated by the lead per sibling story.
 | UT-INFRA-801 | AXI-2464 | `tests/seed-approval-runbook.bats` | That section lists `axiome-back/scripts/approve_seeded_template_versions.sql` under AXI-2464. |
 | UT-INFRA-802 | AXI-2464 | `tests/seed-approval-runbook.bats` | The listed psql command runs the script with `-v ON_ERROR_STOP=1` and `-v owner_email=`. |
 | UT-INFRA-803 | AXI-2464 | `tests/seed-approval-runbook.bats` | The AXI-2464 runbook bullet gives the approver no default (no `BOOTSTRAP_ADMIN_EMAIL`) and warns "decide the approver first; never re-run with a different email". |
+| UT-INFRA-804 | — (chore) | `tests/power_nightly_toggle.bats` | `power.sh down` disables the nightly prod E2E workflow (`gh workflow disable prod-e2e-daily.yml`) after compute is stopped. |
+| UT-INFRA-805 | — (chore) | `tests/power_nightly_toggle.bats` | `power.sh up` re-enables the nightly prod E2E workflow once the app is ready. |
+| UT-INFRA-806 | — (chore) | `tests/power_nightly_toggle.bats` | `power.sh up` with `AXIOME_SKIP_PUBLIC_HEALTH=1` (power-up-all path) also re-enables the nightly. |
+| UT-INFRA-807 | — (chore) | `tests/power_nightly_toggle.bats` | A failing `gh` call warns but never fails the power operation. |
+| UT-INFRA-808 | — (chore) | `tests/power_nightly_toggle.bats` | Envs outside `NIGHTLY_E2E_TOGGLE_ENVS` (default `production`) never call `gh`. |

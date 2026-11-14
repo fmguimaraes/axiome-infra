@@ -50,7 +50,13 @@
 # Env overrides: AWS_REGION, AXIOME_PROJECT, AXIOME_HEALTH_URL, REPORTS_DIR,
 #                BACKUP_SSM_WAIT (seconds, default 180),
 #                POWER_UP_HEALTH_TIMEOUT_SECONDS (default 600),
-#                POWER_UP_HEALTH_POLL_INTERVAL (seconds, default 5)
+#                POWER_UP_HEALTH_POLL_INTERVAL (seconds, default 5),
+#                NIGHTLY_E2E_TOGGLE_ENVS (default "production"),
+#                NIGHTLY_E2E_REPO, NIGHTLY_E2E_WORKFLOW,
+#                AXIOME_SKIP_NIGHTLY_TOGGLE=1
+# Nightly E2E: `down` disables, `up` re-enables, the nightly prod E2E (OQ)
+#   workflow via `gh` — best-effort, never fails the power op (see
+#   toggle_nightly_e2e below).
 set -euo pipefail
 
 usage() {
@@ -215,6 +221,42 @@ run_and_verify_backup() {
   printf '%s' "$key"
 }
 
+# --- toggle_nightly_e2e <enable|disable> ---------------------------------
+# The nightly prod E2E suite (the OQ — axiome-e2e-testing
+# .github/workflows/prod-e2e-daily.yml) is pointless, and noisy, while
+# compute is parked: `down` disables it AFTER the instance is stopped, `up`
+# re-enables it once the instance is running. Only for the envs listed in
+# NIGHTLY_E2E_TOGGLE_ENVS (default: production). BEST-EFFORT by design: a
+# missing/unauthenticated `gh` or an API error is a WARNING written to the
+# report, never a failed power operation (the power op is the contract; the
+# toggle is a convenience). AXIOME_SKIP_NIGHTLY_TOGGLE=1 skips it entirely.
+toggle_nightly_e2e() {
+  local verb="$1" repo wf
+  repo="${NIGHTLY_E2E_REPO:-fmguimaraes/axiome-e2e-testing}"
+  wf="${NIGHTLY_E2E_WORKFLOW:-prod-e2e-daily.yml}"
+  [ "${AXIOME_SKIP_NIGHTLY_TOGGLE:-0}" = "1" ] && {
+    pl_report_line "Nightly E2E ${verb} SKIPPED (AXIOME_SKIP_NIGHTLY_TOGGLE=1)."
+    return 0
+  }
+  case " ${NIGHTLY_E2E_TOGGLE_ENVS:-production} " in
+    *" ${ENV} "*) ;;
+    *) return 0 ;;
+  esac
+  if ! command -v gh >/dev/null 2>&1; then
+    echo "WARNING: gh not found — nightly E2E workflow ${repo}/${wf} NOT ${verb}d; do it by hand: gh workflow ${verb} ${wf} --repo ${repo}" >&2
+    pl_report_line "WARNING: nightly E2E ${verb} not done (gh not found)."
+    return 0
+  fi
+  if gh workflow "$verb" "$wf" --repo "$repo" >/dev/null 2>&1; then
+    echo "nightly E2E workflow ${repo}/${wf}: ${verb}d"
+    pl_report_line "Nightly E2E workflow ${repo}/${wf}: ${verb}d."
+  else
+    echo "WARNING: could not ${verb} nightly E2E workflow ${repo}/${wf} — do it by hand: gh workflow ${verb} ${wf} --repo ${repo}" >&2
+    pl_report_line "WARNING: nightly E2E ${verb} FAILED (gh workflow ${verb} errored) — compute action itself succeeded."
+  fi
+  return 0
+}
+
 case "$ACTION" in
   status)
     echo "${ENV} compute ${IID}: $(state)"
@@ -277,6 +319,7 @@ case "$ACTION" in
     pl_log_event "$ENV" "EC2 ${IID}" "compute stopped"
     pl_report_section "Actions"
     pl_report_line "Stopped EC2 ${IID}. RDS / ElastiCache / S3 / state deliberately untouched."
+    toggle_nightly_e2e disable
     pl_report_section "After"; pl_report_line "EC2 ${IID}: $(state)"
     pl_report_finish
     echo "stopped."
@@ -313,6 +356,7 @@ case "$ACTION" in
       pl_report_section "Actions"
       pl_report_line "Started EC2 ${IID}; public health poll SKIPPED (AXIOME_SKIP_PUBLIC_HEALTH=1)."
       pl_report_line "**time-to-running: ${ttr}s**"
+      toggle_nightly_e2e enable
       pl_report_section "After"; pl_report_line "EC2 ${IID}: $(state)"
       pl_report_finish
       echo "RUNNING (public health poll skipped). time-to-running: ${ttr}s"
@@ -338,6 +382,7 @@ case "$ACTION" in
     pl_report_section "Actions"
     pl_report_line "Started EC2 ${IID}; app served ${HEALTH_URL} (HTTP 200)."
     pl_report_line "**time-to-up: ${ttu}s**"
+    toggle_nightly_e2e enable
     pl_report_section "After"; pl_report_line "EC2 ${IID}: $(state)"
     pl_report_finish
     echo "READY. time-to-up: ${ttu}s"
