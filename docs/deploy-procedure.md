@@ -97,6 +97,21 @@ and the header of [`scripts/deploy-prod.sh`](../scripts/deploy-prod.sh).
 - **Secrets never travel as literals to SSM** (they're logged to CloudTrail); the
   on-box roll reads everything from `/opt/axiome/.env`. See
   [connect-and-debug.md](connect-and-debug.md).
+- **Deploy bio-compute and the backend together (output conformance, AXI-2448).**
+  The backend checks every statistical/describe result table against the operation's
+  declared output columns and, by default (`OUTPUT_CONFORMANCE_MODE=block`), FAILS a run
+  whose table drifts (`errorCode OUTPUT_NONCONFORMING`). A backend rolled ahead of (or behind)
+  bio-compute with a changed output schema therefore turns into a run outage for that
+  operation. Per-environment relief: publish `OUTPUT_CONFORMANCE_MODE=warn` to SSM under the
+  environment's `SSM_PARAMETER_PREFIX` (not a secret, so a literal value is fine:
+  `aws ssm put-parameter --name "$SSM_PARAMETER_PREFIX/OUTPUT_CONFORMANCE_MODE" --type String --value warn --overwrite`),
+  then on the box run `scripts/refresh-env.sh /opt/axiome/.env` and recreate
+  `organization-service` (`docker compose up -d organization-service`). Do NOT hand-edit the key
+  into `/opt/axiome/.env` alone: `refresh-env.sh` refuses any non-preserved key SSM does not
+  hold (exit 3) and keeps the old file, so every later refresh would silently stop picking up
+  SSM changes. To revert, set the SSM value back to `block` (do not delete it from SSM while it
+  is still in `.env`, same refusal) and refresh + recreate again. Under `warn`, runs stay
+  SUCCEEDED, with the finding in `statusMessage` and a structured `output_conformance` log line.
 - **First-time DB catch-up is special** — `organization_svc` has no migration
   ledger; do not run a routine deploy for it. Follow
   [AXI-1347-production-catch-up-plan.md](AXI-1347-production-catch-up-plan.md).
