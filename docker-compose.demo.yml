@@ -53,7 +53,8 @@ services:
       - "3000:3000"
       - "9229-9232:9229-9232"   # Node inspector (only bound when INSPECT=1)
     volumes:
-      - /home/felipe/dev/axiome/axiome-global/axiome-back:/app     # MAIN (primary checkout)
+      # DEMO_BACK_SRC (axiome-infra/.env) re-points the demo at a live worktree; default = primary checkout
+      - ${DEMO_BACK_SRC:-/home/felipe/dev/axiome/axiome-global/axiome-back}:/app
     environment:
       NODE_ENV: development
       # AXI-1758: required at boot (live|recorded). Served stacks = live; dev/demo = recorded (CLAUDE.md).
@@ -154,7 +155,8 @@ services:
     ports:
       - "5173:5173"
     volumes:
-      - /home/felipe/dev/axiome/axiome-global/axiome-front:/app     # MAIN (primary checkout)
+      # DEMO_FRONT_SRC (axiome-infra/.env) re-points the demo at a live worktree; default = primary checkout
+      - ${DEMO_FRONT_SRC:-/home/felipe/dev/axiome/axiome-global/axiome-front}:/app
     environment:
       VITE_API_URL: http://localhost:3000/api/v1
       VITE_GATEWAY_WS_URL: http://localhost:3000
