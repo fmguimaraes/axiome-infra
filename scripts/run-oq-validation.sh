@@ -31,12 +31,11 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SSM="${SCRIPT_DIR}/ssm-exec.sh"
 
 ENVIRONMENT="production"
-REGION="${AWS_REGION:-eu-west-3}"
 ENV_ARGS=()
 while getopts "e:r:h" opt; do
   case "${opt}" in
     e) ENVIRONMENT="${OPTARG}"; ENV_ARGS+=("-e" "${OPTARG}") ;;
-    r) REGION="${OPTARG}"; ENV_ARGS+=("-r" "${OPTARG}") ;;
+    r) ENV_ARGS+=("-r" "${OPTARG}") ;;
     h) sed -n '2,20p' "$0"; exit 0 ;;
     *) echo "Run: $0 -h" >&2; exit 2 ;;
   esac
