@@ -5,7 +5,7 @@ The **read** half of Behavior Tracking. Capture (front-end `analytics.track`, th
 elsewhere; this directory stands up **Metabase** over that table so the seven target
 funnels are queryable — with **no third-party egress**.
 
-- Product approach: `axiome-docs/05 - product/tracking/Behavior-Tracking-Product-Approach.md`
+- Product approach: `axiome-docs/05 - product/Behavior-Tracking-Product-Approach.md`
 - Architecture (events table §5, read layer §6): `axiome-docs/04 - architecture/Behavior-Tracking-Architecture.md`
 
 > **Design principle:** capture is uniform across cloud and on-prem; only *access*
