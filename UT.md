@@ -512,3 +512,11 @@ ranges are allocated by the lead per sibling story.
 | UT-INFRA-806 | — (chore) | `tests/power_nightly_toggle.bats` | `power.sh up` with `AXIOME_SKIP_PUBLIC_HEALTH=1` (power-up-all path) also re-enables the nightly. |
 | UT-INFRA-807 | — (chore) | `tests/power_nightly_toggle.bats` | A failing `gh` call warns but never fails the power operation. |
 | UT-INFRA-808 | — (chore) | `tests/power_nightly_toggle.bats` | Envs outside `NIGHTLY_E2E_TOGGLE_ENVS` (default `production`) never call `gh`. |
+| UT-INFRA-900 | AXI-2282 | `tests/ci-failure-alert-workflow.bats` | `ci-failure-alert.yml` watches exactly the push-on-`main` workflows of this repo, by name, on `completed` (FR8/AC5). |
+| UT-INFRA-901 | AXI-2282 | `tests/ci-failure-alert-workflow.bats` | The alert job only reacts to `main` push runs — never PR, dispatch or branch runs. |
+| UT-INFRA-902 | AXI-2282 | `tests/ci-failure-alert-workflow.bats` | Least privilege: `issues: write` + `contents: read` only. |
+| UT-INFRA-903 | AXI-2282 | `tests/ci-failure-alert-workflow.bats` | Executing the real script: a red run with no open issue opens a per-workflow `ci-failure` issue. |
+| UT-INFRA-904 | AXI-2282 | `tests/ci-failure-alert-workflow.bats` | A red (`timed_out`) run with its own issue open comments on it instead of opening a second. |
+| UT-INFRA-905 | AXI-2282 | `tests/ci-failure-alert-workflow.bats` | A green run closes only its own workflow's issue, never another workflow's. |
+| UT-INFRA-906 | AXI-2282 | `tests/ci-failure-alert-workflow.bats` | `startup_failure` (Actions refusing jobs) counts as red. |
+| UT-INFRA-907 | AXI-2282 | `tests/ci-failure-alert-workflow.bats` | A `cancelled` run neither opens nor closes anything. |
