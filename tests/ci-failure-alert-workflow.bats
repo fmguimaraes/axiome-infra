@@ -63,14 +63,15 @@ assert d[True]['workflow_run']['types'] == ['completed']
   [ "$status" -eq 0 ]
 }
 
-@test "UT-INFRA-901 only reacts to main push / schedule runs (no PR / dispatch / branch runs)" {
+@test "UT-INFRA-901 only reacts to main push / schedule / workflow_dispatch runs (no PR / branch runs)" {
   run py "
 import sys, yaml
 d = yaml.safe_load(open(sys.argv[1]))
 cond = d['jobs']['main-ci-status']['if']
 assert \"head_branch == 'main'\" in cond, cond
-assert \"event == 'push'\" in cond and \"event == 'schedule'\" in cond, cond
-assert 'pull_request' not in cond and 'workflow_dispatch' not in cond, cond
+for ev in ('push', 'schedule', 'workflow_dispatch'):
+    assert \"event == '%s'\" % ev in cond, (ev, cond)
+assert 'pull_request' not in cond, cond
 "
   [ "$status" -eq 0 ]
 }

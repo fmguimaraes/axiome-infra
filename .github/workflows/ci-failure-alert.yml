@@ -34,13 +34,15 @@ permissions:
 
 jobs:
   main-ci-status:
-    # Only the real main pipeline — push runs (terraform-cd) and the nightly
-    # `schedule` runs (Secrets Check, infra-tests; cadence switched from
-    # per-push to nightly 2026-11-20) — not PR runs, dispatches or other branches.
+    # Only main runs: push (terraform-cd), the nightly `schedule` runs (Secrets
+    # Check, infra-tests; cadence switched from per-push to nightly 2026-11-20)
+    # and manual `workflow_dispatch` re-runs on main (so a green re-run closes
+    # the tracking issue the same day) — never PR runs or other branches.
     if: >-
       github.event.workflow_run.head_branch == 'main' &&
       (github.event.workflow_run.event == 'push' ||
-       github.event.workflow_run.event == 'schedule')
+       github.event.workflow_run.event == 'schedule' ||
+       github.event.workflow_run.event == 'workflow_dispatch')
     runs-on: ubuntu-latest
     steps:
       - name: Reflect main CI status into a tracking issue + notify Slack
