@@ -2,7 +2,7 @@ name: AI Review Panel
 
 on:
   pull_request:
-    types: [opened, reopened, synchronize]                             # synchronize re-review lets the rework loop close
+    types: [opened, reopened]                                          # no synchronize (owner 2026-11-20, Actions billing): re-review via an `@claude review` comment
   issue_comment:
     types: [created]                                                   # (3) trigger on @claude review mentions
 

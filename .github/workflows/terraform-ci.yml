@@ -8,6 +8,8 @@ name: terraform-ci
 on:
   pull_request:
     branches: [main]
+    # Once per PR, not per commit (owner decision 2026-11-20, Actions billing).
+    types: [opened, reopened, ready_for_review]
     paths:
       - '**.tf'
       - '**.tfvars'

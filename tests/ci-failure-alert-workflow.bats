@@ -42,7 +42,7 @@ run_alert() {
   run node "$HARNESS" "$SCRIPT_FILE" "$scenario"
 }
 
-@test "UT-INFRA-900 watches every push-on-main workflow of this repo by its exact name" {
+@test "UT-INFRA-900 watches every push-on-main or nightly-schedule workflow of this repo by its exact name" {
   run py "
 import sys, yaml, glob, os
 d = yaml.safe_load(open(sys.argv[1]))
@@ -51,8 +51,11 @@ wfdir = os.path.dirname(sys.argv[1])
 names = set()
 for f in glob.glob(os.path.join(wfdir, '*.yml')):
     w = yaml.safe_load(open(f))
-    push = (w.get(True) or {}).get('push') or {}
-    if 'main' in (push.get('branches') or []):
+    on = w.get(True) or {}
+    push = on.get('push') or {}
+    # main runs = push on main OR the nightly schedule (runs on the default
+    # branch, main) — cadence switched to nightly 2026-11-20.
+    if 'main' in (push.get('branches') or []) or 'schedule' in on:
         names.add(w['name'])
 assert watched == names, (watched, names)
 assert d[True]['workflow_run']['types'] == ['completed']
@@ -60,12 +63,15 @@ assert d[True]['workflow_run']['types'] == ['completed']
   [ "$status" -eq 0 ]
 }
 
-@test "UT-INFRA-901 only reacts to main push runs (no PR / dispatch / branch runs)" {
+@test "UT-INFRA-901 only reacts to main push / schedule / workflow_dispatch runs (no PR / branch runs)" {
   run py "
 import sys, yaml
 d = yaml.safe_load(open(sys.argv[1]))
 cond = d['jobs']['main-ci-status']['if']
-assert \"head_branch == 'main'\" in cond and \"event == 'push'\" in cond, cond
+assert \"head_branch == 'main'\" in cond, cond
+for ev in ('push', 'schedule', 'workflow_dispatch'):
+    assert \"event == '%s'\" % ev in cond, (ev, cond)
+assert 'pull_request' not in cond, cond
 "
   [ "$status" -eq 0 ]
 }
