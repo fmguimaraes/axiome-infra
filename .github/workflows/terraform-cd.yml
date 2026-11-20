@@ -93,6 +93,12 @@ on:
         type: boolean
         default: false
 
+# Never run two plan/apply runs side by side; queue (do NOT cancel) so an
+# in-flight apply is never interrupted mid-way.
+concurrency:
+  group: terraform-cd-production
+  cancel-in-progress: false
+
 permissions:
   contents: write   # for tagging prod releases
 

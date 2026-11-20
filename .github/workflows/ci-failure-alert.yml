@@ -10,8 +10,8 @@
 # blocking.
 #
 # Difference from the sibling repos (deliberate): axiome-infra has no single
-# chained "CI" workflow — `Secrets Check` runs on every push, `infra-tests` and
-# `terraform-cd` are path-filtered. So the tracking issue is PER WORKFLOW (its
+# chained "CI" workflow — `Secrets Check` and `infra-tests` run nightly on main
+# (`schedule`, since 2026-11-20), `terraform-cd` on path-filtered push. So the tracking issue is PER WORKFLOW (its
 # name is in the issue title): a green `Secrets Check` must never close the
 # issue a red `infra-tests` opened. `timed_out` / `startup_failure` count as
 # red too, not only `failure`.
@@ -34,14 +34,17 @@ permissions:
 
 jobs:
   main-ci-status:
-    # Only the real main pipeline — not PR runs, dispatches or other branches.
+    # Only the real main pipeline — push runs (terraform-cd) and the nightly
+    # `schedule` runs (Secrets Check, infra-tests; cadence switched from
+    # per-push to nightly 2026-11-20) — not PR runs, dispatches or other branches.
     if: >-
       github.event.workflow_run.head_branch == 'main' &&
-      github.event.workflow_run.event == 'push'
+      (github.event.workflow_run.event == 'push' ||
+       github.event.workflow_run.event == 'schedule')
     runs-on: ubuntu-latest
     steps:
       - name: Reflect main CI status into a tracking issue + notify Slack
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
         env:
           # Repo secret (Settings -> Secrets and variables -> Actions).
           # Intentionally optional: an unset secret must degrade to a no-op log

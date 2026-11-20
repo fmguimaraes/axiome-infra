@@ -12,18 +12,16 @@
 
 name: infra-tests
 
+# Cadence (owner decision 2026-11-20, Actions billing): nightly on main +
+# on demand, and once per relevant PR (opened / reopened / ready_for_review,
+# path-filtered) — NOT on every push or every PR commit. Re-run on a branch via
+# `gh workflow run infra-tests --ref <branch>`.
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'scripts/**'
-      - 'providers/aws/scripts/**'
-      - 'providers/aws/onbox/**'
-      - 'tests/**'
-      - 'Makefile'
-      - 'docker/**'
-      - '.github/workflows/infra-tests.yml'
+  schedule:
+    - cron: '40 2 * * *'
+  workflow_dispatch:
   pull_request:
+    types: [opened, reopened, ready_for_review]
     paths:
       - 'scripts/**'
       - 'providers/aws/scripts/**'
