@@ -188,12 +188,14 @@ jobs:
         run: |
           set -euo pipefail
           REPO="${REGISTRY}/${NAMESPACE:+${NAMESPACE}/}${SERVICE}"
-          echo "Building ${REPO}:${TAG} (version=${APP_VERSION})"
-          # Every service Dockerfile accepts APP_VERSION + BUILD_SHA and surfaces
-          # them on its /version endpoint (front bakes APP_VERSION into the bundle).
+          BUILD_DATE="$(git show -s --format=%cI "${BUILD_SHA}")"
+          echo "Building ${REPO}:${TAG} (version=${APP_VERSION}, commit date=${BUILD_DATE})"
+          # Every service Dockerfile accepts APP_VERSION + BUILD_SHA + BUILD_DATE and
+          # surfaces them on its /version endpoint (front bakes them into the bundle).
           docker build \
             --build-arg APP_VERSION="${APP_VERSION}" \
             --build-arg BUILD_SHA="${BUILD_SHA}" \
+            --build-arg BUILD_DATE="${BUILD_DATE}" \
             -t "${REPO}:${TAG}" \
             -t "${REPO}:latest" \
             .
