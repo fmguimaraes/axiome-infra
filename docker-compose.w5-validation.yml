@@ -1,0 +1,95 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# W5 VALIDATION STACK — dedicated worktree, isolated from the shared demo-live
+# stack on :5173/:3000 so other agents' concurrent work there doesn't move
+# the ground under a manual sign-off session.
+#
+# Code: _worktrees/axiome-{front,back}-AXI-2433-validation, branch
+# AXI-2433-validation, cut from origin/main (carries AXI-2422 + AXI-2433 +
+# AXI-2455, incl. AXI-2532 permission split). Not pushed anywhere; delete the
+# worktrees + branches when validation closes.
+#
+# Shares the ONE Postgres DB (axiome-localhost) and the shared Mongo/Redis/
+# RabbitMQ/MinIO + biocompute container with the demo stack (same convention
+# as wt-up.sh — no destructive isolation, just a separate frontend/backend
+# process pair at different host ports).
+#
+#   Start:  docker compose -p axiome-w5val -f docker-compose.w5-validation.yml up -d
+#   Stop:   docker compose -p axiome-w5val -f docker-compose.w5-validation.yml down
+#   Logs:   docker compose -p axiome-w5val -f docker-compose.w5-validation.yml logs -f
+#
+# Login: admin@cro-one.com / admin  →  http://localhost:5174
+# ─────────────────────────────────────────────────────────────────────────────
+
+networks:
+  shared:
+    external: true
+    name: axiome-shared-net
+
+services:
+  backend:
+    image: axiome-demo-node:local
+    container_name: axiome-w5val-backend
+    working_dir: /app
+    command: sh -c "[ -x node_modules/.bin/nest ] || npm install; npm run dev"
+    restart: unless-stopped
+    networks: [shared]
+    ports:
+      - "3001:3000"
+    volumes:
+      - /home/felipe/dev/axiome/_worktrees/axiome-back-AXI-2433-validation:/app
+    environment:
+      NODE_ENV: development
+      GUIDED_ANALYSIS_LLM_TRANSPORT: recorded
+      GUIDED_ANALYSIS_LLM_PROVIDER: compiled
+      PORT: "3000"
+      PUPPETEER_SKIP_DOWNLOAD: "true"
+      PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium
+      DATABASE_URL: postgresql://axiome:axiome_local_dev@axiome-localhost:5432/axiome
+      USER_DATABASE_URL: postgresql://axiome:axiome_local_dev@axiome-localhost:5432/axiome?schema=user_svc
+      ORGANIZATION_DATABASE_URL: postgresql://axiome:axiome_local_dev@axiome-localhost:5432/axiome?schema=organization_svc
+      MONGODB_URL: mongodb://axiome:axiome_local_dev@mongodb:27017/axiome-global-axi-1233?authSource=admin&directConnection=true
+      # Own vhost: on the demo's shared vhost the two stacks' services consume each
+      # other's messages (requests from :5174 were served by demo-live code).
+      RABBITMQ_URL: amqp://axiome:axiome_local_dev@rabbitmq:5672/axiome-w5val
+      REDIS_URL: redis://redis:6379/1
+      REDIS_PREFIX: "axiome:w5val:"
+      S3_ENDPOINT: http://minio:9000
+      S3_PUBLIC_ENDPOINT: http://localhost:9000
+      S3_ACCESS_KEY: minioadmin
+      S3_SECRET_KEY: minioadmin
+      S3_BUCKET: axiome-global-axi-1233-uploads
+      S3_BUCKET_UPLOADS: axiome-global-axi-1233-uploads
+      S3_BUCKET_ARTIFACTS: axiome-global-axi-1233-artifacts
+      S3_BUCKET_SYSTEM: axiome-global-axi-1233-system
+      S3_REGION: eu-west-3
+      S3_FORCE_PATH_STYLE: "true"
+      BIO_COMPUTE_URL: http://axiome-demo-biocompute:8000
+      # organization-service port (3004), not the gateway (3000) — bio-compute
+      # callbacks to :3000 return 404 and leave ingestions stuck "running".
+      CALLBACK_BASE_URL: http://axiome-w5val-backend:3004
+      R_EQUIVALENCE_BASE_URL: http://axiome-w5val-frontend:5173
+      FRONTEND_URL: http://localhost:5174
+      JWT_SECRET: local-dev-jwt-secret-change-in-production
+      CONTROL_ASSERTION_SIGNING_KEY: local-dev-control-assertion-key-change-me
+      BOOTSTRAP_ADMIN_EMAIL: admin@axiome.local
+      BOOTSTRAP_ADMIN_PASSWORD: admin
+      BOOTSTRAP_ADMIN_FIRST_NAME: Local
+      BOOTSTRAP_ADMIN_LAST_NAME: Admin
+      GOVERNED_EXECUTION_RECONCILER: "on"
+      RULE_STATUS_MIGRATION: "off"
+
+  frontend:
+    image: node:20-slim
+    container_name: axiome-w5val-frontend
+    working_dir: /app
+    command: sh -c "[ -x node_modules/.bin/vite ] || npm install; npm run dev -- --host 0.0.0.0 --port 5173"
+    restart: unless-stopped
+    networks: [shared]
+    ports:
+      - "5174:5173"
+    volumes:
+      - /home/felipe/dev/axiome/_worktrees/axiome-front-AXI-2433-validation:/app
+    environment:
+      VITE_API_URL: http://localhost:3001/api/v1
+      VITE_GATEWAY_WS_URL: http://localhost:3001
+      VITE_BIOCOMPUTE_URL: http://localhost:8000
