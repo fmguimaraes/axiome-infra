@@ -197,6 +197,8 @@ services:
       # public/r-equivalence/index.json). Must be container-reachable, never localhost.
       # See docs/r-equivalence-statement-index.md.
       R_EQUIVALENCE_BASE_URL: http://frontend:80
+      # Governed runs (guided/SAP workflows) never leave PENDING without the reconciler loop.
+      GOVERNED_EXECUTION_RECONCILER: "on"
     depends_on:
       migrate:
         condition: service_completed_successfully
