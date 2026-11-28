@@ -4,8 +4,8 @@
 # longer touch these resources because dev's config no longer declares them.
 #
 # Only add resources here that are genuinely account-level and shared across every
-# environment (today: ECR). Anything env-scoped belongs in the per-environment root
-# (../main.tf).
+# environment (today: ECR, the knowledge content bucket). Anything env-scoped
+# belongs in the per-environment root (../main.tf).
 
 locals {
   base_tags = merge(
@@ -37,4 +37,18 @@ module "registry" {
   create_repositories = true
   project_name        = var.project_name
   tags                = local.base_tags
+}
+
+# ---------------- Knowledge content bucket (AXI-2798, epic AXI-2796, SI-040/SI-041) ----------------
+# One bucket, one dedicated IAM principal, for the whole account — the external
+# knowledge data store's file content (sha256-addressed), never a production app
+# role or CI. A dedicated module (never `../modules/storage`) so no production
+# role can ever gain access by reuse (FR66/FR67/NFR12). Account-shared like ECR
+# above, for the same reason: this is not a per-environment resource.
+
+module "knowledge_store" {
+  source = "../modules/knowledge-store"
+
+  naming_prefix = var.project_name
+  tags          = local.base_tags
 }

@@ -15,6 +15,7 @@ This guide is run **once per AWS account, then once per environment**. Subsequen
 | MongoDB | Self-hosted container on the same VM (in-region, daily `mongodump` → S3 — see [restore-procedures.md](docs/restore-procedures.md)) | included in compute |
 | Object storage | S3 (3 buckets per env: artifacts, uploads, system) | <$1/mo |
 | Container registry | ECR (account-shared across envs) | <$1/mo |
+| Knowledge content bucket | S3, account-shared (1 bucket + 1 dedicated IAM principal, `modules/knowledge-store`, AXI-2798) — private, outside the app stack | <$1/mo |
 | TLS / Reverse proxy | Caddy + Let's Encrypt (on the VM) | $0 |
 | DNS | Microsoft 365 (manual A records pointing at Lightsail static IPs — see §0.4) | included with domain |
 | Secrets / config | SSM Parameter Store | $0 |
@@ -279,6 +280,22 @@ this state via `terraform_remote_state`):
 cd providers/aws/shared
 terraform init -backend-config=../environments/shared/backend.hcl
 terraform apply -var-file=../environments/shared/terraform.tfvars
+```
+
+This same `shared` state also owns the **knowledge content bucket**
+(`modules/knowledge-store`, AXI-2798, epic AXI-2796, SI-040/SI-041) — one S3
+bucket and one dedicated `<project>-knowledge-tooling` IAM principal,
+account-shared like ECR, for the same never-per-environment reason: it is not
+app infrastructure, and no production app role is ever granted access to it.
+Full module detail (bucket settings, lifecycle, IAM scope, outputs the
+`axiome-knowledge` sync tooling needs): `modules/knowledge-store/README.md`.
+After apply, create the tooling principal's access key by hand (Terraform never
+creates or holds one):
+
+```bash
+terraform output knowledge_bucket_name    # bucket for data-store.json
+terraform output knowledge_bucket_region  # region for data-store.json
+aws iam create-access-key --user-name "$(terraform output -raw knowledge_iam_user_name)"
 ```
 
 ### 1.5. Apply
