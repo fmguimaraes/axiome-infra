@@ -90,6 +90,20 @@ resource "aws_s3_bucket_policy" "knowledge_tls_only" {
 resource "aws_s3_bucket_lifecycle_configuration" "knowledge" {
   bucket = aws_s3_bucket.knowledge.id
 
+  # Noncurrent-version rules require versioning to exist first.
+  depends_on = [aws_s3_bucket_versioning.knowledge]
+
+  rule {
+    id     = "abort-incomplete-multipart"
+    status = "Enabled"
+
+    filter {}
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
+
   rule {
     id     = "expire-noncurrent-versions"
     status = "Enabled"
